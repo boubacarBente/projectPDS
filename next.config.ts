@@ -14,11 +14,17 @@ const nextConfig: NextConfig = {
       "db-error.log",
     ],
   },
-  typescript: {
-    // ⚠️ Dette technique assumée au lot 1 pour la vitesse (README §3.4).
-    // À retirer après stabilisation : `npm run typecheck` doit alors passer.
-    ignoreBuildErrors: true,
-  },
+  /*
+   * `typescript.ignoreBuildErrors` a été **retiré**.
+   *
+   * Le projet Gaz l'activait, et le README §3.4 proposait de le garder au lot 1
+   * « pour la vitesse, puis de le retirer au lot 2 ». C'est fait : `tsc --noEmit`
+   * passe aujourd'hui **sans aucune erreur** sur l'ensemble du projet, donc le
+   * build peut redevenir une vraie barrière au lieu de laisser passer du code
+   * mal typé jusqu'à la production.
+   *
+   * `npm run build` échoue désormais si un type est faux — c'est voulu.
+   */
 };
 
 export default nextConfig;

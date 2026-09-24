@@ -190,7 +190,7 @@ Le détail complet (correspondance table par table, schéma cible de 30 tables m
 | **Backdoor admin en dur** dans `app/api/auth/login/route.ts` (`boubacar` / `1265`) | ❌ **Supprimé** | Faille de sécurité : un compte connu contourne la base. À retirer également du projet Gaz. |
 | `db/helpers.ts` (`findPurchaseInvoices`) | ❌ **Non repris** | Code mort, importé nulle part dans Gaz |
 | `db/database.db-shm`, `-wal`, `db-error.log`, `tmp-libsql-test.db` | ❌ **Non repris** | Fichiers de travail, à ignorer via `.gitignore` |
-| `next.config.ts` → `typescript.ignoreBuildErrors: true` | ⚠️ **À réévaluer** | Pratique risquée ; proposition : le garder en lot 1 pour la vitesse, puis le retirer au lot 2 |
+| `next.config.ts` → `typescript.ignoreBuildErrors: true` | ✅ **Retiré** | La proposition était de le garder au lot 1 puis de le retirer au lot 2. C'est fait : `tsc --noEmit` passe **sans aucune erreur** sur tout le projet, donc `npm run build` échoue désormais si un type est faux — le build redevient une vraie barrière |
 | `/portefeuille` (nom générique) | Renommé **`/caisse`** | Vocabulaire du cahier des charges (§8) |
 | Textes dupliqués « Especes » / « Espèces » | Un seul libellé normalisé | Uniformité des libellés en base |
 
@@ -1733,15 +1733,32 @@ npm run sync:build       # Construire l'API de synchronisation
 
 ## 25. Lots de livraison
 
-| Lot | Contenu | Chapitres | Livrable |
-|---|---|---|---|
-| **Lot 0 — Socle** | Projet Next.js + Electron, **design system** (jetons, composants, sidebar à 6 groupes et repliable, responsive, 5 états), **dépendances installées en dernière version** avec les 6 vérifications de compatibilité du §4.5, DB + migrations **incluant les colonnes de synchronisation** (`sync_id`, `updated_at`, `deleted_at`, `origin_device_id` — les ajouter plus tard obligerait à migrer 30 tables en production, §6.7), authentification, rôles, AppShell, modales, paramètres, thème, retour arrière, exports | 12, 13, 14 (partie) | Application installable, vide mais navigable **et déjà à la charte** |
-| **Lot 1 — Cœur commercial** | Dashboard, clients, fournisseurs, produits/catégories, stocks, achats, ventes, factures/reçus, caisse de base | 1 → 7 | **Utilisable au quotidien** |
-| **Lot 2 — Gestion financière** | Caisse complète (ouverture/clôture), dépenses, soldes/dettes/bénéfices, rapports + export, envoi SMS/WhatsApp, utilisateurs + audit, sauvegarde/restauration | 8 → 14 | **Version 1.0 livrable** |
-| **Lot 3 — Prestations et briqueterie** | Chantiers (devis, suivi, équipes, facturation), briqueterie (matières, lots, étapes, coût de revient, pertes) | 16, 17 | Version 1.1 |
-| **Lot 4 — Atelier de meubles** | Modèles + nomenclature, commandes standard/sur mesure, suivi d'atelier, coût de revient, chutes, stock de meubles finis | 18 | Version 1.2 |
-| **Lot 5 — Évolutions** | Multi-postes, version web/mobile, multi-magasins, scanner code-barres, imprimante thermique, devis et commandes clients | 15 (évolutions) | Sur demande |
-| **Lot 6 — Synchronisation en ligne** | **Option** (§23). *6a — Mode A* : API de synchronisation, PostgreSQL, écran `/synchronisation`, sauvegarde unidirectionnelle, export/import manuel. *6b — Mode B* : multi-postes, tombstones, résolution des conflits, blocs de numérotation. **Indépendant des lots 1 à 4 : peut être livré à tout moment après le lot 2** | 15 (« multi-postes »), 14 (sécurité) | Version 1.3 |
+> **État réel au 24/09/2026.** La colonne « État » dit ce qui est **livré et
+> vérifié**, et ce qui reste. Les lots 0 à 4 sont construits ; le lot 6 n'est
+> livré qu'en partie (l'écran et la file d'attente, **pas** le service en ligne).
+
+| Lot | Contenu | Chapitres | Livrable | État |
+|---|---|---|---|---|
+| **Lot 0 — Socle** | Projet Next.js + Electron, **design system** (jetons, composants, sidebar à 6 groupes et repliable, responsive, 5 états), **dépendances installées en dernière version** avec les 6 vérifications de compatibilité du §4.5, DB + migrations **incluant les colonnes de synchronisation** (`sync_id`, `updated_at`, `deleted_at`, `origin_device_id` — les ajouter plus tard obligerait à migrer 30 tables en production, §6.7), authentification, rôles, AppShell, modales, paramètres, thème, retour arrière, exports | 12, 13, 14 (partie) | Application installable, vide mais navigable **et déjà à la charte** | ✅ **livré** |
+| **Lot 1 — Cœur commercial** | Dashboard, clients, fournisseurs, produits/catégories, stocks, achats, ventes, factures/reçus, caisse de base | 1 → 7 | **Utilisable au quotidien** | ✅ **livré** |
+| **Lot 2 — Gestion financière** | Caisse complète (ouverture/clôture), dépenses, soldes/dettes/bénéfices, rapports + export, envoi SMS/WhatsApp, utilisateurs + audit, sauvegarde/restauration | 8 → 14 | **Version 1.0 livrable** | ✅ **livré** |
+| **Lot 3 — Prestations et briqueterie** | Chantiers (devis, suivi, équipes, facturation), briqueterie (matières, lots, étapes, coût de revient, pertes) | 16, 17 | Version 1.1 | ✅ **livré** |
+| **Lot 4 — Atelier de meubles** | Modèles + nomenclature, commandes standard/sur mesure, suivi d'atelier, coût de revient, chutes, stock de meubles finis | 18 | Version 1.2 | ✅ **livré** |
+| **Lot 5 — Évolutions** | Multi-postes, version web/mobile, multi-magasins, scanner code-barres, imprimante thermique, devis et commandes clients | 15 (évolutions) | Sur demande | ⏳ **non commencé** — hors périmètre V1 |
+| **Lot 6 — Synchronisation en ligne** | **Option** (§23). *6a — Mode A* : API de synchronisation, PostgreSQL, écran `/synchronisation`, sauvegarde unidirectionnelle, export/import manuel. *6b — Mode B* : multi-postes, tombstones, résolution des conflits, blocs de numérotation. **Indépendant des lots 1 à 4 : peut être livré à tout moment après le lot 2** | 15 (« multi-postes »), 14 (sécurité) | Version 1.3 | ⚠️ **partiel** — l'écran, la file d'attente, les conflits et l'export/import manuel sont livrés ; **le service PostgreSQL en ligne et le dossier `server/` ne le sont pas** |
+
+### 25.1 Ce qui reste ouvert
+
+| Élément | Pourquoi ce n'est pas fait | Ce qu'il faut |
+|---|---|---|
+| **Questions Q1 à Q26** (§24) | Ce sont des **décisions client**, pas du développement. Les propositions par défaut sont implémentées | Vos réponses. Q1 (numérotation) et Q2 (TVA) sont les plus urgentes : elles changent les documents déjà émis |
+| **Service de synchronisation en ligne** (lot 6a/6b) | Il suppose une décision d'hébergement et un accord écrit sur la sortie des données (§23.11, Q25, Q26) | Votre accord + un hébergement PostgreSQL |
+| **Matrice de recette** (§5.5, 155 cases) | Elles se cochent **en cliquant** dans un navigateur à 360, 768 et 1440 px, écran par écran. La vérification faite est technique (20 pages et 31 API répondent 200, build vert), **pas** visuelle page par page | Une passe de recette avec vous |
+| **Lot 5 — évolutions** | Explicitement hors périmètre V1 | Une commande |
+| **`npm run lint`** | `typescript-eslint@8` refuse TypeScript 7.0 (incompatibilité d'outillage, pas du code). `npm run typecheck` et `next build` couvrent le contrôle des types | Attendre le support de TS 7 par typescript-eslint, ou redescendre à TypeScript 5.9 (§4.5) |
+| **Signature de code Windows** | L'installateur n'est pas signé : Windows affichera un avertissement SmartScreen au premier lancement | Un certificat de signature de code |
+| **Dépôt de publication** | `package.json` → `build.publish` vise `boubacarBente/projectPDS` ; la mise à jour automatique ne fonctionnera qu'à partir de la **première release GitHub publiée** (tag `v*`) | Publier une release (workflow déjà en place) |
+
 
 ---
 

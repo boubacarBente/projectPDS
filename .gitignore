@@ -76,10 +76,26 @@ updater.log
 /.npmrc
 
 # Artefacts de vérification locale (cookies de session, profils de navigateur
-# de test, corps de requêtes). Voir `scripts/verify-export-e2e.js`.
+# de test, corps de requêtes, scripts jetables). Voir `scripts/verify-*.js`.
+#
+# ⚠️ `cookies.txt` en fait partie pour une raison de sécurité : il contient un
+# cookie de session valide. Il ne doit **jamais** être versionné.
 .cookies.txt
 .cookies-*.txt
+cookies.txt
 .t-browser-profile/
 .t-*.json
 .t-*.txt
 .t-*.cjs
+.t-*.ps1
+
+# Corps de requêtes et réponses de test, écrits à la main pendant les
+# vérifications (curl a besoin d'un fichier pour un corps JSON sous Windows).
+body.json
+login.json
+purchase.json
+purchase-*.json
+achats.json
+ventes.json
+*.verif.ps1
+
