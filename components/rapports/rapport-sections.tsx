@@ -880,8 +880,16 @@ export function NetProfitPanel({
       <InfoRow label="Main-d'œuvre chantiers et fabrications">
         <MoneyText value={netProfit.laborCost} currency={currency} />
       </InfoRow>
-      <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2">
-        <span className="text-sm font-medium">Bénéfice net</span>
+      {/*
+        * Ligne de total : elle doit pouvoir passer à la ligne.
+        *
+        * Montant en `tabular` (donc insécable) + libellé : dans une colonne
+        * étroite, la ligne imposait sa largeur à la carte et faisait déborder la
+        * page. `flex-wrap` + `min-w-0` garantissent qu'elle se replie au lieu de
+        * pousser la mise en page.
+        */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2">
+        <span className="min-w-0 text-sm font-medium">Bénéfice net</span>
         <MoneyText value={netProfit.netProfit} currency={currency} colored bold />
       </div>
     </Card>

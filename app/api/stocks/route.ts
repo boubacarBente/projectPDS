@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, parsePagination, requireAction, toBool } from '@/lib/api';
 import { listStockProducts } from '@/lib/stock';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/stocks — liste paginée des produits avec leur état de stock (§12).
@@ -10,7 +11,8 @@ import { listStockProducts } from '@/lib/stock';
  * `products.stock` : l'invariant « stock = somme algébrique des mouvements »
  * n'est mis à jour que par `lib/stock.ts` (§6.5 règle 3).
  *
- * Paramètres : `?search=&lowStockOnly=&outOfStockOnly=&categoryId=&page=&limit=`
+ * Paramètres : `?search=&lowStockOnly=&outOfStockOnly=&categoryId=&page=&limit=&sort=`
+ * (`sort=recent` par défaut : dernier produit enregistré en premier).
  * Réponse : `{ data, total, page, limit, totalPages }` (§27.2).
  */
 export async function GET(request: NextRequest) {
@@ -29,6 +31,7 @@ export async function GET(request: NextRequest) {
       categoryId: Number.isInteger(categoryId) && categoryId > 0 ? categoryId : undefined,
       page,
       limit,
+      sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
     return ok(result);

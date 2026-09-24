@@ -23,6 +23,10 @@ import { writeAudit } from '@/lib/audit';
  * `includeCancelled`. `?summary=1` renvoie en plus la synthèse de la période
  * (`{ ...paginated, summary }`), ce qui évite un second aller-retour pour les
  * cartes de tête.
+ *
+ * Tri : `?sort=recent` (défaut) = dernière commande enregistrée, comme toutes
+ * les listes ; `?sort=promised` = planning d'atelier (date promise la plus
+ * proche d'abord).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -46,6 +50,7 @@ export async function GET(request: NextRequest) {
       to,
       page,
       limit,
+      sort: params.get('sort') === 'promised' ? 'promised' : 'recent',
     });
 
     if (toBool(params.get('summary'), false)) {

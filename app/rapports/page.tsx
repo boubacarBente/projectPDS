@@ -1218,8 +1218,16 @@ export default function RapportsPage() {
 
           <StockInsightsPanel data={report.stockInsights} currency={currency} />
 
-          <div className="grid gap-4 lg:grid-cols-4">
-            <div className="lg:col-span-3">
+          {/*
+            * Deux colonnes seulement à partir de `xl` (1280 px).
+            *
+            * En `lg` (1024 px), la colonne « Bénéfice net » ne faisait plus que
+            * ~90 px utiles : le montant (« 1 660 000 GNF ») débordait du cadre
+            * et faisait défiler toute la page horizontalement. Mesuré : +8 px
+            * sur /rapports à 1024 px, corrigé ici.
+            */}
+          <div className="grid gap-4 xl:grid-cols-4">
+            <div className="xl:col-span-3">
               <CashAndExpensesPanel
                 summary={report.summary}
                 expenses={report.expenses}

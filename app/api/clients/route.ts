@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { fail, ok, parsePagination, readJson, required, toBool, toNumber, requireAction } from '@/lib/api';
 import { createCustomer, listCustomers } from '@/lib/customers';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /** GET /api/clients — liste paginée, filtrable, avec soldes calculés. */
 export async function GET(request: NextRequest) {
@@ -17,6 +18,8 @@ export async function GET(request: NextRequest) {
       limit,
       debtorsOnly: toBool(params.get('debtors'), false),
       includeInactive: toBool(params.get('includeInactive'), false),
+      // `recent` par défaut : le dernier client enregistré en premier.
+      sort: parseListSort(params.get('sort')),
     });
 
     return ok(result);

@@ -265,7 +265,15 @@ export function PageSection({
   className?: string;
 }) {
   return (
-    <section className={`space-y-4 ${className}`.trim()}>
+    /*
+     * `min-w-0` : un enfant de grille a `min-width: auto`, donc il refuse de
+     * rétrécir sous la largeur minimale de son contenu. Dans une grille à deux
+     * colonnes qui passe à une seule (mobile), les sections « Alertes de stock »
+     * et « Dernières opérations » gardaient leur largeur minimale (364 px) et
+     * débordaient de l'écran de 51 px. Mesuré et corrigé : le contenu se
+     * comprime, les lignes tronquent, l'en-tête passe à la ligne.
+     */
+    <section className={`min-w-0 space-y-4 ${className}`.trim()}>
       {(title || actions) && (
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -307,13 +315,24 @@ export function FormField({
         </span>
       </label>
       {children}
+      {/*
+       * Le texte d'aide doit pouvoir **passer à la ligne**.
+       *
+       * DaisyUI définit `.label` en `inline-flex` + `white-space: nowrap` : le
+       * libellé prenait donc la largeur de sa phrase entière, quelle que soit la
+       * place disponible. Dans une modale ou une colonne de formulaire étroite,
+       * il débordait de son cadre et poussait la page horizontalement (constaté
+       * sur /parametres, /ventes/nouvelle, et les modales client / stock /
+       * chantier). `w-full` + `flex-wrap` + `whitespace-normal` rendent le texte
+       * à la largeur du champ.
+       */}
       {error ? (
-        <label className="label py-1">
-          <span className="label-text-alt text-error">{error}</span>
+        <label className="label w-full flex-wrap whitespace-normal py-1">
+          <span className="label-text-alt whitespace-normal text-error">{error}</span>
         </label>
       ) : hint ? (
-        <label className="label py-1">
-          <span className="label-text-alt text-base-content/50">{hint}</span>
+        <label className="label w-full flex-wrap whitespace-normal py-1">
+          <span className="label-text-alt whitespace-normal text-base-content/50">{hint}</span>
         </label>
       ) : null}
     </div>

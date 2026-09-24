@@ -24,6 +24,7 @@ import { enqueueSyncWrite } from '@/lib/sync';
 import { addStockMovement, adjustStock } from '@/lib/stock';
 import { getSettings, nextSequence } from '@/lib/settings';
 import { DEFAULT_SETTINGS } from '@/lib/settings-schema';
+import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -90,6 +91,8 @@ export type ProductListOptions = {
   includeInactive?: boolean;
   page?: number;
   limit?: number;
+  /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
+  sort?: ListSort;
 };
 
 export type ProductsSummary = {
@@ -217,7 +220,7 @@ export async function listProducts(options: ProductListOptions = {}): Promise<{
     `SELECT ${PRODUCT_COLUMNS}
      ${PRODUCT_FROM}
      ${whereSql}
-     ORDER BY p.name COLLATE NOCASE, p.code COLLATE NOCASE
+     ORDER BY ${sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'p', ['recent', 'name'])}
      LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );
@@ -609,12 +612,15 @@ function mapCategoryRow(row: any): CategoryRow {
  * passe `includeInactive: true` pour pouvoir réactiver une catégorie.
  */
 export async function listCategories(
-  options: { includeInactive?: boolean } = {},
+  options: {
+    includeInactive?: boolean;
+    /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
+    sort?: ListSort;
+  } = {},
 ): Promise<CategoryRow[]> {
   const whereSql = options.includeInactive ? '' : 'WHERE c.is_active = 1';
-  const rows = await rawAll<any>(
-    `${CATEGORY_SELECT} ${whereSql} ORDER BY c.name COLLATE NOCASE`,
-  );
+  const orderBy = sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'c', ['recent', 'name']);
+  const rows = await rawAll<any>(`${CATEGORY_SELECT} ${whereSql} ORDER BY ${orderBy}`);
   return rows.map(mapCategoryRow);
 }
 

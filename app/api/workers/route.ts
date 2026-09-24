@@ -12,6 +12,7 @@ import {
 } from '@/lib/api';
 import { createWorker, isWorkerRole, listWorkers } from '@/lib/workers';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/workers — liste paginée du référentiel de main-d'œuvre.
@@ -35,6 +36,7 @@ export async function GET(request: NextRequest) {
       includeInactive: toBool(params.get('includeInactive'), false),
       page,
       limit,
+      sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
     return ok(result);

@@ -40,6 +40,7 @@ import {
 import { enqueueSyncWrite } from '@/lib/sync';
 import { addStockMovement } from '@/lib/stock';
 import { nextDocumentNumber } from '@/lib/settings';
+import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/api';
 import { roundMoney, today } from '@/lib/format';
 
@@ -254,9 +255,16 @@ function mapBrickTypeRow(row: any): BrickTypeRow {
   };
 }
 
-export async function listBrickTypes(options: { includeInactive?: boolean } = {}): Promise<BrickTypeRow[]> {
+export async function listBrickTypes(
+  options: {
+    includeInactive?: boolean;
+    /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
+    sort?: ListSort;
+  } = {},
+): Promise<BrickTypeRow[]> {
   const where = options.includeInactive ? '' : 'WHERE bt.is_active = 1';
-  const rows = await rawAll<any>(`${BRICK_TYPE_SELECT} ${where} ORDER BY bt.name COLLATE NOCASE`);
+  const orderBy = sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'bt', ['recent', 'name']);
+  const rows = await rawAll<any>(`${BRICK_TYPE_SELECT} ${where} ORDER BY ${orderBy}`);
   return rows.map(mapBrickTypeRow);
 }
 

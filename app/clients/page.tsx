@@ -15,7 +15,7 @@
  * mémoire — le résultat est identique, et le contrat d'URL reste respecté.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
@@ -47,7 +47,12 @@ const VIEW_NAME = 'clients';
 const FETCH_ALL_LIMIT = 500;
 
 type StatusFilter = 'all' | 'debtors' | 'inactive';
-type SortOrder = 'name' | 'balance';
+/**
+ * Tris de la liste. `recent` (défaut) = **dernier client enregistré en
+ * premier** : c'est la règle de toutes les listes de l'application
+ * (`lib/list-sort.ts`).
+ */
+type SortOrder = 'recent' | 'name' | 'balance';
 
 type CustomersSummary = {
   totalCustomers: number;
@@ -64,15 +69,25 @@ type ViewState = {
   sortOrder: SortOrder;
 };
 
+/**
+ * Choix de tri **autres que le défaut**.
+ *
+ * Le défaut (« dernière insertion ») est porté par le `placeholder` du
+ * `FilterSelect`, qui est rendu comme une option à valeur vide. Le remettre
+ * dans la liste afficherait **deux fois le même libellé** dans le menu — donc
+ * la valeur du filtre est ramenée à `''` quand on est sur le tri par défaut
+ * (voir `value={sortOrder === 'recent' ? '' : sortOrder}` plus bas).
+ */
+const SORT_OPTIONS = [
+  { value: 'name', label: 'Tri : nom (A→Z)' },
+  { value: 'balance', label: 'Tri : solde décroissant' },
+];
+
+/** Statut : même patron que les autres écrans de liste (`all` = défaut). */
 const STATUS_OPTIONS = [
   { value: 'all', label: 'Tous les clients' },
   { value: 'debtors', label: 'Débiteurs' },
   { value: 'inactive', label: 'Inactifs' },
-];
-
-const SORT_OPTIONS = [
-  { value: 'name', label: 'Tri : nom (A→Z)' },
-  { value: 'balance', label: 'Tri : solde décroissant' },
 ];
 
 function isStatusFilter(value: unknown): value is StatusFilter {
@@ -80,7 +95,7 @@ function isStatusFilter(value: unknown): value is StatusFilter {
 }
 
 function isSortOrder(value: unknown): value is SortOrder {
-  return value === 'name' || value === 'balance';
+  return value === 'recent' || value === 'name' || value === 'balance';
 }
 
 /** Échappement CSV : un nom contenant `;` ou `"` ne doit pas casser le fichier. */
@@ -97,7 +112,7 @@ export default function ClientsPage() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('name');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('recent');
   const [page, setPage] = useState(1);
 
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
@@ -152,6 +167,13 @@ export default function ClientsPage() {
       try {
         const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
         if (debouncedSearch) params.set('search', debouncedSearch);
+        /*
+         * Le tri part au serveur : c'est la seule façon de trier *toute* la
+         * base. Un tri local ne trierait que la page affichée — « solde
+         * décroissant » montrerait alors le plus gros solde de la page 1, pas
+         * celui de l'entreprise.
+         */
+        params.set('sort', sortOrder);
 
         if (statusFilter === 'inactive') {
           // Filtre absent de l'API : on charge tout et on pagine en mémoire.
@@ -186,13 +208,11 @@ export default function ClientsPage() {
 
         if (statusFilter === 'inactive') {
           const inactive = rows.filter((customer) => !customer.isActive);
-          const sorted = [...inactive].sort((a, b) =>
-            a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }),
-          );
-          const pages = Math.max(1, Math.ceil(sorted.length / PAGE_LIMIT));
+          // L'ordre demandé est déjà appliqué par l'API : on ne retrie pas ici.
+          const pages = Math.max(1, Math.ceil(inactive.length / PAGE_LIMIT));
 
-          setCustomers(sorted.slice((page - 1) * PAGE_LIMIT, page * PAGE_LIMIT));
-          setTotal(sorted.length);
+          setCustomers(inactive.slice((page - 1) * PAGE_LIMIT, page * PAGE_LIMIT));
+          setTotal(inactive.length);
           setTotalPages(pages);
 
           const corrected = clampPage(page, pages);
@@ -225,7 +245,7 @@ export default function ClientsPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, debouncedSearch, statusFilter, page, refreshToken]);
+  }, [rehydrated, debouncedSearch, statusFilter, page, sortOrder, refreshToken]);
 
   /* Cartes de synthèse. */
   useEffect(() => {
@@ -279,11 +299,11 @@ export default function ClientsPage() {
     writeViewState(VIEW_NAME, { search, statusFilter, page, sortOrder });
   }, [rehydrated, search, statusFilter, page, sortOrder]);
 
-  /* Tri d'affichage local (le tri serveur reste l'ordre alphabétique). */
-  const visibleCustomers = useMemo(() => {
-    if (sortOrder === 'name') return customers;
-    return [...customers].sort((a, b) => b.balance - a.balance);
-  }, [customers, sortOrder]);
+  /*
+   * Aucun tri ici : l'API renvoie déjà la liste dans l'ordre demandé
+   * (`?sort=recent|name|balance`). Voir `lib/list-sort.ts`.
+   */
+  const visibleCustomers = customers;
 
   const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
 
@@ -516,14 +536,22 @@ export default function ClientsPage() {
         secondaryFilters={
           <div className="w-full sm:w-56">
             <FilterSelect
-              value={sortOrder}
-              onChange={(value) => setSortOrder(isSortOrder(value) ? value : 'name')}
+              /*
+               * Le tri par défaut est rendu par le `placeholder` (valeur vide) :
+               * sans ce mappage, le `<select>` n'aurait aucune option
+               * correspondante et s'afficherait vide.
+               */
+              value={sortOrder === 'recent' ? '' : sortOrder}
+              onChange={(value) => {
+                setSortOrder(isSortOrder(value) ? value : 'recent');
+                setPage(1);
+              }}
               options={SORT_OPTIONS}
-              placeholder="Tri : nom"
+              placeholder="Tri : dernière insertion"
             />
           </div>
         }
-        secondaryCount={sortOrder === 'name' ? 0 : 1}
+        secondaryCount={sortOrder === 'recent' ? 0 : 1}
         actions={
           <>
             <ToolbarButton onClick={exportCsv} title="Exporter la liste affichée au format CSV">

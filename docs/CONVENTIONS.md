@@ -88,6 +88,26 @@ Reprendre **exactement** la forme de `lib/customers.ts` :
 { data: T[], total: number, page: number, limit: number, totalPages: number }
 ```
 
+### Tri des listes — la dernière insertion d'abord
+
+Règle de produit : **sans tri demandé, une liste montre ce qui vient d'être
+enregistré en premier** (le client qu'on vient de créer, la vente qu'on vient
+de saisir, le produit qu'on vient d'ajouter).
+
+- L'ordre par défaut est `created_at DESC, id DESC` — l'`id` départage deux
+  lignes créées dans la même seconde, sinon l'ordre change d'un affichage à
+  l'autre. Utilitaire commun : `lib/list-sort.ts`.
+- Les autres tris (`name` alphabétique, `balance` décroissant, `promised` =
+  planning d'atelier) sont **explicites** : `?sort=name`, `?sort=balance`,
+  `?sort=promised`. Une valeur inconnue retombe sur `recent`, jamais sur une
+  erreur 400.
+- ⚠️ **Le tri se fait en SQL, côté serveur.** Trier dans la page ne trie que la
+  page courante : sur trois pages de clients, « solde décroissant » afficherait
+  le plus gros solde de la page 1 au lieu de celui de la base. C'est le défaut
+  qui existait sur `/clients` — corrigé, et à ne pas réintroduire.
+- Exception assumée : les listes qui alimentent un **menu déroulant de noms**
+  (filtre « utilisateur » de l'historique) restent alphabétiques.
+
 ---
 
 ## 5. Le patron de page (`app/<module>/page.tsx`)
@@ -221,6 +241,32 @@ Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 - Barres de filtres : `flex-wrap` ; filtres secondaires repliés derrière
   « Filtres (n) » sur mobile (fourni par `DataToolbar`).
 - Impressions : `print:` masque la sidebar et les boutons.
+
+### Aucune page ne défile horizontalement — les 4 causes à connaître
+
+Une barre de défilement horizontale en bas de la fenêtre, avec le contenu coupé
+à droite, vient toujours de l'une de ces quatre causes. Mesuré et corrigé sur
+les 32 écrans aux largeurs 360 / 768 / 1024 / 1366 px :
+
+1. **Référence de grille ou de flex sans `min-width: 0`.** Un enfant de `grid`
+   ou de `flex` a `min-width: auto` : il **refuse** de rétrécir sous la largeur
+   minimale de son contenu, et pousse toute la page. D'où `min-w-0` sur `main`
+   (`app-shell`), sur `PageSection` et sur toute section de grille.
+2. **Tableau large sans conteneur de défilement.** Le défilement horizontal
+   appartient au **tableau**, jamais à la page : `ResponsiveTable` enveloppe sa
+   vue tableau dans `overflow-x-auto`, donc la carte défile et les en-têtes de
+   page restent en place.
+3. **Texte insécable dans un champ ou une carte.** DaisyUI met `.label` en
+   `white-space: nowrap` : un texte d'aide ne passait pas à la ligne et prenait
+   la largeur de sa phrase. Les aides (`FormField`) et les lignes de total
+   (`flex-wrap` + `min-w-0`) doivent se replier.
+4. **`whitespace-nowrap` sur un montant ou une référence** dans une colonne
+   étroite : passer la ligne en `flex-wrap`, ou réduire le nombre de colonnes
+   avant `xl` (voir `/rapports`, panneau « Bénéfice net »).
+
+**Contrôle avant de livrer un écran** : ouvrir la page à 360 px et vérifier
+qu'il n'y a **aucune** barre horizontale. `document.documentElement.scrollWidth`
+doit être **inférieur ou égal** à `window.innerWidth`.
 
 ---
 
@@ -392,15 +438,18 @@ await shareOnWhatsApp(html, message, `${fileBase}.png`, 'Facture');
 | Un message d'erreur générique dans le `catch` | `toast.error(error?.message ?? '…')` — un échec muet est indiagnosticable |
 | Étirer l'image sur une page A4 | Laisser `exportDocumentAsPDF` conserver les proportions et paginer |
 
-**Vérification** : `node scripts/verify-export-e2e.js /ventes/<id>` pilote un vrai
-navigateur (protocole DevTools) et déclenche réellement les exports. Le script
-`scripts/probe-export-ui.js` sert à inspecter les boutons si un sélecteur casse.
+**Vérification** : `npm run verify:export` (ou `node scripts/verify-export-e2e.js /ventes/<id>`
+pour viser une facture précise) pilote un vrai navigateur (protocole DevTools) et
+déclenche réellement les exports. Sans argument, le script prend la première vente
+de la liste. Le script `scripts/probe-export-ui.js` sert à inspecter les boutons si
+un sélecteur casse.
 
 ---
 
 ## 12. Liste de contrôle avant de déclarer un module terminé
 
 - [ ] `npx tsc --noEmit` passe sur les fichiers du module
+- [ ] `npm run verify:routes` (serveur démarré) : la nouvelle page et ses routes API ne produisent **aucune erreur 500**
 - [ ] **Aucun import runtime d'un module serveur dans un composant client** (§11 bis)
 - [ ] Les 5 états sont présents (chargement, vide, erreur, nominal, feedback)
 - [ ] Aucune couleur Tailwind figée (`grep -E "bg-(sky|blue|red|green|amber|slate)-[0-9]"`)
@@ -420,4 +469,16 @@ npm run dev          # serveur de développement (navigateur, 127.0.0.1:3000)
 npm run typecheck    # tsc --noEmit
 npm run build        # build de production Next.js
 npm run db:generate  # régénérer les migrations après un changement de schéma
+```
+
+### Vérifications de bout en bout
+
+Elles interrogent une application **démarrée** (`npm run dev` ou `npm run start`) ;
+`verify:export` demande en plus un navigateur lancé avec
+`--remote-debugging-port=9222`.
+
+```bash
+npm run verify:routes     # découvre et appelle toutes les pages et routes API : aucune erreur 500 tolérée
+npm run verify:purchases  # parcours d'achat complet : stock, caisse, dette fournisseur, numérotation
+npm run verify:export     # export PDF / image / WhatsApp dans un vrai navigateur
 ```

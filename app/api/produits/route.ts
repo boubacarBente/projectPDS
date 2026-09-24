@@ -11,10 +11,12 @@ import {
 } from '@/lib/api';
 import { createProduct, isCategoryKind, listProducts } from '@/lib/products';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/produits — liste paginée du catalogue (README §27.2).
  * Filtres : `search`, `categoryId`, `kind`, `lowStock`, `outOfStock`, `includeInactive`.
+ * Tri : `?sort=recent` (défaut, dernier produit enregistré) ou `?sort=name`.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -35,6 +37,7 @@ export async function GET(request: NextRequest) {
       includeInactive: toBool(params.get('includeInactive'), false),
       page,
       limit,
+      sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
     return ok(result);

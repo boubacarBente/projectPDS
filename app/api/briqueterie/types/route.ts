@@ -2,22 +2,29 @@ import { NextRequest } from 'next/server';
 import { fail, ok, readJson, requireAction, toBool, toNumber, required } from '@/lib/api';
 import { createBrickType, isBrickShape, listBrickTypes } from '@/lib/brick';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/briqueterie/types — types de briques et leur produit lié.
  *
  * Le produit lié (`product_id`) est celui qui porte le **prix de vente et le
  * stock** des briques finies (README §20).
+ * `?sort=recent` (défaut) = dernier type créé ; `?sort=name` = alphabétique.
  */
 export async function GET(request: NextRequest) {
   try {
     await requireAction('brick.view');
 
+    const params = request.nextUrl.searchParams;
     const includeInactive =
-      toBool(request.nextUrl.searchParams.get('includeInactive'), false) ||
-      request.nextUrl.searchParams.get('all') === '1';
+      toBool(params.get('includeInactive'), false) || params.get('all') === '1';
 
-    return ok({ data: await listBrickTypes({ includeInactive }) });
+    return ok({
+      data: await listBrickTypes({
+        includeInactive,
+        sort: parseListSort(params.get('sort'), ['recent', 'name']),
+      }),
+    });
   } catch (error) {
     return fail(error);
   }

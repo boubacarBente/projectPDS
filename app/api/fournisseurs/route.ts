@@ -10,6 +10,7 @@ import {
 } from '@/lib/api';
 import { createSupplier, listSuppliers } from '@/lib/suppliers';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /** GET /api/fournisseurs — liste paginée, filtrable, avec dettes calculées. */
 export async function GET(request: NextRequest) {
@@ -26,6 +27,8 @@ export async function GET(request: NextRequest) {
       debtorsOnly: toBool(params.get('debtors'), false),
       includeInactive: toBool(params.get('includeInactive'), false),
       inactiveOnly: toBool(params.get('inactive'), false),
+      // `recent` par défaut : le dernier fournisseur enregistré en premier.
+      sort: parseListSort(params.get('sort')),
     });
 
     return ok(result);

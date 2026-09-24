@@ -12,6 +12,7 @@ import {
 import { createUser, getUserStats, listUsersPage } from '@/lib/users';
 import { writeAudit } from '@/lib/audit';
 import { isRole } from '@/lib/permissions';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/users — liste paginée, filtrable (README §27.2).
@@ -40,7 +41,18 @@ export async function GET(request: NextRequest) {
     const role = params.get('role') ?? undefined;
 
     if (toBool(params.get('options'), false)) {
-      const all = await listUsersPage({ includeInactive: true, role, limit: 200, page: 1 });
+      /*
+       * Liste d'un **filtre** (§27.1 `/utilisateurs/historique`) : l'ordre
+       * alphabétique est celui qu'on attend d'un menu déroulant de noms, et il
+       * ne dépend pas de la règle « dernière insertion » des listes de gestion.
+       */
+      const all = await listUsersPage({
+        includeInactive: true,
+        role,
+        limit: 200,
+        page: 1,
+        sort: parseListSort(params.get('sort'), ['recent', 'name'], 'name'),
+      });
       return ok(all.data.map((user) => ({ id: user.id, name: user.name, username: user.username })));
     }
 
@@ -51,6 +63,8 @@ export async function GET(request: NextRequest) {
       includeInactive: toBool(params.get('includeInactive'), false),
       page,
       limit,
+      // `recent` par défaut : le dernier compte créé en premier.
+      sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
     return ok(result);

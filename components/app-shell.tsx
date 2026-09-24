@@ -490,8 +490,19 @@ export function AppShell({ children }: { children: ReactNode }) {
       </AnimatePresence>
 
       {/* ------------------------------- Contenu ------------------------------- */}
-      <main className="min-h-screen flex-1 bg-base-100 pt-16 lg:pt-0">
-        <div className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">{children}</div>
+      {/*
+       * `min-w-0` est **obligatoire** ici.
+       *
+       * Un élément flex a `min-width: auto` par défaut : il refuse de rétrécir
+       * sous la largeur minimale de son contenu. Un tableau large (liste des
+       * stocks, des modèles, des achats…) imposait donc à `main` une largeur
+       * supérieure à la place restante, et **toute la page débordait
+       * horizontalement** — barre de défilement en bas, contenu coupé à droite.
+       * Avec `min-w-0`, `main` se limite à la place disponible ; c'est ensuite
+       * au tableau de défiler dans sa propre carte (`ResponsiveTable`).
+       */}
+      <main className="min-w-0 min-h-screen flex-1 bg-base-100 pt-16 lg:pt-0">
+        <div className="mx-auto min-w-0 max-w-7xl p-4 sm:p-6 lg:p-8">{children}</div>
       </main>
     </div>
   );

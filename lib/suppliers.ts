@@ -17,6 +17,7 @@ import { suppliers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
 import { listPayments, type PaymentRow } from '@/lib/payments';
+import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 export type SupplierRow = {
   id: number;
@@ -97,6 +98,8 @@ export async function listSuppliers(
     includeInactive?: boolean;
     /** Restreint aux fiches désactivées — contrepartie stricte de `includeInactive`. */
     inactiveOnly?: boolean;
+    /** `recent` (défaut) = dernière insertion ; `name` ; `balance` = dette décroissante. */
+    sort?: ListSort;
   } = {},
 ): Promise<PaginatedSuppliers> {
   const page = Math.max(1, options.page ?? 1);
@@ -166,7 +169,7 @@ export async function listSuppliers(
     created_at: number | null;
   }>(
     `SELECT * FROM (${innerSql}) ${debtorFilter}
-     ORDER BY name COLLATE NOCASE
+     ORDER BY ${sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT)}
      LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );

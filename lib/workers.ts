@@ -22,6 +22,7 @@ import { workers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
 import { NotFoundError, ValidationError } from '@/lib/api';
+import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -67,6 +68,8 @@ export type WorkerListOptions = {
   includeInactive?: boolean;
   page?: number;
   limit?: number;
+  /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
+  sort?: ListSort;
 };
 
 /* ------------------------------------------------------------------ *
@@ -149,7 +152,7 @@ export async function listWorkers(
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
   const rows = await rawAll<WorkerSqlRow>(
-    `${WORKER_SELECT} ${whereSql} ORDER BY w.name COLLATE NOCASE LIMIT ? OFFSET ?`,
+    `${WORKER_SELECT} ${whereSql} ORDER BY ${sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'w', ['recent', 'name'])} LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );
 

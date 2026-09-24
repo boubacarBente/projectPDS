@@ -11,10 +11,12 @@ import {
 } from '@/lib/api';
 import { createCategory, listCategories } from '@/lib/products';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/produits/categories — catégories du catalogue (README §27.2).
  * `?includeInactive=true` renvoie aussi les catégories désactivées.
+ * `?sort=recent` (défaut) = dernière catégorie créée ; `?sort=name` = alphabétique.
  *
  * La réponse respecte l'enveloppe paginée imposée à **toutes** les listes :
  * `{ data, total, page, limit, totalPages }`.
@@ -26,7 +28,10 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
 
-    const all = await listCategories({ includeInactive: toBool(params.get('includeInactive'), false) });
+    const all = await listCategories({
+      includeInactive: toBool(params.get('includeInactive'), false),
+      sort: parseListSort(params.get('sort'), ['recent', 'name']),
+    });
 
     const start = (page - 1) * limit;
     const data = all.slice(start, start + limit);

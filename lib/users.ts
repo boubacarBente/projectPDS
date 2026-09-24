@@ -31,6 +31,7 @@ import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
 import { ROLES, isRole, type Role } from '@/lib/permissions';
 import { enqueueSyncWrite } from '@/lib/sync';
 import { MIN_PASSWORD_LENGTH, USERNAME_PATTERN } from '@/lib/constants';
+import { DEFAULT_LIST_SORT, compareByListSort, type ListSort } from '@/lib/list-sort';
 
 /**
  * Longueur minimale du mot de passe.
@@ -132,12 +133,19 @@ export function toUserRow(row: {
  * ------------------------------------------------------------------ */
 
 /**
- * Tous les utilisateurs, projection publique, triés par nom.
+ * Tous les utilisateurs, projection publique, **triés par nom** (ordre de
+ * `lib/auth.ts`).
  *
- * Réutilise volontairement `listUsers()` de `lib/auth.ts` (ne pas dupliquer une
- * requête existante) et ajoute la projection publique. Le filtrage et la
- * pagination sont faits par `listUsersPage` ci-dessous : la table `users` compte
- * quelques dizaines de lignes, un `LIMIT` SQL n'apporterait rien.
+ * Cet ordre alphabétique est conservé volontairement : cette fonction alimente
+ * les **menus déroulants** (filtre « utilisateur » de l'historique) et les
+ * compteurs, pas la liste paginée de `/utilisateurs` — celle-ci passe par
+ * `listUsersPage`, dont le tri par défaut est « dernier compte créé »
+ * (`lib/list-sort.ts`).
+ *
+ * Réutilise `listUsers()` de `lib/auth.ts` (ne pas dupliquer une requête
+ * existante) et ajoute la projection publique. Le filtrage et la pagination
+ * sont faits par `listUsersPage` : la table `users` compte quelques dizaines
+ * de lignes, un `LIMIT` SQL n'apporterait rien.
  */
 export async function listUsers(): Promise<UserRow[]> {
   const rows = await listUsersFromAuth();
@@ -160,9 +168,12 @@ export async function listUsersPage(options: {
   includeInactive?: boolean;
   page?: number;
   limit?: number;
+  /** `recent` (défaut) = dernier compte créé ; `name` = ordre alphabétique. */
+  sort?: ListSort;
 } = {}): Promise<{ data: UserRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(200, options.limit ?? 20));
+  const sort = options.sort ?? DEFAULT_LIST_SORT;
 
   let rows = await listUsers();
 
@@ -185,6 +196,19 @@ export async function listUsersPage(options: {
         (row.phone ?? '').toLowerCase().includes(search),
     );
   }
+
+  /*
+   * Le tri est appliqué ici, en mémoire : la table `users` compte quelques
+   * dizaines de lignes et le filtrage est déjà fait en JavaScript. Le défaut
+   * reste le même que partout ailleurs — le dernier compte créé en premier.
+   */
+  rows = [...rows].sort((a, b) =>
+    compareByListSort(a, b, sort, {
+      name: (row) => row.name,
+      createdAt: (row) => row.createdAt,
+      id: (row) => row.id,
+    }),
+  );
 
   const total = rows.length;
   const totalPages = Math.ceil(total / limit) || 1;

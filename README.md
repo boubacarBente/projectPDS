@@ -19,15 +19,23 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 > | Lot 5 — Évolutions (scanner, ticket thermique, multi-magasins) | ⏳ backlog |
 > | Lot 6 — Service de synchronisation PostgreSQL en ligne | ⏳ option ; l'écran, la file d'attente et l'export/import manuel sont livrés, **le serveur en ligne ne l'est pas** |
 >
-> **Ajouts demandés par le client après la v1.3** : voir §17.4 pour les
-> **permissions par utilisateur** (l'administrateur accorde ou retire chaque
-> action, utilisateur par utilisateur) — *seul l'administrateur a droit à tout*,
-> et son propre accès ne peut pas être restreint.
+> **Ajouts demandés par le client après la v1.3** :
+> - **permissions par utilisateur** (§17.4) — l'administrateur accorde ou retire
+>   chaque action, utilisateur par utilisateur ; *seul l'administrateur a droit à
+>   tout*, et son propre accès ne peut pas être restreint ;
+> - **module Achats complet** (§7.5, §14) — le lien « Achats » du menu menait à
+>   une page 404 : le module est désormais livré (`/achats`, `/achats/nouvelle`,
+>   `/achats/[id]`, numérotation `ACH-…`, entrée de stock, sortie de caisse,
+>   dette fournisseur, reçu imprimable).
 >
-> **Vérifications passées** : `tsc --noEmit` sans erreur, `next build` réussi
-> (36 routes), 12 pages et 31 points d'API répondant 200, parcours de vente
-> vérifié de bout en bout (numérotation, TVA, stock décimal, acompte, solde,
-> reçu, caisse, journal).
+> **Vérifications passées** : `tsc --noEmit` sans erreur ; `next build` réussi
+> **avec le contrôle des types activé** — 107 entrées de route, soit **34 pages
+> et 71 routes d'API** ; `npm run verify:routes` (107/107, aucune erreur 500) ;
+> `npm run verify:purchases` (21/21 : numérotation, total, paiement partiel,
+> dette fournisseur, variation de stock, sortie de caisse, mouvement tracé) ;
+> `npm run verify:export` (image et PDF générés dans un vrai navigateur) ;
+> parcours de vente vérifié de bout en bout (numérotation, TVA, stock décimal,
+> acompte, solde, reçu, caisse, journal).
 >
 > Voir la section [24. Points à valider](#24-points-à-valider--questions-ouvertes)
 > pour les décisions qui attendent encore une réponse du client.
@@ -506,6 +514,19 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 8. **Tableaux chiffrés** : montants alignés à droite avec `tabular-nums`, jamais de retour à la ligne d'un montant.
 9. **Impression** : `print:` masque la sidebar, l'en-tête et les boutons ; les factures restent en `max-w-4xl`.
 10. **Desktop Electron** : fenêtre **minimum 1024 × 700** (`minWidth` / `minHeight`) ; en dessous, la sidebar se replie automatiquement.
+
+> **Défilement horizontal — vérifié dans un navigateur réel (24/09/2026).**
+> Les **32 écrans** ont été ouverts à **360, 768, 1024 et 1366 px** :
+> `document.documentElement.scrollWidth ≤ window.innerWidth` partout, soit
+> **0 page en débordement sur 128 mesures**. Les **25 modales** recensées ne
+> débordent pas non plus (0 sur 25, contre 5 avant correction).
+> Les quatre causes — références de grille sans `min-w-0`, tableau large sans
+> conteneur de défilement, texte d'aide insécable, montant insécable — et la
+> façon de les corriger sont décrites dans
+> [CONVENTIONS §8](docs/CONVENTIONS.md#aucune-page-ne-défile-horizontalement--les-4-causes-à-connaître).
+> Le défilement horizontal des **tableaux** reste, lui, volontaire : il est
+> contenu dans la carte du tableau, jamais dans la page (et il est explicite
+> pour les tableaux de saisie, `data-entry-table`).
 
 **Matrice de recette — une page non cochée n'est pas terminée**
 
@@ -1674,6 +1695,10 @@ Table `devices`, `sync_batches` (journal des lots), `sync_conflicts`. Les tables
 
 **Scripts npm ajoutés**
 
+> ⚠️ Ces quatre scripts **ne sont pas encore dans `package.json`** : ils
+> appartiennent au service en ligne (lot 6), qui n'est pas livré (§25.1). Les
+> déclarer maintenant donnerait des commandes qui échouent.
+
 ```bash
 npm run db:pg:generate   # Générer les migrations PostgreSQL
 npm run db:pg:push       # Pousser le schéma vers PostgreSQL
@@ -1711,7 +1736,7 @@ npm run sync:build       # Construire l'API de synchronisation
 | **Q7** | **Sauvegardes automatiques** : fréquence et durée de conservation souhaitées ? | 1 copie par jour au premier lancement, conservation 30 jours |
 | **Q8** | **Envoi programmé des rapports** : le logiciel est installé localement et peut être fermé le soir. Accepte-t-on que l'envoi automatique se déclenche **à l'ouverture de l'application** (rattrapage) si elle était fermée à l'heure prévue ? | Oui : rattrapage à l'ouverture + envoi réellement automatique uniquement si l'app est ouverte et connectée |
 | **Q9** | **Passerelle SMS / WhatsApp** : liaison manuelle (`wa.me`, gratuit, hors ligne) ou API officielle (automatique, payante, jeton et Internet requis) ? | **Lien manuel en V1**, API en option lot 5 |
-| **Q10** | **Dépôt GitHub** pour les releases et l'auto-update : nom du dépôt, propriétaire, dépôt privé ou public ? | À créer — `boubacarBente/planeteDeco` |
+| **Q10** | **Dépôt GitHub** pour les releases et l'auto-update : nom du dépôt, propriétaire, dépôt privé ou public ? | À créer — `boubacarBente/planeteDeco`. **Retenu depuis : `boubacarBente/projectPDS`** (dépôt existant, `build.publish` pointe dessus) |
 | **Q11** | **Utilisateurs réels et rôles** au démarrage : combien de postes, qui est admin ? Les **6 rôles** du schéma client (admin, gérant, vendeur, magasinier, menuisier, briquetier) sont-ils tous utilisés dès la V1 ? | 1 admin + 1 gérant + vendeurs ; menuisier et briquetier activés aux lots 3 et 4 |
 | **Q12** | **Données de démarrage** : préremplir le catalogue (produits, prix d'achat et de vente réels) ou démarrer vide ? | Démarrer vide + un catalogue de démonstration optionnel en développement |
 | **Q13** | **Prix d'achat** : sont-ils connus et saisis par produit (nécessaire au calcul de marge) ? | Oui, obligatoires pour les produits dont la catégorie est `finished` ou `raw_material` |
@@ -1753,7 +1778,7 @@ npm run sync:build       # Construire l'API de synchronisation
 |---|---|---|
 | **Questions Q1 à Q26** (§24) | Ce sont des **décisions client**, pas du développement. Les propositions par défaut sont implémentées | Vos réponses. Q1 (numérotation) et Q2 (TVA) sont les plus urgentes : elles changent les documents déjà émis |
 | **Service de synchronisation en ligne** (lot 6a/6b) | Il suppose une décision d'hébergement et un accord écrit sur la sortie des données (§23.11, Q25, Q26) | Votre accord + un hébergement PostgreSQL |
-| **Matrice de recette** (§5.5, 155 cases) | Elles se cochent **en cliquant** dans un navigateur à 360, 768 et 1440 px, écran par écran. La vérification faite est technique (20 pages et 31 API répondent 200, build vert), **pas** visuelle page par page | Une passe de recette avec vous |
+| **Matrice de recette** (§5.5, 155 cases) | Elles se cochent **en cliquant** dans un navigateur à 360, 768 et 1440 px, écran par écran. La vérification faite est technique (34 pages et 71 routes d'API découvertes et appelées par `npm run verify:routes` : **aucune erreur 500**, build vert), **pas** visuelle page par page | Une passe de recette avec vous |
 | **Lot 5 — évolutions** | Explicitement hors périmètre V1 | Une commande |
 | **`npm run lint`** | `typescript-eslint@8` refuse TypeScript 7.0 (incompatibilité d'outillage, pas du code). `npm run typecheck` et `next build` couvrent le contrôle des types | Attendre le support de TS 7 par typescript-eslint, ou redescendre à TypeScript 5.9 (§4.5) |
 | **Signature de code Windows** | L'installateur n'est pas signé : Windows affichera un avertissement SmartScreen au premier lancement | Un certificat de signature de code |
@@ -1796,10 +1821,10 @@ npm run sync:build       # Construire l'API de synchronisation
 | `/ventes` · `/ventes/nouvelle` · `/ventes/[id]` | Ventes : liste, création, détail + impression | 1 |
 | `/recus/[id]` | Reçu de paiement | 1 |
 | `/clients` · `/clients/[id]` · `/clients/[id]/paiements` | Clients, fiche, historique et soldes | 1 |
-| `/fournisseurs` · `/fournisseurs/[id]/paiements` | Fournisseurs | 1 |
+| `/fournisseurs` · `/fournisseurs/[id]` · `/fournisseurs/[id]/paiements` | Fournisseurs, fiche et règlements | 1 |
 | `/produits` · `/produits/categories` | Catalogue (les **unités** sont une liste dans les paramètres, pas un écran dédié) | 1 |
 | `/stocks` | Stock, mouvements, inventaire, alertes | 1 |
-| `/achats` · `/achats/[id]` | Achats fournisseur | 1 |
+| `/achats` · `/achats/nouvelle` · `/achats/[id]` | Achats fournisseur : liste, saisie, détail + document imprimable | 1 |
 | `/caisse` | Ouverture/clôture, entrées/sorties, solde | 2 |
 | `/depenses` | Dépenses (les **catégories** sont une liste dans les paramètres) | 2 |
 | `/soldes` | Soldes clients/fournisseurs, créances, dettes, bénéfices | 2 |
@@ -1815,28 +1840,40 @@ npm run sync:build       # Construire l'API de synchronisation
 ### 27.2 API REST
 
 > **Toutes les routes de liste sont paginées côté serveur** : `?page=1&limit=10&search=...` → `{ data, total, page, limit, totalPages }` (format repris de Gaz).
+>
+> **Tri** : par défaut, une liste affiche **la dernière insertion en premier**
+> (`created_at DESC, id DESC` — l'`id` départage deux lignes créées dans la même
+> seconde). Les tris explicites sont `?sort=recent` (défaut), `?sort=name`
+> (alphabétique : clients, fournisseurs, produits, catégories, ouvriers,
+> utilisateurs, types de briques, modèles d'atelier, stock), `?sort=balance`
+> (solde ou dette décroissant : clients et fournisseurs) et `?sort=promised`
+> (planning d'atelier, date promise la plus proche d'abord : commandes). Le tri
+> est fait **en SQL** : un tri côté navigateur ne trierait que la page affichée.
+> Règle détaillée et utilitaire commun : `lib/list-sort.ts`
+> et [CONVENTIONS §5](docs/CONVENTIONS.md#tri-des-listes--la-dernière-insertion-dabord).
 
 | Domaine | Routes |
 |---|---|
 | Auth | `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `GET|POST /api/auth/setup` |
-| Clients | `GET|POST /api/clients` · `GET|PUT|DELETE /api/clients/[id]` · `GET /api/clients/[id]/paiements` · `GET /api/clients/stats` |
+| Clients | `GET|POST /api/clients` · `GET|PUT|DELETE /api/clients/[id]` · `GET /api/clients/stats` |
 | Fournisseurs | `GET|POST /api/fournisseurs` · `GET|PUT|DELETE /api/fournisseurs/[id]` · `GET /api/fournisseurs/[id]/paiements` · `GET /api/fournisseurs/stats` |
-| Produits | `GET|POST /api/produits` · `GET|PUT|DELETE /api/produits/[id]` · `GET|POST /api/produits/categories` |
-| Ouvriers | `GET|POST /api/workers` · `PUT|DELETE /api/workers/[id]` — **table unique** partagée par les chantiers, la briqueterie et l'atelier |
+| Produits | `GET|POST /api/produits` · `GET|PUT|DELETE /api/produits/[id]` · `GET|POST /api/produits/categories` · `GET|PUT|DELETE /api/produits/categories/[id]` · `GET /api/produits/stats` |
+| Ouvriers | `GET|POST /api/workers` · `GET|PUT|DELETE /api/workers/[id]` — **table unique** partagée par les chantiers, la briqueterie et l'atelier |
 | Stocks | `GET /api/stocks` · `GET /api/stocks/mouvements` · `POST /api/stocks/adjust` · `GET /api/stocks/summary` |
-| Achats | `GET|POST /api/achats` · `GET|PUT|DELETE /api/achats/[id]` |
+| Achats | `GET|POST /api/achats` · `GET|PUT|DELETE /api/achats/[id]` · `GET /api/achats/stats` (`?supplierId=` pour la fiche fournisseur) |
 | Ventes | `GET|POST /api/ventes` · `GET|PUT|DELETE /api/ventes/[id]` · `POST /api/ventes/[id]/annuler` · `GET /api/ventes/stats` |
 | Paiements | `GET|POST /api/paiements` · `GET /api/paiements/[id]` (reçu) |
-| Dépenses | `GET|POST /api/depenses` · `PUT|DELETE /api/depenses/[id]` |
-| Caisse | `GET|POST /api/caisse` · `PUT|DELETE /api/caisse/[id]` · `GET /api/caisse/summary` · `POST /api/caisse/sessions` (ouverture) · `PUT /api/caisse/sessions/[id]` (clôture) |
-| Chantiers | `GET|POST /api/chantiers` · `GET|PUT|DELETE /api/chantiers/[id]` · `PUT /api/chantiers/[id]/devis` · `POST /api/chantiers/[id]/materiaux` · `POST /api/chantiers/[id]/ouvriers` |
-| Briqueterie | `GET|POST /api/briqueterie/types` · `GET|POST /api/briqueterie/productions` · `PUT /api/briqueterie/productions/[id]` (étape, pertes) |
-| Atelier | `GET|POST /api/atelier/modeles` · `PUT /api/atelier/modeles/[id]` · `GET|POST /api/atelier/commandes` · `PUT /api/atelier/commandes/[id]` |
+| Dépenses | `GET|POST /api/depenses` · `GET|PUT|DELETE /api/depenses/[id]` · `GET /api/depenses/stats` |
+| Caisse | `GET|POST /api/caisse` (mouvements + résumé, mouvement manuel) · `GET /api/caisse/sessions` (session ouverte, historique, résumé) · `POST /api/caisse/sessions` (ouverture) · `PUT /api/caisse/sessions` (clôture) |
+| Chantiers | `GET|POST /api/chantiers` · `GET|PUT|DELETE /api/chantiers/[id]` · `PUT /api/chantiers/[id]/devis` · `GET|POST|DELETE /api/chantiers/[id]/materiaux` · `GET|POST|DELETE /api/chantiers/[id]/ouvriers` |
+| Briqueterie | `GET|POST /api/briqueterie/types` · `GET|PUT|DELETE /api/briqueterie/types/[id]` · `GET|POST /api/briqueterie/productions` · `GET|PUT|DELETE /api/briqueterie/productions/[id]` (étape, pertes) |
+| Atelier | `GET|POST /api/atelier/modeles` · `GET|PUT|DELETE /api/atelier/modeles/[id]` · `GET|POST /api/atelier/commandes` · `GET|PUT|DELETE /api/atelier/commandes/[id]` |
 | Rapports | `GET /api/rapports` (`from`, `to`, `previousFrom`, `previousTo`, `productId`, `customerId`, `supplierId`, `paymentStatus`) · `POST /api/rapports/envoyer` · `GET /api/rapports/envois` |
 | Dashboard | `GET /api/operations/snapshot` |
-| Utilisateurs | `GET|POST /api/users` · `PUT|DELETE /api/users/[id]` · `GET /api/audit` |
-| Paramètres | `GET|PUT /api/parametres` · `POST /api/parametres/seed-data` · `POST /api/parametres/reset-data` · `GET /api/parametres/backup` · `POST /api/parametres/restore` |
-| Synchronisation *(poste)* | `GET /api/sync/status` · `POST /api/sync/now` · `GET /api/sync/conflits` · `POST /api/sync/conflits/[id]` · `POST /api/sync/export` · `POST /api/sync/import` · `POST /api/sync/reset` |
+| Utilisateurs | `GET|POST /api/users` · `GET|PUT|DELETE /api/users/[id]` · `PUT /api/users/[id]/password` · `GET|PUT|DELETE /api/users/[id]/permissions` (§17.4) · `GET /api/audit` |
+| Paramètres | `GET|PUT|POST /api/parametres` · `POST /api/parametres/seed-data` · `POST /api/parametres/reset-data` · `GET /api/parametres/backup` · `POST /api/parametres/restore` |
+| Soldes | `GET /api/soldes` (créances clients, dettes fournisseurs, bénéfices) |
+| Synchronisation *(poste)* | `GET /api/sync/status` · `POST /api/sync/now` · `GET /api/sync/conflits` · `POST /api/sync/conflits/[id]` · `GET|POST /api/sync/export` · `POST /api/sync/import` · `POST /api/sync/reset` |
 | Synchronisation *(service en ligne)* | `GET /health` · `POST /push` (lots idempotents) · `POST /pull` (watermark) · `POST /devices` (enregistrement / révocation) |
 
 ### 27.3 Scripts npm
@@ -1844,6 +1881,7 @@ npm run sync:build       # Construire l'API de synchronisation
 ```bash
 npm run dev                # Serveur de développement (navigateur)
 npm run dev:desktop        # Next.js + Electron en mode développement
+npm run start              # Serveur de production (après `npm run build`)
 npm run build              # Build Next.js de production
 npm run build:desktop:win  # Installeur Windows (.exe NSIS)
 npm run build:desktop:mac  # macOS (.dmg)
@@ -1859,6 +1897,23 @@ npm run release:major      # Release majeure
 npm run db:generate        # Générer les migrations Drizzle
 npm run db:push            # Pousser le schéma vers la base
 npm run db:studio          # Ouvrir Drizzle Studio
+```
+
+**Scripts de vérification** — ils interrogent une application **démarrée**
+(`npm run dev` ou `npm run start`) et une base contenant un administrateur
+(`APP_USER` / `APP_PASSWORD` pour changer les identifiants) :
+
+```bash
+npm run verify:routes      # Découvre et appelle les 34 pages et les 71 routes d'API : aucune erreur 500 tolérée
+npm run verify:purchases   # Parcours d'achat de bout en bout (21 contrôles) : stock, caisse, dette, numérotation
+npm run verify:export      # Export PDF / image / WhatsApp dans un navigateur réel (CDP sur le port 9222)
+```
+
+**Scripts prévus au lot 6** — ils appartiennent au **service de synchronisation
+en ligne**, qui n'est pas livré : ils ne sont donc **pas** dans `package.json`
+(voir §23.13 et §25.1).
+
+```bash
 npm run db:pg:generate     # Générer les migrations PostgreSQL (service en ligne)
 npm run db:pg:push         # Pousser le schéma vers PostgreSQL
 npm run sync:dev           # Lancer l'API de synchronisation en développement
@@ -1869,16 +1924,19 @@ npm run sync:build         # Construire l'API de synchronisation
 
 ## Validation
 
-Pour valider ce document, il suffit de répondre :
+Ce document a été validé et les **lots 0 à 4 sont construits** (statut en tête de
+fichier). Il reste donc à valider non plus la conception, mais trois points :
 
-1. **« README validé »** → je démarre le **Lot 0** (socle technique) sans autre question.
-2. **« README validé, commence par le Lot X »** → je démarre directement au lot indiqué.
-3. **Des corrections** → je modifie le README et je vous le resoumet.
+1. **Les réponses aux 26 questions** de la section [24](#24-points-à-valider--questions-ouvertes) — **Q1** (format de numérotation des factures) et **Q2** (TVA) d'abord : elles changent le contenu des documents déjà émis.
+2. **La recette visuelle** (§5.5, 155 cases) : une passe ensemble, écran par écran, à 360, 768 et 1440 px. La vérification technique est faite et reproductible (`npm run verify:routes`), la vérification *visuelle* ne l'est pas.
+3. **Le lot 6** (service de synchronisation en ligne) : il attend une décision d'hébergement et votre accord écrit sur la sortie des données (§23.11, Q25, Q26).
 
-Les réponses aux **26 questions** de la section [24](#24-points-à-valider--questions-ouvertes) peuvent venir au fil des lots, sauf **Q1 (numérotation des factures)** et **Q2 (TVA)**, nécessaires dès le Lot 1.
+Toute correction demandée sur ce document est appliquée et le document vous est
+resoumis.
 
 ---
 
 *Planète Déco Sarlu — « Construisons ensemble la solidité de vos projets ! »*
 
-*Document de conception — projet `projetPDS`. Version 1.3 — en attente de validation.*
+*Document de conception — projet `projetPDS`. Version 1.3.0 — lots 0 à 4
+construits et vérifiés, en attente des décisions client (§24).*

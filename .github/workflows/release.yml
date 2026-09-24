@@ -7,8 +7,8 @@ name: Build & Release Desktop App
 # Les builds macOS et Linux restent disponibles à la demande.
 #
 # ⚠️ Le dépôt de publication est déclaré dans `package.json` →
-# `build.publish` (`boubacarBente/planeteDeco`, README Q10). `GITHUB_TOKEN`
-# suffit pour publier sur le dépôt qui exécute le workflow.
+# `build.publish` (`boubacarBente/projectPDS`), et il doit correspondre au dépôt
+# qui exécute le workflow. `GITHUB_TOKEN` suffit pour publier.
 
 on:
   push:

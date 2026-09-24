@@ -14,6 +14,7 @@ import { db, rawAll, rawGet } from '@/db';
 import { customers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
+import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 export type CustomerRow = {
   id: number;
@@ -76,6 +77,8 @@ export async function listCustomers(options: {
   limit?: number;
   debtorsOnly?: boolean;
   includeInactive?: boolean;
+  /** `recent` (défaut) = dernière insertion ; `name` ; `balance` = solde décroissant. */
+  sort?: ListSort;
 } = {}): Promise<{ data: CustomerRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
@@ -130,6 +133,17 @@ export async function listCustomers(options: {
     ${whereSql}
   `;
 
+  /**
+   * Tri **en SQL**, sur la requête extérieure : la sous-requête expose déjà
+   * `created_at`, `id`, `name` et `balance`.
+   *
+   * ⚠️ Ne jamais trier cette liste en JavaScript dans la page : la pagination
+   * est faite ici (`LIMIT/OFFSET`), un tri local ne trierait que la page
+   * affichée — « solde décroissant » montrerait alors le plus gros solde de la
+   * page 1 et non celui de la base.
+   */
+  const orderBy = sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT);
+
   const rows = await rawAll<{
     id: number;
     name: string;
@@ -146,7 +160,7 @@ export async function listCustomers(options: {
     created_at: number | null;
   }>(
     `SELECT * FROM (${innerSql}) ${debtorFilter}
-     ORDER BY name COLLATE NOCASE
+     ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );

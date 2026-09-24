@@ -15,6 +15,7 @@
 import { db, schema } from '@/db';
 import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
+import { DEFAULT_LIST_SORT, type ListSort } from '@/lib/list-sort';
 
 export type StockMovementType = 'entry' | 'exit' | 'adjustment';
 
@@ -219,6 +220,8 @@ export async function listStockProducts(options: {
   categoryId?: number;
   page?: number;
   limit?: number;
+  /** `recent` (défaut) = dernier produit enregistré ; `name` = ordre alphabétique. */
+  sort?: ListSort;
 } = {}): Promise<{ data: StockProduct[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
@@ -240,10 +243,21 @@ export async function listStockProducts(options: {
 
   const where = and(...conditions);
 
+  /**
+   * Par défaut : **le dernier produit enregistré en premier**
+   * (`created_at DESC, id DESC`) — l'`id` départage deux produits créés dans
+   * la même seconde, sinon l'ordre n'est pas déterministe d'une page à l'autre.
+   */
+  const sort = options.sort ?? DEFAULT_LIST_SORT;
+  const orderBy =
+    sort === 'name'
+      ? [asc(schema.products.name), asc(schema.products.id)]
+      : [desc(schema.products.createdAt), desc(schema.products.id)];
+
   const [rows, totalResult] = await Promise.all([
     db.query.products.findMany({
       where,
-      orderBy: [asc(schema.products.code)],
+      orderBy,
       with: { category: { columns: { name: true, kind: true } } },
       limit,
       offset,

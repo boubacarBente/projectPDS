@@ -36,6 +36,7 @@ import { addStockMovement } from '@/lib/stock';
 import { ValidationError } from '@/lib/api';
 import { nextDocumentNumber } from '@/lib/settings';
 import { roundMoney, today } from '@/lib/format';
+import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 /* ------------------------------------------------------------------ *
  * Types publics
@@ -285,6 +286,12 @@ export type FurnitureOrderListOptions = {
   to?: string;
   page?: number;
   limit?: number;
+  /**
+   * `recent` (défaut) = dernière commande enregistrée — même règle que toutes
+   * les listes (`lib/list-sort.ts`) ; `promised` = date promise la plus proche
+   * (planning d'atelier), les commandes sans date promise en dernier.
+   */
+  sort?: 'recent' | 'promised';
 };
 
 export type WorkshopSummary = {
@@ -407,7 +414,14 @@ function mapModelRow(row: any): FurnitureModelRow {
 
 /** Liste paginée des modèles, nomenclature comptée et coût matière estimé. */
 export async function listFurnitureModels(
-  options: { search?: string; page?: number; limit?: number; includeInactive?: boolean } = {},
+  options: {
+    search?: string;
+    page?: number;
+    limit?: number;
+    includeInactive?: boolean;
+    /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
+    sort?: ListSort;
+  } = {},
 ): Promise<{
   data: FurnitureModelRow[];
   total: number;
@@ -433,7 +447,7 @@ export async function listFurnitureModels(
 
   const rows = await rawAll<any>(
     `SELECT ${MODEL_COLUMNS} ${MODEL_FROM} ${whereSql}
-     ORDER BY m.name COLLATE NOCASE, m.code COLLATE NOCASE
+     ORDER BY ${sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'm', ['recent', 'name'])}
      LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );
@@ -961,9 +975,18 @@ export async function listFurnitureOrders(options: FurnitureOrderListOptions = {
 
   // L'alias `c` / `m` n'existe que dans `ORDER_SELECT` : la clause de recherche
   // s'appuie donc sur la même jointure, ce que garantit la construction unique.
+  //
+  // Tri par défaut : **dernière commande enregistrée** (même règle que partout,
+  // `lib/list-sort.ts`). `?sort=promised` retrouve le planning d'atelier
+  // (date promise la plus proche d'abord, sans date promise en dernier).
+  const orderBy =
+    options.sort === 'promised'
+      ? 'o.promised_date IS NULL, o.promised_date, o.id DESC'
+      : 'o.created_at DESC, o.id DESC';
+
   const rows = await rawAll<any>(
     `${ORDER_SELECT} ${whereSql}
-     ORDER BY o.promised_date IS NULL, o.promised_date, o.id DESC
+     ORDER BY ${orderBy}
      LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );

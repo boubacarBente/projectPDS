@@ -14,6 +14,7 @@ import {
   listFurnitureModels,
 } from '@/lib/furniture';
 import { writeAudit } from '@/lib/audit';
+import { parseListSort } from '@/lib/list-sort';
 
 /**
  * GET /api/atelier/modeles — liste paginée des fiches modèles (README §21).
@@ -21,6 +22,7 @@ import { writeAudit } from '@/lib/audit';
  * Chaque ligne porte le nombre de matériaux de sa nomenclature et le coût
  * matière estimé d'une unité : une fiche modèle sans nomenclature ne sert à
  * rien, l'écran doit donc le montrer d'emblée.
+ * `?sort=recent` (défaut) = dernier modèle créé ; `?sort=name` = alphabétique.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -34,6 +36,7 @@ export async function GET(request: NextRequest) {
       includeInactive: toBool(params.get('includeInactive'), false),
       page,
       limit,
+      sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
     return ok(result);
