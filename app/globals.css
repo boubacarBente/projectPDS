@@ -1,0 +1,215 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+@plugin "daisyui" {
+  themes: light --default, dark;
+}
+@import "react-toastify/dist/ReactToastify.css";
+
+/* ==================================================================
+ * Jetons de design — source unique de vérité (README §5.3)
+ *
+ * 🚫 Règle d'or : aucune couleur en dur dans une page. Tout passe par
+ *    `btn-primary`, `text-primary`, `border-base-200`, `bg-base-100`.
+ * ================================================================== */
+:root {
+  /* Surfaces */
+  --background: #f8fafc;
+  --foreground: #1e293b;
+
+  /* Couleurs configurables — écrasées par `applyThemeColors()` */
+  --primary: #1e40af;
+  --p-color: #1e40af;
+  --s-color: #3b82f6;
+
+  /* Sidebar — texte dérivé, jamais figé (contraste automatique) */
+  --sidebar-color: #1e293b;
+  --sidebar-text: #ffffff;
+  --sidebar-text-muted: color-mix(in srgb, var(--sidebar-text) 62%, transparent);
+  --sidebar-border: color-mix(in srgb, var(--sidebar-text) 15%, transparent);
+  --sidebar-hover: color-mix(in srgb, var(--sidebar-text) 10%, transparent);
+  --sidebar-active: color-mix(in srgb, var(--sidebar-text) 20%, transparent);
+
+  /* Couleurs sémantiques — FIXES : leur sens ne doit pas dépendre du thème.
+     Déclarées sous leur nom DaisyUI v5 (`--color-*`) pour primer sur le thème
+     généré par le plugin : un client qui choisit un primaire rouge ne doit pas
+     transformer « succès » en rouge. */
+  --color-info: #0ea5e9;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info-content: #ffffff;
+  --color-success-content: #ffffff;
+  --color-warning-content: #1e293b;
+  --color-error-content: #ffffff;
+  --info: #0ea5e9;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+
+  /* Typographie — une seule famille, échelle de 5 crans */
+  --font-sans: "Segoe UI", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
+
+  /* Rayons : carte / champ / badge */
+  --radius-card: 16px;
+  --radius-field: 12px;
+  --radius-badge: 9999px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+select,
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  cursor: pointer;
+}
+
+::selection {
+  background: rgba(46, 117, 182, 0.18);
+}
+
+/* ------------------------------------------------------------------
+ * Chiffres : `tabular-nums` obligatoire sur tous les montants, quantités
+ * et dates en tableau — les colonnes s'alignent, la lecture est comptable.
+ * ------------------------------------------------------------------ */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+table .tabular,
+.money,
+.quantity {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Un montant ne se coupe jamais en fin de ligne */
+.money,
+.no-wrap-amount {
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------
+ * Cartes, champs, badges — rayons cohérents sur TOUTES les pages.
+ * ------------------------------------------------------------------ */
+.surface-card {
+  border-radius: var(--radius-card);
+}
+
+.field-rounded {
+  border-radius: var(--radius-field);
+}
+
+.badge-pill {
+  border-radius: var(--radius-badge);
+}
+
+/* ------------------------------------------------------------------
+ * Accessibilité : réduction des animations (absent du projet Gaz).
+ * ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Anneau de focus visible partout (navigation clavier complète) */
+:focus-visible {
+  outline: 2px solid var(--color-primary, #1e40af);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------
+ * Mode sombre
+ * ------------------------------------------------------------------ */
+html.dark {
+  --background: #0f172a;
+  --foreground: #e2e8f0;
+}
+
+html.dark .text-base-content\/60 {
+  color: hsl(var(--bc) / 0.75) !important;
+}
+
+html.dark .text-base-content\/50 {
+  color: hsl(var(--bc) / 0.65) !important;
+}
+
+html.dark .text-base-content\/40 {
+  color: hsl(var(--bc) / 0.55) !important;
+}
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  color-scheme: dark;
+}
+
+html.dark .stats {
+  --tw-bg-opacity: 1;
+  background-color: hsl(var(--b2));
+}
+
+html.dark .table :where(thead, tfoot) :where(th, td) {
+  background-color: hsl(var(--b2));
+}
+
+/* ------------------------------------------------------------------
+ * Impression : la sidebar, l'en-tête et les boutons disparaissent.
+ * ------------------------------------------------------------------ */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  nav,
+  aside,
+  header,
+  .no-print,
+  .btn,
+  .btn *,
+  a {
+    display: none !important;
+  }
+  .print-area {
+    display: block !important;
+    max-width: 56rem;
+    margin: 0 auto;
+  }
+  @page {
+    margin: 12mm;
+  }
+}

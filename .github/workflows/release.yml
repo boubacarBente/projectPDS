@@ -1,0 +1,132 @@
+name: Build & Release Desktop App
+
+# Publication automatique de Planète Déco.
+#
+# Sur un tag `v*` : build Windows + Release GitHub (avec `latest.yml` et
+# `.blockmap`, sans lesquels `electron-updater` ne peut pas fonctionner).
+# Les builds macOS et Linux restent disponibles à la demande.
+#
+# ⚠️ Le dépôt de publication est déclaré dans `package.json` →
+# `build.publish` (`boubacarBente/planeteDeco`, README Q10). `GITHUB_TOKEN`
+# suffit pour publier sur le dépôt qui exécute le workflow.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Plateforme à construire'
+        required: true
+        type: choice
+        options:
+          - all
+          - win
+          - mac
+          - linux
+
+jobs:
+  # ── Build Windows ──────────────────────────────────────────────────
+  build-windows:
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'win' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22 LTS : Electron embarque son propre Node, mais l'outillage
+          # de build (Next 16, Drizzle, electron-builder) suit la LTS courante.
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build:desktop:win
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlaneteDeco-Windows
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
+
+  # ── Build macOS ────────────────────────────────────────────────────
+  build-mac:
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'mac') }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build:desktop:mac
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlaneteDeco-macOS
+          path: |
+            release/*.dmg
+            release/*.dmg.blockmap
+            release/latest-mac.yml
+
+  # ── Build Linux ────────────────────────────────────────────────────
+  build-linux:
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'linux') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build:desktop:linux
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlaneteDeco-Linux
+          path: |
+            release/*.AppImage
+            release/*.AppImage.zsync
+            release/latest-linux.yml
+
+  # ── Création de la Release GitHub ──────────────────────────────────
+  create-release:
+    if: github.event_name == 'push'
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: PlaneteDeco-Windows
+          merge-multiple: true
+          path: artifacts
+
+      - run: ls -la artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
