@@ -31,6 +31,7 @@ import { FilterSelect, Pagination } from '@/components/search-filter';
 import { DatePicker } from '@/components/date-picker';
 import { Modal } from '@/components/modal';
 import { ExportDropdown, shareOnWhatsApp } from '@/components/export-dropdown';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   Card,
@@ -1089,20 +1090,25 @@ export default function RapportsPage() {
         actions={
           <>
             {hasFilters && (
-              <ToolbarButton onClick={resetFilters} title="Revenir à tous les produits et clients">
-                Effacer les filtres ({activeFilterCount})
-              </ToolbarButton>
+              <Tooltip label="Revenir à tous les produits et clients">
+                <ToolbarButton onClick={resetFilters}>
+                  Effacer les filtres ({activeFilterCount})
+                </ToolbarButton>
+              </Tooltip>
             )}
-            <ToolbarButton
-              onClick={handleExportCsv}
-              disabled={!report}
-              title="Exporter le jeu de données affiché en CSV (Excel, séparateur « ; »)"
-            >
-              Export CSV
-            </ToolbarButton>
-            <ToolbarButton onClick={refresh} title="Recalculer le rapport">
-              Actualiser
-            </ToolbarButton>
+            <Tooltip label="Exporter le jeu de données affiché en CSV (Excel, séparateur « ; »)">
+              <ToolbarButton
+                onClick={handleExportCsv}
+                disabled={!report}
+              >
+                Export CSV
+              </ToolbarButton>
+            </Tooltip>
+            <Tooltip label="Recalculer le rapport">
+              <ToolbarButton onClick={refresh}>
+                Actualiser
+              </ToolbarButton>
+            </Tooltip>
           </>
         }
       />

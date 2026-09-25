@@ -20,6 +20,7 @@ import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
 import { FilterSelect, Pagination } from '@/components/search-filter';
+import { Tooltip } from '@/components/tooltip';
 import {
   EmptyState,
   ErrorState,
@@ -554,12 +555,16 @@ export default function ClientsPage() {
         secondaryCount={sortOrder === 'recent' ? 0 : 1}
         actions={
           <>
-            <ToolbarButton onClick={exportCsv} title="Exporter la liste affichée au format CSV">
-              Exporter
-            </ToolbarButton>
-            <ToolbarButton onClick={refresh} title="Recharger la liste">
-              Actualiser
-            </ToolbarButton>
+            <Tooltip label="Exporter la liste affichée au format CSV">
+              <ToolbarButton onClick={exportCsv}>
+                Exporter
+              </ToolbarButton>
+            </Tooltip>
+            <Tooltip label="Recharger la liste">
+              <ToolbarButton onClick={refresh}>
+                Actualiser
+              </ToolbarButton>
+            </Tooltip>
           </>
         }
       />

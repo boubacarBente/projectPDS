@@ -20,6 +20,7 @@ import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { ExportDropdown, shareOnWhatsApp } from '@/components/export-dropdown';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   Card,
@@ -523,14 +524,15 @@ export default function AchatDetailPage() {
                 </button>
               )}
               {canUpdate && !isCancelled && (
-                <button
-                  type="button"
-                  className="btn btn-outline min-h-11 sm:min-h-0"
-                  onClick={() => router.push(`/achats/nouvelle?edit=${invoice.id}`)}
-                  title="Corriger cet achat : stock ajusté par différence"
-                >
-                  Modifier
-                </button>
+                <Tooltip label="Corriger cet achat : stock ajusté par différence">
+                  <button
+                    type="button"
+                    className="btn btn-outline min-h-11 sm:min-h-0"
+                    onClick={() => router.push(`/achats/nouvelle?edit=${invoice.id}`)}
+                  >
+                    Modifier
+                  </button>
+                </Tooltip>
               )}
               {canCancel && !isCancelled && (
                 <button

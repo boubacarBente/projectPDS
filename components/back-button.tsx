@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
+import { Tooltip } from '@/components/tooltip';
 import { canGoBack } from '@/lib/scroll-engine';
 
 /** Routes sans chrome applicatif, où le bouton n'a pas de sens. */
@@ -77,23 +78,24 @@ export function BackButton({ withMargin = true }: { withMargin?: boolean }) {
           transition={{ duration: 0.15, ease: 'easeOut' }}
           className={`flex items-center print:hidden ${withMargin ? 'mb-3 sm:mb-4' : ''}`}
         >
-          <button
-            type="button"
-            onClick={handleBack}
-            className="btn btn-ghost btn-sm btn-square"
-            title="Retour"
-            aria-label="Retour à la page précédente"
-          >
-            <svg
-              className="h-4 w-4 sm:h-5 sm:w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
+          <Tooltip label="Retour à la page précédente">
+            <button
+              type="button"
+              onClick={handleBack}
+              className="btn btn-ghost btn-sm btn-square"
+              aria-label="Retour à la page précédente"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-          </button>
+              <svg
+                className="h-4 w-4 sm:h-5 sm:w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+            </button>
+          </Tooltip>
         </motion.div>
       )}
     </AnimatePresence>

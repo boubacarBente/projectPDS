@@ -28,6 +28,7 @@ import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { DatePicker } from '@/components/date-picker';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   Card,
@@ -754,13 +755,17 @@ export default function CaissePage() {
           actions={
             <>
               {hasFilters && (
-                <ToolbarButton onClick={resetFilters} title="Revenir à tous les mouvements">
-                  Effacer les filtres
-                </ToolbarButton>
+                <Tooltip label="Revenir à tous les mouvements">
+                  <ToolbarButton onClick={resetFilters}>
+                    Effacer les filtres
+                  </ToolbarButton>
+                </Tooltip>
               )}
-              <ToolbarButton onClick={refresh} title="Recharger la caisse">
-                Actualiser
-              </ToolbarButton>
+              <Tooltip label="Recharger la caisse">
+                <ToolbarButton onClick={refresh}>
+                  Actualiser
+                </ToolbarButton>
+              </Tooltip>
             </>
           }
         />

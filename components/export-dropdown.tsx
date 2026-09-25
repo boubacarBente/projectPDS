@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { Tooltip } from '@/components/tooltip';
 
 export async function generateInvoiceBlob(
   invoiceHTML: string,
@@ -184,24 +185,26 @@ export function ExportDropdown({ onExportPDF, onExportImage, onShareWhatsApp, co
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={toggleMenu}
-        className={compact
-          ? "btn btn-ghost btn-sm btn-square"
-          : "btn btn-primary btn-sm gap-1"
-        }
-        title="Télécharger"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        {!compact && <span className="hidden sm:inline">{label || 'Télécharger'}</span>}
-        <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
+      <Tooltip label={label || 'Télécharger'}>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={toggleMenu}
+          className={compact
+            ? "btn btn-ghost btn-sm btn-square"
+            : "btn btn-primary btn-sm gap-1"
+          }
+          aria-label={label || 'Télécharger'}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          {!compact && <span className="hidden sm:inline">{label || 'Télécharger'}</span>}
+          <svg xmlns="http://www.w3.org/2000/svg" className={`h-3 w-3 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </Tooltip>
 
       {isOpen && menuPosition && createPortal(
         <div

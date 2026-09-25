@@ -22,6 +22,7 @@ import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
 import { FilterSelect, Pagination } from '@/components/search-filter';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   Card,
@@ -439,13 +440,17 @@ export default function SoldesPage() {
             actions={
               <>
                 {hasFilters && (
-                  <ToolbarButton onClick={resetFilters} title="Revenir à la liste complète">
-                    Effacer la recherche
-                  </ToolbarButton>
+                  <Tooltip label="Revenir à la liste complète">
+                    <ToolbarButton onClick={resetFilters}>
+                      Effacer la recherche
+                    </ToolbarButton>
+                  </Tooltip>
                 )}
-                <ToolbarButton onClick={handleManualRefresh} title="Recalculer les soldes">
-                  Actualiser
-                </ToolbarButton>
+                <Tooltip label="Recalculer les soldes">
+                  <ToolbarButton onClick={handleManualRefresh}>
+                    Actualiser
+                  </ToolbarButton>
+                </Tooltip>
               </>
             }
           />

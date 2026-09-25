@@ -21,6 +21,7 @@ import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { ExportDropdown } from '@/components/export-dropdown';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   Card,
@@ -535,14 +536,15 @@ export default function VenteDetailPage() {
                 </button>
               )}
               {canUpdate && !isCancelled && (
-                <button
-                  type="button"
-                  className="btn btn-outline min-h-11 sm:min-h-0"
-                  onClick={() => router.push('/ventes/nouvelle')}
-                  title="Corriger cette vente : ouvrir le formulaire de création prérempli"
-                >
-                  Corriger
-                </button>
+                <Tooltip label="Corriger cette vente : ouvrir le formulaire de création prérempli">
+                  <button
+                    type="button"
+                    className="btn btn-outline min-h-11 sm:min-h-0"
+                    onClick={() => router.push('/ventes/nouvelle')}
+                  >
+                    Corriger
+                  </button>
+                </Tooltip>
               )}
               {canCancel && !isCancelled && (
                 <button

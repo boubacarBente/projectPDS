@@ -15,6 +15,7 @@
 
 import { useMemo } from 'react';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   Card,
@@ -121,9 +122,11 @@ function ComparisonMetric({
       <div className="flex items-start justify-between gap-2">
         <span className="text-sm text-base-content/60">{label}</span>
         {delta === null ? (
-          <span className="text-xs text-base-content/40" title="Aucune base de comparaison">
-            —
-          </span>
+          <Tooltip label="Aucune base de comparaison">
+            <span className="text-xs text-base-content/40">
+              —
+            </span>
+          </Tooltip>
         ) : (
           <Badge tone={delta > 0 ? 'success' : delta < 0 ? 'error' : 'neutral'}>
             {delta > 0 ? '+' : delta < 0 ? '−' : ''}

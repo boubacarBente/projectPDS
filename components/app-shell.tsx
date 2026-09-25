@@ -11,6 +11,7 @@ import { useAuth } from '@/components/auth-provider';
 import { AppVersionDisplay } from '@/components/update-status';
 import { SyncIndicator } from '@/components/sync-indicator';
 import { NavIcon } from '@/components/nav-icons';
+import { Tooltip } from '@/components/tooltip';
 import { NAVIGATION, STORAGE_KEYS, labelForPath } from '@/lib/navigation';
 // `ROLE_LABELS` vient de `lib/permissions.ts` (module **client-safe**) ; la
 // décision d'accès vient du contexte d'authentification, donc des permissions
@@ -246,15 +247,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
 
           {can('settings.view') && (
-            <Link
-              href="/parametres"
-              className="btn btn-sm mb-2 w-full border-0 text-white"
-              style={{ background: 'linear-gradient(135deg, var(--p-color), var(--s-color))' }}
-              title="Paramètres"
-            >
-              <NavIcon iconKey="settings" className="h-4 w-4" />
-              {!collapsed && 'Paramètres'}
-            </Link>
+            <Tooltip label="Paramètres">
+              <Link
+                href="/parametres"
+                className="btn btn-sm mb-2 w-full border-0 text-white"
+                style={{ background: 'linear-gradient(135deg, var(--p-color), var(--s-color))' }}
+                aria-label="Paramètres"
+              >
+                <NavIcon iconKey="settings" className="h-4 w-4" />
+                {!collapsed && 'Paramètres'}
+              </Link>
+            </Tooltip>
           )}
 
           <button
@@ -310,28 +313,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="truncate text-sm font-bold">{displayName}</span>
         </Link>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="btn btn-ghost btn-sm btn-square text-base-content/60"
-            title="Recharger la page"
-            aria-label="Recharger la page"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
+          <Tooltip label="Recharger la page">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="btn btn-ghost btn-sm btn-square text-base-content/60"
+              aria-label="Recharger la page"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            </button>
+          </Tooltip>
           <ThemeToggle />
           <button
             type="button"

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, ReactNode, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Tooltip } from '@/components/tooltip';
 
 type FilterOption = {
   value: string;
@@ -154,23 +155,25 @@ export function SearchBar({ value, onChange, onClear, placeholder = 'Rechercher.
         <div className="absolute right-2 flex items-center gap-1">
           <AnimatePresence mode="wait">
             {value && onClear && (
-              <motion.button
-                key="clear"
-                initial={{ opacity: 0, scale: 0.5 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.5 }}
-                transition={{ duration: 0.15 }}
-                onClick={() => {
-                  onClear();
-                  inputRef.current?.focus();
-                }}
-                className="btn btn-ghost btn-xs btn-circle hover:bg-error/10 hover:text-error transition-colors"
-                title="Effacer"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </motion.button>
+              <Tooltip label="Effacer">
+                <motion.button
+                  key="clear"
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  transition={{ duration: 0.15 }}
+                  onClick={() => {
+                    onClear();
+                    inputRef.current?.focus();
+                  }}
+                  className="btn btn-ghost btn-xs btn-circle hover:bg-error/10 hover:text-error transition-colors"
+                  aria-label="Effacer"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </motion.button>
+              </Tooltip>
             )}
           </AnimatePresence>
 

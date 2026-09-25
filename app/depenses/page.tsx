@@ -26,6 +26,7 @@ import { IconAction, RowActions } from '@/components/row-actions';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { DatePicker } from '@/components/date-picker';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   EmptyState,
@@ -413,13 +414,14 @@ export default function DepensesPage() {
         description="Transport, loyer, salaire, carburant, électricité… Une dépense sort de la caisse et ne modifie jamais le stock."
         actions={
           <>
-            <Link
-              href="/parametres"
-              title="Les catégories de dépenses sont une liste fermée, gérée dans les paramètres"
-              className="btn btn-ghost min-h-11 text-xs font-normal text-base-content/60 sm:min-h-0"
-            >
-              Gérer les catégories
-            </Link>
+            <Tooltip label="Les catégories de dépenses sont une liste fermée, gérée dans les paramètres">
+              <Link
+                href="/parametres"
+                className="btn btn-ghost min-h-11 text-xs font-normal text-base-content/60 sm:min-h-0"
+              >
+                Gérer les catégories
+              </Link>
+            </Tooltip>
             {canCreate && (
               <button
                 type="button"
@@ -543,13 +545,17 @@ export default function DepensesPage() {
         actions={
           <>
             {hasFilters && (
-              <ToolbarButton onClick={resetFilters} title="Revenir à la liste complète">
-                Effacer les filtres
-              </ToolbarButton>
+              <Tooltip label="Revenir à la liste complète">
+                <ToolbarButton onClick={resetFilters}>
+                  Effacer les filtres
+                </ToolbarButton>
+              </Tooltip>
             )}
-            <ToolbarButton onClick={handleManualRefresh} title="Recharger la liste">
-              Actualiser
-            </ToolbarButton>
+            <Tooltip label="Recharger la liste">
+              <ToolbarButton onClick={handleManualRefresh}>
+                Actualiser
+              </ToolbarButton>
+            </Tooltip>
           </>
         }
       />

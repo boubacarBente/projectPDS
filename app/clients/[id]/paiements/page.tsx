@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/page-header';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { IconAction, RowActions } from '@/components/row-actions';
 import { Pagination } from '@/components/search-filter';
+import { Tooltip } from '@/components/tooltip';
 import {
   Badge,
   EmptyState,
@@ -196,13 +197,14 @@ export default function ClientPaymentsPage() {
       label: 'Reçu',
       primary: true,
       render: (payment: PaymentRecord) => (
-        <Link
-          href={`/recus/${payment.id}`}
-          className="font-semibold text-primary hover:underline"
-          title="Ouvrir le reçu"
-        >
-          {payment.receiptNumber}
-        </Link>
+        <Tooltip label="Ouvrir le reçu">
+          <Link
+            href={`/recus/${payment.id}`}
+            className="font-semibold text-primary hover:underline"
+          >
+            {payment.receiptNumber}
+          </Link>
+        </Tooltip>
       ),
     },
     {

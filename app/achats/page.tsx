@@ -27,6 +27,7 @@ import { PageHeader } from '@/components/page-header';
 import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { DatePicker } from '@/components/date-picker';
+import { Tooltip } from '@/components/tooltip';
 import {
   Card,
   EmptyState,
@@ -610,13 +611,17 @@ export default function AchatsPage() {
         actions={
           <>
             {hasFilters && (
-              <ToolbarButton onClick={resetFilters} title="Réinitialiser les filtres">
-                Réinitialiser
-              </ToolbarButton>
+              <Tooltip label="Réinitialiser les filtres">
+                <ToolbarButton onClick={resetFilters}>
+                  Réinitialiser
+                </ToolbarButton>
+              </Tooltip>
             )}
-            <ToolbarButton onClick={refresh} title="Recharger la liste">
-              Actualiser
-            </ToolbarButton>
+            <Tooltip label="Recharger la liste">
+              <ToolbarButton onClick={refresh}>
+                Actualiser
+              </ToolbarButton>
+            </Tooltip>
           </>
         }
       />
