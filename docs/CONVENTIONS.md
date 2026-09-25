@@ -231,7 +231,19 @@ Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 `FilterSelect`, `Pagination`, `ResponsiveTable`, `SurfaceCard`, `MetricCard`,
 `ColorField` (nuancier natif + code hexadécimal éditable),
 `PasswordInput` (mot de passe + icône afficher/masquer),
-`IconAction` + `RowActions` (`components/row-actions.tsx`).
+`IconAction` + `RowActions` (`components/row-actions.tsx`),
+`Combobox` (`components/combobox.tsx` — champ texte à suggestions).
+
+> **Choisir dans une liste = taper, pas dérouler.** Chercher un produit ou un
+> client dans un `<select>` natif oblige à parcourir la liste à l'œil. `Combobox`
+> filtre à la frappe, **sans se soucier des accents ni de la casse**
+> (« sable de riviere » trouve « Sable de rivière »), et son menu est rendu
+> **dans un portail** (`createPortal` sur `body`) : sans cela il serait **coupé**
+> par le premier ancêtre qui défile — les lignes de vente vivent dans un
+> conteneur `overflow-x-auto`. Clavier complet (↓ ↑ `Entrée` `Échap` `Tab`),
+> attributs `aria-*` de combobox, et un texte libre sans correspondance est
+> **abandonné** au profit du choix réel (jamais de valeur inventée). Ne pas
+> revenir à un `<select>` pour un référentiel long.
 
 > **Les actions de ligne sont des icônes, jamais du texte.** Quatre à cinq
 > boutons « Détail · Modifier · Payer · Désactiver » par ligne mangeaient la

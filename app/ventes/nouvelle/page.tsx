@@ -26,6 +26,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DatePicker } from '@/components/date-picker';
+import { Combobox } from '@/components/combobox';
 import {
   Badge,
   Card,
@@ -607,19 +608,26 @@ export default function NouvelleVentePage() {
                         return (
                           <tr key={line.key} className="align-top">
                             <td>
-                              <select
-                                className="select select-bordered select-sm h-11 w-full sm:h-9"
+                              {/*
+                                Champ texte à suggestions plutôt qu'une liste
+                                déroulante native : on tape le nom (même sans
+                                accent) et la liste se réduit au fur et à mesure.
+                                Le menu est rendu dans un portail, sinon il serait
+                                coupé par le défilement horizontal de ce tableau.
+                              */}
+                              <Combobox
+                                className="h-11 sm:h-9"
                                 value={line.productId}
-                                onChange={(event) => handleProductChange(line.key, event.target.value)}
-                                aria-label={`Produit de la ligne ${index + 1}`}
-                              >
-                                <option value="">Sélectionner un produit…</option>
-                                {products.map((entry) => (
-                                  <option key={entry.id} value={entry.id}>
-                                    {entry.name} ({formatNumber(entry.salePrice)} GNF)
-                                  </option>
-                                ))}
-                              </select>
+                                onChange={(value) => handleProductChange(line.key, value)}
+                                options={products.map((entry) => ({
+                                  value: String(entry.id),
+                                  label: entry.name,
+                                  hint: `${formatNumber(entry.salePrice)} GNF`,
+                                }))}
+                                emptyLabel="Sélectionner un produit…"
+                                placeholder="Tapez le nom du produit…"
+                                ariaLabel={`Produit de la ligne ${index + 1}`}
+                              />
                               {product && (
                                 <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
                                   <span className="tabular">
@@ -778,27 +786,27 @@ export default function NouvelleVentePage() {
                 <FormField
                   label="Client enregistré"
                   htmlFor="sale-customer"
-                  hint="Laisser « Vente comptoir » pour un client de passage."
+                  hint="Tapez le nom du client, ou laissez « Vente comptoir » pour un client de passage."
                 >
-                  <select
+                  <Combobox
                     id="sale-customer"
-                    className="select select-bordered min-h-11 w-full sm:min-h-0"
+                    className="min-h-11 sm:min-h-0"
                     value={customerId}
-                    onChange={(event) => {
-                      const value = event.target.value;
+                    onChange={(value) => {
                       setCustomerId(value);
                       const found = customers.find((customer) => customer.id === Number(value));
                       // Le nom affiché sur la facture suit la fiche choisie.
                       setCustomerName(found ? found.name : '');
                     }}
-                  >
-                    <option value="">Vente comptoir</option>
-                    {customers.map((customer) => (
-                      <option key={customer.id} value={customer.id}>
-                        {customer.name}
-                      </option>
-                    ))}
-                  </select>
+                    options={customers.map((customer) => ({
+                      value: String(customer.id),
+                      label: customer.name,
+                      hint: customer.phone ?? undefined,
+                    }))}
+                    emptyLabel="Vente comptoir"
+                    showEmptyLabel
+                    placeholder="Tapez le nom du client…"
+                  />
                 </FormField>
 
                 <FormField
