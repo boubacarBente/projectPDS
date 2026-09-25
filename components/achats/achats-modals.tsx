@@ -91,7 +91,6 @@ export type PurchaseInvoiceItemRow = {
   id: number;
   invoiceId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -206,7 +205,6 @@ export function normalizePurchaseItemRow(raw: unknown): PurchaseInvoiceItemRow {
       row.productId == null && row.product_id == null
         ? null
         : num(row.productId ?? row.product_id),
-    productCode: String(row.productCode ?? row.product_code ?? ''),
     productName: String(row.productName ?? row.product_name ?? ''),
     unit: String(row.unit ?? 'pièce'),
     quantity,
@@ -267,7 +265,6 @@ export function toPurchaseDocument(invoice: PurchaseInvoiceRow): PurchaseDocumen
 export function toDocumentItems(items: PurchaseInvoiceItemRow[]): PurchaseDocumentItem[] {
   return items.map((item) => ({
     id: item.id,
-    productCode: item.productCode,
     productName: item.productName,
     unit: item.unit,
     quantity: item.quantity,

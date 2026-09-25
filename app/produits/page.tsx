@@ -290,8 +290,7 @@ export default function ProduitsPage() {
     () => [
       /*
        * La colonne « Code » est retirée (demande client) : le **nom** est
-       * l'identifiant du produit, et il est unique. Le code interne reste généré
-       * côté serveur comme référence technique, mais ne s'affiche plus.
+       * l'identifiant du produit, et il est unique.
        */
       {
         key: 'name',
@@ -679,7 +678,7 @@ export default function ProduitsPage() {
           productToDeactivate ? (
             <>
               <p>
-                « <strong>{productToDeactivate.name}</strong> » ({productToDeactivate.code}) ne sera
+                « <strong>{productToDeactivate.name}</strong> » ne sera
                 plus proposé à la vente ni dans les listes. <strong>Aucune donnée n’est supprimée</strong> :
                 les factures anciennes restent lisibles et le produit peut être réactivé.
               </p>

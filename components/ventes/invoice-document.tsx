@@ -49,7 +49,6 @@ export type InvoiceDocumentCustomer = {
 
 export type InvoiceDocumentItem = {
   id?: number | string;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -258,7 +257,7 @@ export function InvoiceDocument({
               <tbody>
                 {items.map((item, index) => (
                   <tr
-                    key={item.id ?? `${item.productCode}-${index}`}
+                    key={item.id ?? index}
                     className="border-base-200/70"
                   >
                     <td className="tabular text-base-content/60">{index + 1}</td>

@@ -123,7 +123,6 @@ export type RapportMonthlyPoint = {
 
 export type RapportSoldProduct = {
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -195,7 +194,6 @@ export type RapportPayables = {
 
 export type RapportStockAlert = {
   productId: number;
-  code: string;
   name: string;
   unit: string;
   stock: number;

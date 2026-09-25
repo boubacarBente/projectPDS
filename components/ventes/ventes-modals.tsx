@@ -173,7 +173,6 @@ export function normalizeItemRow(raw: unknown): SalesInvoiceItemRow {
     id: num(row.id),
     invoiceId: num(row.invoiceId ?? row.invoice_id),
     productId: row.productId == null && row.product_id == null ? null : num(row.productId ?? row.product_id),
-    productCode: String(row.productCode ?? row.product_code ?? ''),
     productName: String(row.productName ?? row.product_name ?? ''),
     unit: String(row.unit ?? 'pièce'),
     quantity,
@@ -239,7 +238,6 @@ export function toInvoiceDocument(invoice: SalesInvoiceRow): InvoiceDocumentInvo
 export function toDocumentItems(items: SalesInvoiceItemRow[]): InvoiceDocumentItem[] {
   return items.map((item) => ({
     id: item.id,
-    productCode: item.productCode,
     productName: item.productName,
     unit: item.unit,
     quantity: item.quantity,

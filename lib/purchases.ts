@@ -5,8 +5,8 @@
  *   1. validation : **fournisseur obligatoire**, au moins une ligne, quantités > 0,
  *      prix d'achat ≥ 0 ;
  *   2. numérotation sans trou (`ACH-2026-000001`, compteur `settings`) ;
- *   3. insertion de la facture puis de ses lignes (**instantanés** `product_code`,
- *      `product_name`, `unit` figés : une facture d'achat ancienne doit rester
+ *   3. insertion de la facture puis de ses lignes (**instantanés** `product_name`,
+ *      `unit` figés : une facture d'achat ancienne doit rester
  *      imprimable même si le produit est renommé ou désactivé) ;
  *   4. mouvements de stock : un `entry` par ligne, via `lib/stock.ts` ;
  *   5. décaissement initial via `createPayment` (caisse **et** reçu numéroté) ;
@@ -89,7 +89,6 @@ export type PurchaseInvoiceItemRow = {
   id: number;
   invoiceId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -118,7 +117,6 @@ export type PurchaseInvoiceInput = {
 /** Ligne validée : instantanés + montant calculé (pas de remise : §6.3). */
 export type PurchaseItemDraft = {
   productId: number;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -227,7 +225,6 @@ function mapItemRow(row: any): PurchaseInvoiceItemRow {
     id: Number(row.id),
     invoiceId: Number(row.invoice_id),
     productId: row.product_id == null ? null : Number(row.product_id),
-    productCode: row.product_code,
     productName: row.product_name,
     unit: row.unit,
     quantity: Number(row.quantity ?? 0),
@@ -319,7 +316,7 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
 
 async function getItemRecords(invoiceId: number): Promise<any[]> {
   return rawAll<any>(
-    `SELECT id, sync_id, invoice_id, product_id, product_code, product_name, unit,
+    `SELECT id, sync_id, invoice_id, product_id, product_name, unit,
             quantity, unit_price, amount
      FROM purchase_invoice_items
      WHERE invoice_id = ?
@@ -358,8 +355,8 @@ export function areQuantityMapsEqual(a: Map<number, number>, b: Map<number, numb
  * ------------------------------------------------------------------ */
 
 /**
- * Construit les lignes validées (instantanés `product_code` / `product_name` /
- * `unit`) et calcule le montant de chacune.
+ * Construit les lignes validées (instantanés `product_name` / `unit`) et calcule
+ * le montant de chacune.
  *
  * ⚠️ **Aucun contrôle de stock ici** : un achat *fait entrer* de la marchandise.
  * Le contrôle de rupture de `lib/sales.ts` n'a de sens que pour une sortie ;
@@ -406,7 +403,6 @@ export async function buildPurchaseItems(lines: PurchaseLineInput[]): Promise<Pu
 
     drafts.push({
       productId,
-      productCode: product.code,
       productName: product.name,
       unit: product.unit,
       quantity: roundQty(quantity),
@@ -431,7 +427,6 @@ function itemPayload(reference: string, item: PurchaseItemDraft): Record<string,
   // Règle §11.3 : jamais de référence par `id` local dans un payload de synchro.
   return {
     reference,
-    product_code: item.productCode,
     product_name: item.productName,
     unit: item.unit,
     quantity: item.quantity,
@@ -451,7 +446,6 @@ async function insertInvoiceItems(
       .values({
         invoiceId,
         productId: item.productId,
-        productCode: item.productCode,
         productName: item.productName,
         unit: item.unit,
         quantity: item.quantity,
@@ -495,7 +489,6 @@ async function reconcileInvoiceItems(
         .update(purchaseInvoiceItems)
         .set({
           productId: item.productId,
-          productCode: item.productCode,
           productName: item.productName,
           unit: item.unit,
           quantity: item.quantity,
@@ -519,7 +512,6 @@ async function reconcileInvoiceItems(
       .values({
         invoiceId,
         productId: item.productId,
-        productCode: item.productCode,
         productName: item.productName,
         unit: item.unit,
         quantity: item.quantity,
@@ -541,7 +533,7 @@ async function reconcileInvoiceItems(
     await db.delete(purchaseInvoiceItems).where(eq(purchaseInvoiceItems.id, Number(surplus.id)));
     await enqueueSyncWrite('purchase_invoice_items', surplus.sync_id, 'delete', {
       reference,
-      product_code: surplus.product_code,
+      product_name: surplus.product_name,
     });
   }
 }

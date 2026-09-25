@@ -583,12 +583,12 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | `utilisateurs` | `users` | 6 rôles conservés · + `updated_at` · hachage **scrypt** au lieu de SHA-256 nu |
 | `clients` / `fournisseurs` | `customers` / `suppliers` | + `is_active`, `credit_limit` (clients), `updated_at` |
 | `categories` | `categories` | + `updated_at` |
-| `produits` | `products` | + `code` (unique, code-barres), `is_active` · `unite` (texte) au lieu d'une table `units` · `prix_achat` → **`purchase_price`** (renommage pour lever l'ambiguïté avec le prix unitaire des lignes) |
+| `produits` | `products` | + `is_active` · `unite` (texte) au lieu d'une table `units` · `prix_achat` → **`purchase_price`** (renommage pour lever l'ambiguïté avec le prix unitaire des lignes) · pas de code produit : **le nom est l'identifiant** (unique) |
 | `mouvements_stock` | `stock_movements` | + `stock_before` / `stock_after` (traçabilité) · `correction` = **écart** · `type` à 3 valeurs |
 | `ventes` | `sales_invoices` | ⚠️ **+ `total_ht`, `tax_rate`, `tax_amount`** (§7) · **+ `due_date`** (§7) · + `remaining_amount`, `notes`, `status`, **`cancel_reason` / `cancelled_by` / `cancelled_at`** (§6) |
-| `vente_lignes` | `sales_invoice_items` | ⚠️ **+ `product_code`, `product_name`, `unit`** (instantané : une facture ancienne doit rester lisible même si le produit est renommé ou désactivé) |
+| `vente_lignes` | `sales_invoice_items` | ⚠️ **+ `product_name`, `unit`** (instantané : une facture ancienne doit rester lisible même si le produit est renommé ou désactivé) |
 | `achats` | `purchase_invoices` | + `supplier_reference` (n° de facture du fournisseur), `due_date`, `notes`, `remaining_amount`, `user_id` |
-| `achat_lignes` | `purchase_invoice_items` | ⚠️ **+ `product_code`, `product_name`, `unit`** |
+| `achat_lignes` | `purchase_invoice_items` | ⚠️ **+ `product_name`, `unit`** |
 | `paiements` | `payments` | ⚠️ **+ `receipt_number` (unique)** pour §7 · + `notes`, `payment_label`, `created_at` |
 | `caisse_mouvements` | `cash_movements` | ⚠️ **+ `payment_method`** (§8 espèces / Mobile Money) · **+ `reference_type` / `reference_id`** (rapprochement avec la vente ou la dépense d'origine) · + `balance_after`, `session_id` |
 | `caisse_clotures` | `cash_sessions` | ⚠️ **+ `theoretical_amount`, `difference`, `status`** · séparation `opened_by` / `closed_by` · `opened_at` / `closed_at` (§8) |
@@ -596,7 +596,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | — | **`audit_logs`** | ⚠️ **Table manquante** : §12 « historique des actions importantes » et §14 « historique des opérations » |
 | — | **`workers`** | ⚠️ **Table manquante** : une seule table au lieu de 3 modélisations divergentes |
 | `prestations` | `service_jobs` | ⚠️ + `statut` `pending` (§16 « en attente ») · + `quote_status` (`draft` / `sent` / `accepted` / `refused`) au lieu d'une table de devis · + `reference`, `created_at` |
-| `prestation_materiaux` | `service_job_materials` | + `unit_cost` (aujourd'hui un `montant` global : impossible d'analyser la marge matière) · + instantané `product_code` / `product_name` |
+| `prestation_materiaux` | `service_job_materials` | + `unit_cost` (aujourd'hui un `montant` global : impossible d'analyser la marge matière) · + instantané `product_name` |
 | `prestation_equipe` | `service_job_workers` | ⚠️ + **`days`, `daily_rate`, `amount`** (sans quoi la main-d'œuvre reste un chiffre saisi à la main) |
 | `production_briques` | `brick_productions` | ⚠️ **`type_brique` (texte) → `brick_type_id`** · **+ `brick_type` relié à un `products.id`** (sinon le stock de briques finies est impossible) · + `end_date`, `material_cost`, `labor_cost`, `total_cost`, `user_id` |
 | — | **`brick_types`** | ⚠️ **Table manquante** : §17 « chaque type de brique **avec ses dimensions** » |
@@ -647,8 +647,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | Colonne | Type | Note |
 |---|---|---|
 | `id` | integer PK | |
-| `code` | text, unique | Code interne / code-barres |
-| `name` | text | |
+| `name` | text | **Identifiant du produit** : unique, insensible à la casse et aux espaces de bord (`lower(trim(name))`) |
 | `category_id` | FK → `categories` | |
 | `unit` | text | pièce, ensemble, carton, m², kg, sac, litre — **liste fermée dans les paramètres** |
 | `purchase_price` | real | Prix d'achat (base du calcul de marge) |
@@ -689,14 +688,14 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | `created_at`, `updated_at` | timestamp | |
 
 **`sales_invoice_items`**
-`id`, `invoice_id`, `product_id`, `product_code`, `product_name`, `unit`, `quantity` (real), `unit_price`, `amount`
-> **Instantané volontaire** de `product_code` / `product_name` / `unit` : une facture de 2026 doit rester lisible et imprimable même si le produit est renommé, son unité changée ou le produit désactivé.
+`id`, `invoice_id`, `product_id`, `product_name`, `unit`, `quantity` (real), `unit_price`, `amount`
+> **Instantané volontaire** de `product_name` / `unit` : une facture de 2026 doit rester lisible et imprimable même si le produit est renommé, son unité changée ou le produit désactivé.
 
 **`purchase_invoices`** (achats, §5)
 `id`, `reference` (unique, notre numéro `ACH-…`), `supplier_reference` (n° de facture du fournisseur), `supplier_id`, `user_id`, `date`, `due_date`, `total`, `amount_paid`, `remaining_amount`, `payment_status`, `notes`, `created_at`, `updated_at`
 
 **`purchase_invoice_items`**
-`id`, `invoice_id`, `product_id`, `product_code`, `product_name`, `unit`, `quantity` (real), `unit_price`, `amount`
+`id`, `invoice_id`, `product_id`, `product_name`, `unit`, `quantity` (real), `unit_price`, `amount`
 
 **`payments`** — encaissements, décaissements et reçus (§7)
 `id`, `receipt_number` (**unique**, préfixe configurable), `type` (`sale` \| `purchase` \| `service_job`), `reference_id`, `amount`, `payment_method`, `payment_label` (`deposit` \| `balance` \| `full` — acompte / solde / intégral, §7), `date`, `notes`, `user_id`, `created_at`
@@ -726,7 +725,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 > Le devis et le suivi d'avancement vivent dans **la même table** : `quote_*` pour le devis, `status` pour l'avancement, `quote_status` pour l'acceptation. Une table de devis versionnée séparée serait sur-modélisée (§25 : on la néglige).
 
 **`service_job_materials`**
-`id`, `job_id`, `product_id`, `product_code`, `product_name`, `unit`, `quantity` (real), `unit_cost`, `amount`
+`id`, `job_id`, `product_id`, `product_name`, `unit`, `quantity` (real), `unit_cost`, `amount`
 > Déduits du stock par un mouvement `exit` / `reference_type = 'service_job'`.
 
 **`service_job_workers`**
@@ -800,7 +799,7 @@ Comme dans Gaz, les relations sont déclarées dans `db/schema.ts` et les requê
 3. **Invariant de stock** : `products.stock` = somme algébrique de `stock_movements`. Toute correction passe par `adjustStock()`.
 4. **Aucune suppression silencieuse** : une facture validée s'**annule** (`status = 'cancelled'`, avec motif, auteur et date) et se réverse — mouvements de stock inversés, caisse contre-passée. Jamais de `DELETE` sur une pièce comptable.
 5. **Paiement polymorphe** : `payments.reference_id` n'est pas une clé étrangère. L'intégrité est vérifiée dans `lib/payments.ts` ; un paiement orphelin est un bug applicatif, pas une impossibilité de la base.
-6. **Instantanés** : les lignes de facture figent `product_code`, `product_name` et `unit`.
+6. **Instantanés** : les lignes de facture figent `product_name` et `unit`.
 7. **Migrations** : tout changement de schéma passe par `db/schema.ts` + `npm run db:generate`. Les migrations sont embarquées dans l'app packagée et exécutées au démarrage.
 8. **SQL brut** : uniquement `rawGet()`, `rawAll()`, `rawRun()`, `withRawTransaction()` de `db/index.ts` (le driver libSQL est asynchrone).
 

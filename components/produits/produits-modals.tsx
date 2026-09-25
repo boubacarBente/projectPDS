@@ -172,8 +172,7 @@ export function ProductFormModal({
         description: form.description.trim() || null,
         isActive: form.isActive,
       };
-      // À la création seulement : le code interne est **généré par le serveur**
-      // (`PRD-0001`), et le stock initial devient un mouvement `entry`.
+      // À la création seulement : le stock initial devient un mouvement `entry`.
       if (!isEdit) {
         body.stock = toAmount(form.stock);
       }
@@ -222,9 +221,7 @@ export function ProductFormModal({
         <div className="grid gap-4 sm:grid-cols-2">
           {/*
             Le champ « Code interne » a été retiré (demande client) : le **nom**
-            est l'identifiant du produit, et il est unique. Le code reste généré
-            automatiquement côté serveur (`PRD-0001`) comme référence technique,
-            mais il ne se saisit plus et ne s'affiche plus.
+            est l'identifiant du produit, et il est unique.
           */}
           <FormField label="Nom du produit" required>
             <input

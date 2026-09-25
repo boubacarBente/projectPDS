@@ -13,8 +13,8 @@ type Params = { params: Promise<{ id: string }> };
  * GET /api/achats/[id] — bon d'achat complet (§7.5).
  *
  * Une facture d'achat reste consultable et réimprimable indéfiniment, même
- * annulée : les lignes portent leurs **instantanés** (`product_code`,
- * `product_name`, `unit`) et ne dépendent donc pas de l'état du catalogue.
+ * annulée : les lignes portent leurs **instantanés** (`product_name`,
+ * `unit`) et ne dépendent donc pas de l'état du catalogue.
  */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {

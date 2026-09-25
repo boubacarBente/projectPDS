@@ -178,9 +178,8 @@ passé » qui écrase une saisie plus récente.
 4. **Invariant de stock** : `products.stock` = somme algébrique des
    `stock_movements`. Un `adjustment` porte un **écart signé**, jamais une valeur
    absolue. Toute correction passe par `adjustStock()`.
-5. **Instantanés** : les lignes de facture figent `product_code`,
-   `product_name`, `unit` — une facture de 2026 doit rester imprimable même si le
-   produit est renommé.
+5. **Instantanés** : les lignes de facture figent `product_name` et `unit` —
+   une facture de 2026 doit rester imprimable même si le produit est renommé.
 6. **Aucun total stocké** : soldes, créances, marges, bénéfices sont **calculés à
    la lecture** depuis les factures, paiements et dépenses.
 7. **4 colonnes de synchronisation** sur toute table métier : `sync_id` (UUID),

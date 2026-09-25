@@ -42,7 +42,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const body = await readJson<any>(request);
 
     const patch: Record<string, unknown> = {};
-    if (body.code !== undefined) patch.code = body.code;
     if (body.name !== undefined) patch.name = body.name;
     if (body.categoryId !== undefined) {
       const categoryId = toNumber(body.categoryId, 0);

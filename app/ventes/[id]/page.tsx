@@ -243,7 +243,6 @@ export default function VenteDetailPage() {
           kind: 'table',
           columns: [
             { label: '#' },
-            { label: 'Code' },
             { label: 'Désignation' },
             { label: 'Qté', align: 'right' },
             { label: 'Unité' },
@@ -251,10 +250,9 @@ export default function VenteDetailPage() {
             { label: 'Remise' },
             { label: 'Montant' },
           ],
-          numeric: [3, 5, 6, 7],
+          numeric: [2, 4, 5, 6],
           rows: items.map((item, index) => [
             String(index + 1),
-            item.productCode ?? '',
             item.productName,
             formatQuantity(item.quantity, ''),
             item.unit ?? '',

@@ -82,7 +82,6 @@ export type ServiceJobMaterialRow = {
   id: number;
   jobId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -246,7 +245,6 @@ export type CustomerOption = { id: number; name: string; phone: string | null };
 
 export type ProductOption = {
   id: number;
-  code: string;
   name: string;
   unit: string;
   purchasePrice: number;
@@ -301,7 +299,6 @@ export function useJobSelectOptions(enabled: boolean) {
           setProducts(
             (payload.data ?? []).map((product: any) => ({
               id: Number(product.id),
-              code: String(product.code ?? ''),
               name: String(product.name ?? ''),
               unit: String(product.unit ?? 'pièce'),
               purchasePrice: Number(product.purchasePrice ?? 0),

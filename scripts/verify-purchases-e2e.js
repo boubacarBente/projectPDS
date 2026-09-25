@@ -96,7 +96,7 @@ async function main() {
     const stock = await api(`/api/stocks?limit=200`);
     const row = (stock.body?.data ?? []).find((p) => p.id === product.id);
     before.set(product.id, row?.stock ?? 0);
-    console.log(`  ${product.code} : ${before.get(product.id)}`);
+    console.log(`  ${product.name} : ${before.get(product.id)}`);
   }
 
   console.log('\n── Caisse AVANT ──');
@@ -149,7 +149,7 @@ async function main() {
     const row = (afterAll.body?.data ?? []).find((p) => p.id === product.id);
     const after = row?.stock ?? 0;
     const delta = after - before.get(product.id);
-    check(`${product.code} : +5`, Math.abs(delta - 5) < 0.001, `variation ${delta}`);
+    check(`${product.name} : +5`, Math.abs(delta - 5) < 0.001, `variation ${delta}`);
   }
 
   console.log('\n── Caisse APRÈS (doit avoir BAISSÉ du montant payé) ──');

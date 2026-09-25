@@ -94,7 +94,6 @@ export type ServiceJobMaterialRow = {
   id: number;
   jobId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -349,7 +348,6 @@ export async function listJobMaterials(jobId: number): Promise<ServiceJobMateria
     id: row.id,
     jobId: row.jobId,
     productId: row.productId,
-    productCode: row.productCode,
     productName: row.productName,
     unit: row.unit,
     quantity: Number(row.quantity),
@@ -798,7 +796,7 @@ export async function recomputeJobTotals(jobId: number): Promise<ServiceJobRow> 
  * Ajoute un matériau au chantier et **déduit le stock** par un mouvement
  * `exit` (`reference_type = 'service_job'`, §19 « matériaux déduits du stock »).
  *
- * Les colonnes `product_code` / `product_name` / `unit` sont **figées** :
+ * Les colonnes `product_name` / `unit` sont **figées** :
  * le chantier doit rester imprimable même si le produit est renommé ou
  * désactivé (§6.5 règle 6).
  *
@@ -825,11 +823,10 @@ export async function addJobMaterial(
 
   const product = await rawGet<{
     id: number;
-    code: string;
     name: string;
     unit: string;
     purchase_price: number | null;
-  }>('SELECT id, code, name, unit, purchase_price FROM products WHERE id = ?', [productId]);
+  }>('SELECT id, name, unit, purchase_price FROM products WHERE id = ?', [productId]);
 
   if (!product) throw new NotFoundError('Produit introuvable');
 
@@ -845,7 +842,6 @@ export async function addJobMaterial(
     .values({
       jobId,
       productId,
-      productCode: product.code,
       productName: product.name,
       unit: product.unit,
       quantity,
@@ -872,7 +868,6 @@ export async function addJobMaterial(
   await enqueueSyncWrite('service_job_materials', row.syncId, 'insert', {
     job_reference: job.reference,
     product_id: productId,
-    product_code: product.code,
     product_name: product.name,
     unit: product.unit,
     quantity,
@@ -886,7 +881,6 @@ export async function addJobMaterial(
     id: row.id,
     jobId: row.jobId,
     productId: row.productId,
-    productCode: row.productCode,
     productName: row.productName,
     unit: row.unit,
     quantity: Number(row.quantity),
@@ -931,7 +925,7 @@ export async function removeJobMaterial(jobId: number, materialId: number): Prom
 
   await enqueueSyncWrite('service_job_materials', material.syncId, 'delete', {
     job_reference: job.reference,
-    product_code: material.productCode,
+    product_name: material.productName,
     quantity: Number(material.quantity),
     deleted_at: new Date().toISOString(),
   });

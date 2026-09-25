@@ -45,7 +45,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       entityId: jobId,
       details: {
         addedMaterial: material.productName,
-        productCode: material.productCode,
         quantity: material.quantity,
         unitCost: material.unitCost,
         amount: material.amount,

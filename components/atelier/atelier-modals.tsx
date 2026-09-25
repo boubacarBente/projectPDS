@@ -44,7 +44,6 @@ import { formatNumber, today } from '@/lib/format';
 
 export type ProductOption = {
   id: number;
-  code: string;
   name: string;
   unit: string;
   purchasePrice: number;
@@ -97,7 +96,6 @@ export async function fetchProducts(signal?: AbortSignal): Promise<ProductOption
 
   return normaliseList(await response.json()).map((row) => ({
     id: Number(row.id),
-    code: String(row.code ?? ''),
     name: String(row.name ?? ''),
     unit: String(row.unit ?? 'pièce'),
     purchasePrice: Number(row.purchasePrice ?? 0),
@@ -1207,7 +1205,7 @@ export function FurnitureBomModal({
                             >
                               {(rawMaterials.length > 0 ? rawMaterials : products).map((option) => (
                                 <option key={option.id} value={option.id}>
-                                  {option.code} — {option.name} ({option.unit})
+                                  {option.name} ({option.unit})
                                 </option>
                               ))}
                             </select>

@@ -39,7 +39,6 @@ export const STOCK_MOVEMENT_LABELS: Record<StockMovementType, string> = {
 /** Produit enrichi de son état de stock — `listStockProducts()`. */
 export type StockProduct = {
   id: number;
-  code: string;
   name: string;
   unit: string;
   categoryId: number | null;
@@ -59,7 +58,6 @@ export type StockProduct = {
 export type StockMovementRow = {
   id: number;
   productId: number;
-  productCode: string;
   productName: string;
   unit: string;
   type: StockMovementType;
@@ -271,7 +269,7 @@ export function ProductHistoryModal({
     >
       <div className="space-y-4">
         <div className="grid gap-x-6 gap-y-1 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 sm:grid-cols-2">
-          <InfoRow label="Code produit">{product?.code ?? '—'}</InfoRow>
+          <InfoRow label="Produit">{product?.name ?? '—'}</InfoRow>
           <InfoRow label="Catégorie">{product?.categoryName ?? 'Non classé'}</InfoRow>
           <InfoRow label="Stock théorique">
             <QuantityText value={product?.stock ?? 0} unit={product?.unit} />
@@ -507,7 +505,7 @@ export function StockAdjustModal({
               <option value="">— Sélectionner un produit —</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.code} — {p.name}
+                  {p.name}
                 </option>
               ))}
             </select>

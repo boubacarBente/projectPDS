@@ -16,7 +16,7 @@ type Params = { params: Promise<{ id: string }> };
  * GET /api/ventes/[id] — facture complète (§7.7).
  *
  * Une facture reste consultable et réimprimable indéfiniment, même annulée :
- * les lignes portent leurs **instantanés** (`product_code`, `product_name`,
+ * les lignes portent leurs **instantanés** (`product_name`,
  * `unit`) et ne dépendent donc pas de l'état actuel du catalogue.
  */
 export async function GET(_request: NextRequest, { params }: Params) {

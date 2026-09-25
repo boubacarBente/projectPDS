@@ -337,7 +337,7 @@ export default function RapportsPage() {
 
       setProductOptions(
         products
-          .map((item: any) => ({ value: String(item.id), label: String(item.name ?? item.code ?? '') }))
+          .map((item: any) => ({ value: String(item.id), label: String(item.name ?? '') }))
           .filter((option) => option.label),
       );
       setCustomerOptions(

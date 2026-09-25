@@ -56,7 +56,6 @@ export class InsufficientStockError extends Error {
 
 export type StockProduct = {
   id: number;
-  code: string;
   name: string;
   unit: string;
   categoryId: number | null;
@@ -75,7 +74,6 @@ export type StockProduct = {
 export type StockMovementRow = {
   id: number;
   productId: number;
-  productCode: string;
   productName: string;
   unit: string;
   type: StockMovementType;
@@ -113,7 +111,6 @@ export async function addStockMovement(
   const [product] = await exec
     .select({
       id: schema.products.id,
-      code: schema.products.code,
       name: schema.products.name,
       stock: schema.products.stock,
       syncId: schema.products.syncId,
@@ -230,7 +227,7 @@ export async function listStockProducts(options: {
   const conditions: SQL[] = [eq(schema.products.isActive, true)];
   if (options.search) {
     conditions.push(
-      sql`(${schema.products.code} LIKE ${`%${options.search}%`} OR ${schema.products.name} LIKE ${`%${options.search}%`})`,
+      sql`(${schema.products.name} LIKE ${`%${options.search}%`})`,
     );
   }
   if (options.categoryId) conditions.push(eq(schema.products.categoryId, options.categoryId));
@@ -272,7 +269,6 @@ export async function listStockProducts(options: {
     const stockMin = Number(p.stockMin ?? 0);
     return {
       id: p.id,
-      code: p.code,
       name: p.name,
       unit: p.unit,
       categoryId: p.categoryId,
@@ -322,7 +318,7 @@ export async function listStockMovements(options: {
       where,
       orderBy: [desc(schema.stockMovements.createdAt), desc(schema.stockMovements.id)],
       with: {
-        product: { columns: { code: true, name: true, unit: true } },
+        product: { columns: { name: true, unit: true } },
         user: { columns: { name: true } },
       },
       limit,
@@ -336,7 +332,6 @@ export async function listStockMovements(options: {
   const data: StockMovementRow[] = rows.map((m) => ({
     id: m.id,
     productId: m.productId,
-    productCode: m.product?.code ?? '',
     productName: m.product?.name ?? '',
     unit: m.product?.unit ?? '',
     type: m.type as StockMovementType,

@@ -152,13 +152,6 @@ export const products = sqliteTable(
   'products',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    /*
-     * `code` reste une **référence technique** — générée automatiquement, plus
-     * jamais saisie ni affichée (§ le nom est l'identifiant visible). Il n'est
-     * pas supprimé : les documents déjà émis et les lignes d'historique en
-     * portent un instantané.
-     */
-    code: text('code').notNull().unique(),
     name: text('name').notNull(),
     categoryId: integer('category_id').references(() => categories.id),
     /** pièce, ensemble, carton, m², kg, sac, litre — liste fermée dans settings */
@@ -251,8 +244,8 @@ export const salesInvoices = sqliteTable('sales_invoices', {
 
 /**
  * Lignes de facture de vente.
- * Instantané volontaire de `product_code` / `product_name` / `unit` : une
- * facture de 2026 doit rester imprimable même si le produit est renommé.
+ * Instantané volontaire de `product_name` / `unit` : une facture de 2026 doit
+ * rester imprimable même si le produit est renommé.
  */
 export const salesInvoiceItems = sqliteTable('sales_invoice_items', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -260,7 +253,6 @@ export const salesInvoiceItems = sqliteTable('sales_invoice_items', {
     .notNull()
     .references(() => salesInvoices.id, { onDelete: 'cascade' }),
   productId: integer('product_id').references(() => products.id),
-  productCode: text('product_code').notNull(),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('pièce'),
   quantity: real('quantity').notNull(),
@@ -301,7 +293,6 @@ export const purchaseInvoiceItems = sqliteTable('purchase_invoice_items', {
     .notNull()
     .references(() => purchaseInvoices.id, { onDelete: 'cascade' }),
   productId: integer('product_id').references(() => products.id),
-  productCode: text('product_code').notNull(),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('pièce'),
   quantity: real('quantity').notNull(),
@@ -472,7 +463,6 @@ export const serviceJobMaterials = sqliteTable('service_job_materials', {
     .notNull()
     .references(() => serviceJobs.id, { onDelete: 'cascade' }),
   productId: integer('product_id').references(() => products.id),
-  productCode: text('product_code').notNull(),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('pièce'),
   quantity: real('quantity').notNull(),
@@ -549,7 +539,6 @@ export const brickProductionMaterials = sqliteTable('brick_production_materials'
     .notNull()
     .references(() => brickProductions.id, { onDelete: 'cascade' }),
   productId: integer('product_id').references(() => products.id),
-  productCode: text('product_code').notNull(),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('kg'),
   quantity: real('quantity').notNull(),
@@ -646,7 +635,6 @@ export const furnitureOrderMaterials = sqliteTable('furniture_order_materials', 
     .notNull()
     .references(() => furnitureOrders.id, { onDelete: 'cascade' }),
   productId: integer('product_id').references(() => products.id),
-  productCode: text('product_code').notNull(),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('pièce'),
   quantity: real('quantity').notNull(),

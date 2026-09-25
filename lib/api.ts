@@ -174,7 +174,9 @@ export function fail(error: unknown): NextResponse {
       'sales_invoices.invoice_number': 'Ce numéro de facture est déjà utilisé.',
       'purchase_invoices.reference': "Ce numéro d'achat est déjà utilisé.",
       'payments.receipt_number': 'Ce numéro de reçu est déjà utilisé.',
-      'products.code': 'Ce code produit est déjà utilisé.',
+      // Le nom est l'identifiant du produit : l'index unique porte sur
+      // `lower(trim(name))`, SQLite nomme donc l'index et non une colonne.
+      'products_name_unique': 'Un produit porte déjà ce nom.',
       'users.username': 'Cet identifiant est déjà pris.',
       'categories.name': 'Cette catégorie existe déjà.',
       'furniture_models.code': 'Ce code de modèle existe déjà.',

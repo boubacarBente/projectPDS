@@ -122,7 +122,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
           entityId: productionId,
           details: {
             addedMaterial: material.productName,
-            productCode: material.productCode,
             quantity: material.quantity,
             unitCost: material.unitCost,
             amount: material.amount,

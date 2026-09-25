@@ -72,7 +72,6 @@ export type BrickTypeRow = {
   isActive: boolean;
   /** Produit lié : il porte le prix de vente et le stock. */
   productName: string;
-  productCode: string;
   unit: string;
   salePrice: number;
   purchasePrice: number;
@@ -126,7 +125,6 @@ export type BrickProductionMaterialRow = {
   id: number;
   productionId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -161,7 +159,7 @@ export type ProductionCosts = {
 export type BrickProductionDetail = {
   production: BrickProductionRow;
   brickType: BrickTypeRow | null;
-  product: { id: number; code: string; name: string; unit: string; stock: number; salePrice: number } | null;
+  product: { id: number; name: string; unit: string; stock: number; salePrice: number } | null;
   materials: BrickProductionMaterialRow[];
   workers: BrickProductionWorkerRow[];
   costs: ProductionCosts;
@@ -228,7 +226,7 @@ export type BrickSummary = {
 const BRICK_TYPE_SELECT = `
   SELECT bt.id, bt.product_id, bt.name, bt.shape, bt.dimensions, bt.description,
          bt.is_active, bt.created_at,
-         p.name AS product_name, p.code AS product_code, p.unit AS product_unit,
+         p.name AS product_name, p.unit AS product_unit,
          p.sale_price, p.purchase_price, p.stock,
          (SELECT COUNT(*) FROM brick_productions bp WHERE bp.brick_type_id = bt.id AND bp.deleted_at IS NULL) AS productions_count
   FROM brick_types bt
@@ -245,7 +243,6 @@ function mapBrickTypeRow(row: any): BrickTypeRow {
     description: row.description,
     isActive: Boolean(row.is_active),
     productName: row.product_name,
-    productCode: row.product_code,
     unit: row.product_unit,
     salePrice: Number(row.sale_price ?? 0),
     purchasePrice: Number(row.purchase_price ?? 0),
@@ -511,7 +508,6 @@ export async function listProductionMaterials(productionId: number): Promise<Bri
     id: row.id,
     productionId: row.productionId,
     productId: row.productId,
-    productCode: row.productCode,
     productName: row.productName,
     unit: row.unit,
     quantity: Number(row.quantity),
@@ -575,12 +571,11 @@ export async function getBrickProduction(id: number): Promise<BrickProductionDet
 
   const productRow = await rawGet<{
     id: number;
-    code: string;
     name: string;
     unit: string;
     stock: number;
     sale_price: number;
-  }>('SELECT id, code, name, unit, stock, sale_price FROM products WHERE id = ?', [production.productId]);
+  }>('SELECT id, name, unit, stock, sale_price FROM products WHERE id = ?', [production.productId]);
 
   return {
     production,
@@ -588,7 +583,6 @@ export async function getBrickProduction(id: number): Promise<BrickProductionDet
     product: productRow
       ? {
           id: Number(productRow.id),
-          code: productRow.code,
           name: productRow.name,
           unit: productRow.unit,
           stock: Number(productRow.stock ?? 0),
@@ -1069,11 +1063,10 @@ export async function addProductionMaterial(
 
   const product = await rawGet<{
     id: number;
-    code: string;
     name: string;
     unit: string;
     purchase_price: number | null;
-  }>('SELECT id, code, name, unit, purchase_price FROM products WHERE id = ?', [productId]);
+  }>('SELECT id, name, unit, purchase_price FROM products WHERE id = ?', [productId]);
 
   if (!product) throw new NotFoundError('Produit introuvable');
 
@@ -1089,7 +1082,6 @@ export async function addProductionMaterial(
     .values({
       productionId,
       productId,
-      productCode: product.code,
       productName: product.name,
       unit: product.unit,
       quantity,
@@ -1115,7 +1107,6 @@ export async function addProductionMaterial(
   await enqueueSyncWrite('brick_production_materials', row.syncId, 'insert', {
     batch_number: production.batchNumber,
     product_id: productId,
-    product_code: product.code,
     product_name: product.name,
     unit: product.unit,
     quantity,
@@ -1129,7 +1120,6 @@ export async function addProductionMaterial(
     id: row.id,
     productionId: row.productionId,
     productId: row.productId,
-    productCode: row.productCode,
     productName: row.productName,
     unit: row.unit,
     quantity: Number(row.quantity),
@@ -1173,7 +1163,7 @@ export async function removeProductionMaterial(
 
   await enqueueSyncWrite('brick_production_materials', material.syncId, 'delete', {
     batch_number: production.batchNumber,
-    product_code: material.productCode,
+    product_name: material.productName,
     quantity: Number(material.quantity),
     deleted_at: new Date().toISOString(),
   });

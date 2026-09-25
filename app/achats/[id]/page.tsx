@@ -254,7 +254,6 @@ export default function AchatDetailPage() {
           kind: 'table',
           columns: [
             { label: '#' },
-            { label: 'Code' },
             { label: 'Désignation' },
             { label: 'Qté', align: 'right' },
             { label: 'Unité' },
@@ -262,10 +261,9 @@ export default function AchatDetailPage() {
             { label: 'Montant' },
           ],
           // Colonnes numériques : quantité, prix d'achat, montant.
-          numeric: [3, 5, 6],
+          numeric: [2, 4, 5],
           rows: items.map((item, index) => [
             String(index + 1),
-            item.productCode ?? '',
             item.productName,
             formatQuantity(item.quantity, ''),
             item.unit ?? '',

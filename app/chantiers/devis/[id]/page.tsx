@@ -155,16 +155,14 @@ export default function ChantierDevisPage() {
           kind: 'table',
           title: 'Matériaux',
           columns: [
-            { label: 'Code' },
             { label: 'Désignation' },
             { label: 'Qté', align: 'right' as const },
             { label: 'Unité' },
             { label: 'Prix unit.', align: 'right' as const },
             { label: 'Montant', align: 'right' as const },
           ],
-          numeric: [2, 4, 5],
+          numeric: [1, 3, 4],
           rows: detail.materials.map((material) => [
-            material.productCode,
             material.productName,
             formatQuantity(material.quantity, ''),
             material.unit,

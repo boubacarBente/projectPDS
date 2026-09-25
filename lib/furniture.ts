@@ -108,7 +108,6 @@ export type FurnitureModelMaterialRow = {
   syncId: string;
   modelId: number;
   productId: number;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -143,7 +142,6 @@ export type FurnitureModelMaterialInput = {
 /** Besoin en matière pour N unités d'un modèle, stock et manquant compris. */
 export type FurnitureRequirementLine = {
   productId: number;
-  productCode: string;
   productName: string;
   unit: string;
   quantityPerUnit: number;
@@ -173,7 +171,6 @@ export type FurnitureOrderMaterialRow = {
   syncId: string;
   orderId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -491,7 +488,7 @@ export async function getFurnitureModel(
 export async function getModelMaterials(modelId: number): Promise<FurnitureModelMaterialRow[]> {
   const rows = await rawAll<any>(
     `SELECT b.id, b.sync_id, b.model_id, b.product_id, b.quantity, b.unit, b.notes,
-            p.code AS product_code, p.name AS product_name, p.unit AS product_unit,
+            p.name AS product_name, p.unit AS product_unit,
             p.purchase_price, p.stock
        FROM furniture_model_materials b
        LEFT JOIN products p ON p.id = b.product_id
@@ -508,7 +505,6 @@ export async function getModelMaterials(modelId: number): Promise<FurnitureModel
       syncId: String(row.sync_id ?? ''),
       modelId: num(row.model_id),
       productId: num(row.product_id),
-      productCode: String(row.product_code ?? ''),
       productName: String(row.product_name ?? 'Produit supprimé'),
       unit: String(row.product_unit ?? row.unit ?? 'pièce'),
       quantity,
@@ -709,8 +705,8 @@ export async function setModelMaterials(
   const kept = new Set<number>();
 
   for (const line of cleaned) {
-    const product = await rawGet<{ code: string; name: string; unit: string }>(
-      'SELECT code, name, unit FROM products WHERE id = ? LIMIT 1',
+    const product = await rawGet<{ name: string; unit: string }>(
+      'SELECT name, unit FROM products WHERE id = ? LIMIT 1',
       [line.productId],
     );
     if (!product) throw new ValidationError('Produit introuvable dans la nomenclature');
@@ -758,7 +754,6 @@ export async function setModelMaterials(
     await enqueueSyncWrite('furniture_model_materials', inserted[0]?.syncId, 'insert', {
       model_id: modelId,
       product_id: line.productId,
-      product_code: product.code,
       product_name: product.name,
       quantity: line.quantity,
       unit,
@@ -814,7 +809,6 @@ export async function computeModelRequirements(
     const missingQuantity = Math.max(0, Math.round((requiredQuantity - material.availableStock) * 1000) / 1000);
     return {
       productId: material.productId,
-      productCode: material.productCode,
       productName: material.productName,
       unit: material.unit,
       quantityPerUnit: material.quantity,
@@ -1013,7 +1007,7 @@ export async function listFurnitureOrders(options: FurnitureOrderListOptions = {
 
 export async function getOrderMaterials(orderId: number): Promise<FurnitureOrderMaterialRow[]> {
   const rows = await rawAll<any>(
-    `SELECT om.id, om.sync_id, om.order_id, om.product_id, om.product_code, om.product_name,
+    `SELECT om.id, om.sync_id, om.order_id, om.product_id, om.product_name,
             om.unit, om.quantity, om.wastage_quantity, om.unit_cost, om.amount, om.created_at
        FROM furniture_order_materials om
       WHERE om.order_id = ?
@@ -1026,7 +1020,6 @@ export async function getOrderMaterials(orderId: number): Promise<FurnitureOrder
     syncId: String(row.sync_id ?? ''),
     orderId: num(row.order_id),
     productId: row.product_id == null ? null : num(row.product_id),
-    productCode: String(row.product_code ?? ''),
     productName: String(row.product_name ?? ''),
     unit: String(row.unit ?? 'pièce'),
     quantity: num(row.quantity),
@@ -1269,7 +1262,6 @@ export async function createFurnitureOrder(input: FurnitureOrderInput): Promise<
         .values({
           orderId,
           productId: line.productId,
-          productCode: line.productCode,
           productName: line.productName,
           unit: line.unit,
           quantity: line.requiredQuantity,
@@ -1282,7 +1274,6 @@ export async function createFurnitureOrder(input: FurnitureOrderInput): Promise<
       await enqueueSyncWrite('furniture_order_materials', materialInserted[0]?.syncId, 'insert', {
         order_id: orderId,
         product_id: line.productId,
-        product_code: line.productCode,
         product_name: line.productName,
         quantity: line.requiredQuantity,
         wastage_quantity: 0,
@@ -1487,9 +1478,9 @@ export async function advanceStage(id: number, stage: FurnitureStage): Promise<F
  *  1. **Déduction du stock** par un `exit` motivé — le stock ne peut pas
  *     devenir négatif, `addStockMovement` lève `InsufficientStockError` (400) ;
  *  2. **Mouvement de perte séparé** pour `wastageQuantity`, avec un motif
- *     explicite (`chutes de bois — commande MEU-…`) : les chutes sont ainsi
+ *     explicite (`chutes de bois — commande n°…`) : les chutes sont ainsi
  *     lisibles dans le journal de stock au même titre qu'une vente ;
- *  3. **Instantanés figés** (`product_code`, `product_name`, `unit`, `unit_cost`)
+ *  3. **Instantanés figés** (`product_name`, `unit`, `unit_cost`)
  *     et recalcul des coûts de la commande.
  */
 export async function addOrderMaterial(
@@ -1514,7 +1505,7 @@ export async function addOrderMaterial(
   if (order.deleted_at) throw new ValidationError('Cette commande est annulée : ajout impossible');
 
   const product = await rawGet<any>(
-    'SELECT id, code, name, unit, purchase_price, stock FROM products WHERE id = ? LIMIT 1',
+    'SELECT id, name, unit, purchase_price, stock FROM products WHERE id = ? LIMIT 1',
     [productId],
   );
   if (!product) throw new ValidationError('Produit introuvable');
@@ -1550,7 +1541,6 @@ export async function addOrderMaterial(
     .values({
       orderId,
       productId,
-      productCode: String(product.code ?? ''),
       productName: String(product.name ?? ''),
       unit: String(product.unit ?? 'pièce'),
       quantity,
@@ -1563,7 +1553,6 @@ export async function addOrderMaterial(
   await enqueueSyncWrite('furniture_order_materials', inserted[0]?.syncId, 'insert', {
     order_id: orderId,
     product_id: productId,
-    product_code: product.code,
     product_name: product.name,
     unit: product.unit,
     quantity,
@@ -1589,7 +1578,7 @@ export async function removeOrderMaterial(
   materialId: number,
 ): Promise<FurnitureOrderDetail> {
   const line = await rawGet<any>(
-    `SELECT id, sync_id, product_id, product_code, product_name, unit, quantity, wastage_quantity, unit_cost
+    `SELECT id, sync_id, product_id, product_name, unit, quantity, wastage_quantity, unit_cost
        FROM furniture_order_materials WHERE id = ? AND order_id = ? LIMIT 1`,
     [materialId, orderId],
   );

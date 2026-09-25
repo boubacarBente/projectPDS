@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** POST /api/produits — création ; le code est généré s'il n'est pas fourni. */
+/** POST /api/produits — création ; le nom est l'identifiant du produit. */
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('products.create');
@@ -56,7 +56,6 @@ export async function POST(request: NextRequest) {
 
     const product = await createProduct(
       {
-        code: body.code ?? null,
         name: required(body.name, 'Nom'),
         categoryId: categoryId > 0 ? categoryId : null,
         unit: body.unit ?? null,
@@ -76,7 +75,6 @@ export async function POST(request: NextRequest) {
       entity: 'product',
       entityId: product.id,
       details: {
-        code: product.code,
         name: product.name,
         unit: product.unit,
         categoryId: product.categoryId,

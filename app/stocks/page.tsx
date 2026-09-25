@@ -380,7 +380,7 @@ export default function StocksPage() {
     const term = debouncedMovementSearch.trim().toLowerCase();
     if (!term) return movements;
     return movements.filter((m) =>
-      [m.productName, m.productCode, m.motif, m.userName ?? '']
+      [m.productName, m.motif, m.userName ?? '']
         .join(' ')
         .toLowerCase()
         .includes(term),

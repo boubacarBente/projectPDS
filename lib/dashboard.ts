@@ -94,7 +94,6 @@ export type DashboardSnapshot = {
     saleValue: number;
     alerts: {
       id: number;
-      code: string;
       name: string;
       unit: string;
       stock: number;
@@ -279,7 +278,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
   );
 
   const stockAlerts = await rawAll<any>(
-    `SELECT id, code, name, unit, stock, stock_min
+    `SELECT id, name, unit, stock, stock_min
      FROM products
      WHERE is_active = 1 AND (stock <= 0 OR (stock_min > 0 AND stock <= stock_min))
      ORDER BY (stock <= 0) DESC, stock ASC
@@ -416,7 +415,6 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
       saleValue: Number(stockRow?.sale_value ?? 0),
       alerts: stockAlerts.map((r) => ({
         id: Number(r.id),
-        code: r.code,
         name: r.name,
         unit: r.unit ?? '',
         stock: Number(r.stock ?? 0),

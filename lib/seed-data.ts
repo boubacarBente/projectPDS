@@ -72,7 +72,6 @@ const CATEGORIES: { name: string; kind: 'finished' | 'raw_material' | 'service';
 ];
 
 type ProductSeed = {
-  code: string;
   name: string;
   category: string;
   unit: string;
@@ -84,58 +83,58 @@ type ProductSeed = {
 
 const PRODUCTS: ProductSeed[] = [
   // Meubles finis
-  { code: 'MEU-001', name: 'Armoire 2 portes standard', category: 'Meuble', unit: 'pièce', purchasePrice: 1_450_000, salePrice: 2_100_000, stock: 4, stockMin: 2 },
-  { code: 'MEU-002', name: 'Lit 2 places avec tête de lit', category: 'Meuble', unit: 'pièce', purchasePrice: 1_900_000, salePrice: 2_750_000, stock: 3, stockMin: 2 },
-  { code: 'MEU-003', name: 'Table à manger 6 places', category: 'Meuble', unit: 'pièce', purchasePrice: 1_200_000, salePrice: 1_850_000, stock: 5, stockMin: 2 },
-  { code: 'MEU-004', name: 'Buffet bas 4 portes', category: 'Meuble', unit: 'pièce', purchasePrice: 980_000, salePrice: 1_500_000, stock: 6, stockMin: 2 },
-  { code: 'MEU-005', name: 'Ensemble salon complet', category: 'Meuble', unit: 'ensemble', purchasePrice: 4_200_000, salePrice: 6_300_000, stock: 2, stockMin: 1 },
-  { code: 'MEU-006', name: 'Bureau de direction', category: 'Meuble', unit: 'pièce', purchasePrice: 1_650_000, salePrice: 2_450_000, stock: 3, stockMin: 1 },
-  { code: 'MEU-007', name: 'Chaise bois massif', category: 'Meuble', unit: 'pièce', purchasePrice: 185_000, salePrice: 295_000, stock: 24, stockMin: 8 },
+  { name: 'Armoire 2 portes standard', category: 'Meuble', unit: 'pièce', purchasePrice: 1_450_000, salePrice: 2_100_000, stock: 4, stockMin: 2 },
+  { name: 'Lit 2 places avec tête de lit', category: 'Meuble', unit: 'pièce', purchasePrice: 1_900_000, salePrice: 2_750_000, stock: 3, stockMin: 2 },
+  { name: 'Table à manger 6 places', category: 'Meuble', unit: 'pièce', purchasePrice: 1_200_000, salePrice: 1_850_000, stock: 5, stockMin: 2 },
+  { name: 'Buffet bas 4 portes', category: 'Meuble', unit: 'pièce', purchasePrice: 980_000, salePrice: 1_500_000, stock: 6, stockMin: 2 },
+  { name: 'Ensemble salon complet', category: 'Meuble', unit: 'ensemble', purchasePrice: 4_200_000, salePrice: 6_300_000, stock: 2, stockMin: 1 },
+  { name: 'Bureau de direction', category: 'Meuble', unit: 'pièce', purchasePrice: 1_650_000, salePrice: 2_450_000, stock: 3, stockMin: 1 },
+  { name: 'Chaise bois massif', category: 'Meuble', unit: 'pièce', purchasePrice: 185_000, salePrice: 295_000, stock: 24, stockMin: 8 },
 
   // Briques
-  { code: 'BRI-001', name: 'Brique pleine 15 trous', category: 'Brique', unit: 'pièce', purchasePrice: 2_800, salePrice: 4_500, stock: 4_800, stockMin: 500 },
-  { code: 'BRI-002', name: 'Brique creuse 12 trous', category: 'Brique', unit: 'pièce', purchasePrice: 2_400, salePrice: 3_900, stock: 3_200, stockMin: 500 },
-  { code: 'BRI-003', name: 'Bloc béton 20x20x40', category: 'Brique', unit: 'pièce', purchasePrice: 5_200, salePrice: 7_500, stock: 850, stockMin: 200 },
+  { name: 'Brique pleine 15 trous', category: 'Brique', unit: 'pièce', purchasePrice: 2_800, salePrice: 4_500, stock: 4_800, stockMin: 500 },
+  { name: 'Brique creuse 12 trous', category: 'Brique', unit: 'pièce', purchasePrice: 2_400, salePrice: 3_900, stock: 3_200, stockMin: 500 },
+  { name: 'Bloc béton 20x20x40', category: 'Brique', unit: 'pièce', purchasePrice: 5_200, salePrice: 7_500, stock: 850, stockMin: 200 },
 
   // Alucobond
-  { code: 'ALU-001', name: 'Panneau Alucobond 4 mm rouge', category: 'Alucobond', unit: 'm²', purchasePrice: 145_000, salePrice: 210_000, stock: 96.5, stockMin: 20 },
-  { code: 'ALU-002', name: 'Panneau Alucobond 4 mm argent', category: 'Alucobond', unit: 'm²', purchasePrice: 148_000, salePrice: 215_000, stock: 62.25, stockMin: 20 },
-  { code: 'ALU-003', name: 'Panneau Alucobond 3 mm bleu', category: 'Alucobond', unit: 'm²', purchasePrice: 125_000, salePrice: 185_000, stock: 12, stockMin: 20 },
+  { name: 'Panneau Alucobond 4 mm rouge', category: 'Alucobond', unit: 'm²', purchasePrice: 145_000, salePrice: 210_000, stock: 96.5, stockMin: 20 },
+  { name: 'Panneau Alucobond 4 mm argent', category: 'Alucobond', unit: 'm²', purchasePrice: 148_000, salePrice: 215_000, stock: 62.25, stockMin: 20 },
+  { name: 'Panneau Alucobond 3 mm bleu', category: 'Alucobond', unit: 'm²', purchasePrice: 125_000, salePrice: 185_000, stock: 12, stockMin: 20 },
 
   // Staff
-  { code: 'STA-001', name: 'Staff décoratif en poudre', category: 'Staff', unit: 'sac', purchasePrice: 78_000, salePrice: 115_000, stock: 40, stockMin: 10 },
-  { code: 'STA-002', name: 'Corniche staff 2 m', category: 'Staff', unit: 'pièce', purchasePrice: 42_000, salePrice: 68_000, stock: 55, stockMin: 15 },
+  { name: 'Staff décoratif en poudre', category: 'Staff', unit: 'sac', purchasePrice: 78_000, salePrice: 115_000, stock: 40, stockMin: 10 },
+  { name: 'Corniche staff 2 m', category: 'Staff', unit: 'pièce', purchasePrice: 42_000, salePrice: 68_000, stock: 55, stockMin: 15 },
 
   // Placo
-  { code: 'PLA-001', name: 'Plaque BA13 1,20 x 2,60 m', category: 'Placo', unit: 'pièce', purchasePrice: 68_000, salePrice: 98_000, stock: 120, stockMin: 30 },
-  { code: 'PLA-002', name: 'Rail R48', category: 'Placo', unit: 'pièce', purchasePrice: 22_000, salePrice: 34_000, stock: 180, stockMin: 40 },
-  { code: 'PLA-003', name: 'Montant M48', category: 'Placo', unit: 'pièce', purchasePrice: 24_000, salePrice: 36_000, stock: 8, stockMin: 40 },
+  { name: 'Plaque BA13 1,20 x 2,60 m', category: 'Placo', unit: 'pièce', purchasePrice: 68_000, salePrice: 98_000, stock: 120, stockMin: 30 },
+  { name: 'Rail R48', category: 'Placo', unit: 'pièce', purchasePrice: 22_000, salePrice: 34_000, stock: 180, stockMin: 40 },
+  { name: 'Montant M48', category: 'Placo', unit: 'pièce', purchasePrice: 24_000, salePrice: 36_000, stock: 8, stockMin: 40 },
 
   // Peinture
-  { code: 'PEI-001', name: 'Peinture acrylique blanche 20 L', category: 'Peinture', unit: 'litre', purchasePrice: 8_500, salePrice: 13_500, stock: 240, stockMin: 60 },
-  { code: 'PEI-002', name: 'Vernis bois brillant 5 L', category: 'Peinture', unit: 'litre', purchasePrice: 12_000, salePrice: 19_500, stock: 45, stockMin: 20 },
-  { code: 'PEI-003', name: 'Enduit de lissage 25 kg', category: 'Peinture', unit: 'sac', purchasePrice: 65_000, salePrice: 92_000, stock: 18, stockMin: 10 },
+  { name: 'Peinture acrylique blanche 20 L', category: 'Peinture', unit: 'litre', purchasePrice: 8_500, salePrice: 13_500, stock: 240, stockMin: 60 },
+  { name: 'Vernis bois brillant 5 L', category: 'Peinture', unit: 'litre', purchasePrice: 12_000, salePrice: 19_500, stock: 45, stockMin: 20 },
+  { name: 'Enduit de lissage 25 kg', category: 'Peinture', unit: 'sac', purchasePrice: 65_000, salePrice: 92_000, stock: 18, stockMin: 10 },
 
   // Bois
-  { code: 'BOI-001', name: 'Planche bois rouge 2,5 m', category: 'Bois', unit: 'pièce', purchasePrice: 95_000, salePrice: 140_000, stock: 85, stockMin: 25 },
-  { code: 'BOI-002', name: 'Chevron 7 x 7 cm — 3 m', category: 'Bois', unit: 'pièce', purchasePrice: 55_000, salePrice: 82_000, stock: 130, stockMin: 30 },
-  { code: 'BOI-003', name: 'Contreplaqué 15 mm — 2,44 x 1,22 m', category: 'Bois', unit: 'pièce', purchasePrice: 320_000, salePrice: 445_000, stock: 22, stockMin: 8 },
-  { code: 'BOI-004', name: 'Mousse polyurethane haute densité', category: 'Bois', unit: 'm²', purchasePrice: 48_000, salePrice: 72_000, stock: 34.5, stockMin: 10 },
-  { code: 'BOI-005', name: 'Tissu d’ameublement au mètre', category: 'Bois', unit: 'm²', purchasePrice: 35_000, salePrice: 58_000, stock: 62, stockMin: 15 },
+  { name: 'Planche bois rouge 2,5 m', category: 'Bois', unit: 'pièce', purchasePrice: 95_000, salePrice: 140_000, stock: 85, stockMin: 25 },
+  { name: 'Chevron 7 x 7 cm — 3 m', category: 'Bois', unit: 'pièce', purchasePrice: 55_000, salePrice: 82_000, stock: 130, stockMin: 30 },
+  { name: 'Contreplaqué 15 mm — 2,44 x 1,22 m', category: 'Bois', unit: 'pièce', purchasePrice: 320_000, salePrice: 445_000, stock: 22, stockMin: 8 },
+  { name: 'Mousse polyurethane haute densité', category: 'Bois', unit: 'm²', purchasePrice: 48_000, salePrice: 72_000, stock: 34.5, stockMin: 10 },
+  { name: 'Tissu d’ameublement au mètre', category: 'Bois', unit: 'm²', purchasePrice: 35_000, salePrice: 58_000, stock: 62, stockMin: 15 },
 
   // Quincaillerie
-  { code: 'QUI-001', name: 'Charnière invisible', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 3_500, salePrice: 6_000, stock: 480, stockMin: 100 },
-  { code: 'QUI-002', name: 'Colle à bois 1 kg', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 28_000, salePrice: 42_000, stock: 36, stockMin: 12 },
-  { code: 'QUI-003', name: 'Vis à bois 5 x 60 mm (boîte de 200)', category: 'Quincaillerie', unit: 'carton', purchasePrice: 32_000, salePrice: 48_000, stock: 28, stockMin: 10 },
-  { code: 'QUI-004', name: 'Poignée aluminium brossé', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 9_500, salePrice: 16_000, stock: 145, stockMin: 40 },
-  { code: 'QUI-005', name: 'Clous 50 mm (1 kg)', category: 'Quincaillerie', unit: 'kg', purchasePrice: 12_000, salePrice: 19_000, stock: 42.5, stockMin: 15 },
+  { name: 'Charnière invisible', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 3_500, salePrice: 6_000, stock: 480, stockMin: 100 },
+  { name: 'Colle à bois 1 kg', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 28_000, salePrice: 42_000, stock: 36, stockMin: 12 },
+  { name: 'Vis à bois 5 x 60 mm (boîte de 200)', category: 'Quincaillerie', unit: 'carton', purchasePrice: 32_000, salePrice: 48_000, stock: 28, stockMin: 10 },
+  { name: 'Poignée aluminium brossé', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 9_500, salePrice: 16_000, stock: 145, stockMin: 40 },
+  { name: 'Clous 50 mm (1 kg)', category: 'Quincaillerie', unit: 'kg', purchasePrice: 12_000, salePrice: 19_000, stock: 42.5, stockMin: 15 },
 
   // Matières premières briqueterie
-  { code: 'MPR-001', name: 'Argile / terre de briqueterie', category: 'Matière première', unit: 'kg', purchasePrice: 850, salePrice: 0, stock: 12_500, stockMin: 2_000 },
-  { code: 'MPR-002', name: 'Ciment CEM II 50 kg', category: 'Matière première', unit: 'sac', purchasePrice: 88_000, salePrice: 0, stock: 64, stockMin: 20 },
-  { code: 'MPR-003', name: 'Sable de rivière', category: 'Matière première', unit: 'kg', purchasePrice: 4_500, salePrice: 0, stock: 3_200, stockMin: 800 },
-  { code: 'MPR-004', name: 'Eau de gâchage', category: 'Matière première', unit: 'litre', purchasePrice: 0, salePrice: 0, stock: 5_000, stockMin: 500 },
-  { code: 'MPR-005', name: 'Bois de chauffe (stère)', category: 'Matière première', unit: 'kg', purchasePrice: 1_600, salePrice: 0, stock: 1_450, stockMin: 400 },
+  { name: 'Argile / terre de briqueterie', category: 'Matière première', unit: 'kg', purchasePrice: 850, salePrice: 0, stock: 12_500, stockMin: 2_000 },
+  { name: 'Ciment CEM II 50 kg', category: 'Matière première', unit: 'sac', purchasePrice: 88_000, salePrice: 0, stock: 64, stockMin: 20 },
+  { name: 'Sable de rivière', category: 'Matière première', unit: 'kg', purchasePrice: 4_500, salePrice: 0, stock: 3_200, stockMin: 800 },
+  { name: 'Eau de gâchage', category: 'Matière première', unit: 'litre', purchasePrice: 0, salePrice: 0, stock: 5_000, stockMin: 500 },
+  { name: 'Bois de chauffe (stère)', category: 'Matière première', unit: 'kg', purchasePrice: 1_600, salePrice: 0, stock: 1_450, stockMin: 400 },
 ];
 
 const CUSTOMERS: { name: string; phone: string; address: string; creditLimit: number }[] = [
@@ -225,6 +224,7 @@ export async function seedDemoData(): Promise<SeedReport> {
   }
 
   /* ------------------------------- Produits ------------------------------ */
+  // Le nom du produit est son identifiant : c’est la clé des correspondances ci-dessous.
   const productIds = new Map<string, number>();
 
   for (const product of PRODUCTS) {
@@ -232,7 +232,6 @@ export async function seedDemoData(): Promise<SeedReport> {
     const inserted = await db
       .insert(products)
       .values({
-        code: product.code,
         name: product.name,
         categoryId,
         unit: product.unit,
@@ -245,7 +244,7 @@ export async function seedDemoData(): Promise<SeedReport> {
         ...syncDefaults,
       })
       .returning({ id: products.id });
-    productIds.set(product.code, inserted[0].id);
+    productIds.set(product.name, inserted[0].id);
     productCount += 1;
 
     if (product.stock > 0) {
@@ -304,11 +303,11 @@ export async function seedDemoData(): Promise<SeedReport> {
       hours: 16,
       price: 2_100_000,
       bom: [
-        ['BOI-003', 2],
-        ['BOI-001', 4],
-        ['QUI-001', 6],
-        ['QUI-004', 2],
-        ['PEI-002', 1],
+        ['Contreplaqué 15 mm — 2,44 x 1,22 m', 2],
+        ['Planche bois rouge 2,5 m', 4],
+        ['Charnière invisible', 6],
+        ['Poignée aluminium brossé', 2],
+        ['Vernis bois brillant 5 L', 1],
       ],
     },
     {
@@ -318,10 +317,10 @@ export async function seedDemoData(): Promise<SeedReport> {
       hours: 14,
       price: 2_750_000,
       bom: [
-        ['BOI-001', 6],
-        ['BOI-002', 4],
-        ['QUI-003', 1],
-        ['PEI-002', 1],
+        ['Planche bois rouge 2,5 m', 6],
+        ['Chevron 7 x 7 cm — 3 m', 4],
+        ['Vis à bois 5 x 60 mm (boîte de 200)', 1],
+        ['Vernis bois brillant 5 L', 1],
       ],
     },
     {
@@ -331,10 +330,10 @@ export async function seedDemoData(): Promise<SeedReport> {
       hours: 12,
       price: 1_850_000,
       bom: [
-        ['BOI-001', 5],
-        ['BOI-003', 1],
-        ['QUI-002', 1],
-        ['PEI-002', 1],
+        ['Planche bois rouge 2,5 m', 5],
+        ['Contreplaqué 15 mm — 2,44 x 1,22 m', 1],
+        ['Colle à bois 1 kg', 1],
+        ['Vernis bois brillant 5 L', 1],
       ],
     },
     {
@@ -344,10 +343,10 @@ export async function seedDemoData(): Promise<SeedReport> {
       hours: 32,
       price: 6_300_000,
       bom: [
-        ['BOI-001', 8],
-        ['BOI-004', 6],
-        ['BOI-005', 9],
-        ['QUI-005', 2],
+        ['Planche bois rouge 2,5 m', 8],
+        ['Mousse polyurethane haute densité', 6],
+        ['Tissu d’ameublement au mètre', 9],
+        ['Clous 50 mm (1 kg)', 2],
       ],
     },
   ];
@@ -367,10 +366,10 @@ export async function seedDemoData(): Promise<SeedReport> {
       .returning({ id: furnitureModels.id });
     modelCount += 1;
 
-    for (const [productCode, quantity] of model.bom) {
-      const productId = productIds.get(productCode);
+    for (const [productName, quantity] of model.bom) {
+      const productId = productIds.get(productName);
       if (!productId) continue;
-      const product = PRODUCTS.find((p) => p.code === productCode);
+      const product = PRODUCTS.find((p) => p.name === productName);
       await db.insert(furnitureModelMaterials).values({
         modelId: inserted[0].id,
         productId,
@@ -382,14 +381,14 @@ export async function seedDemoData(): Promise<SeedReport> {
   }
 
   /* ---------------------------- Types de briques ------------------------- */
-  const bricks: { code: string; name: string; shape: 'solid' | 'hollow' | 'block'; dimensions: string }[] = [
-    { code: 'BRI-001', name: 'Brique pleine 15 trous', shape: 'solid', dimensions: '22,5 x 10,5 x 6 cm' },
-    { code: 'BRI-002', name: 'Brique creuse 12 trous', shape: 'hollow', dimensions: '30 x 20 x 15 cm' },
-    { code: 'BRI-003', name: 'Bloc béton 20x20x40', shape: 'block', dimensions: '40 x 20 x 20 cm' },
+  const bricks: { name: string; shape: 'solid' | 'hollow' | 'block'; dimensions: string }[] = [
+    { name: 'Brique pleine 15 trous', shape: 'solid', dimensions: '22,5 x 10,5 x 6 cm' },
+    { name: 'Brique creuse 12 trous', shape: 'hollow', dimensions: '30 x 20 x 15 cm' },
+    { name: 'Bloc béton 20x20x40', shape: 'block', dimensions: '40 x 20 x 20 cm' },
   ];
 
   for (const brick of bricks) {
-    const productId = productIds.get(brick.code);
+    const productId = productIds.get(brick.name);
     if (!productId) continue;
     await db.insert(brickTypes).values({
       productId,
@@ -430,10 +429,10 @@ export async function seedDemoData(): Promise<SeedReport> {
 
   // Achats fournisseurs (entrées de stock).
   const purchases: { supplierIndex: number; daysAgo: number; lines: [string, number][]; paidRatio: number }[] = [
-    { supplierIndex: 0, daysAgo: 24, lines: [['BOI-001', 40], ['BOI-002', 60], ['BOI-003', 12]], paidRatio: 1 },
-    { supplierIndex: 2, daysAgo: 18, lines: [['MPR-002', 40]], paidRatio: 1 },
-    { supplierIndex: 3, daysAgo: 12, lines: [['ALU-001', 60], ['ALU-002', 40]], paidRatio: 0.5 },
-    { supplierIndex: 1, daysAgo: 7, lines: [['QUI-001', 200], ['QUI-004', 80]], paidRatio: 0 },
+    { supplierIndex: 0, daysAgo: 24, lines: [['Planche bois rouge 2,5 m', 40], ['Chevron 7 x 7 cm — 3 m', 60], ['Contreplaqué 15 mm — 2,44 x 1,22 m', 12]], paidRatio: 1 },
+    { supplierIndex: 2, daysAgo: 18, lines: [['Ciment CEM II 50 kg', 40]], paidRatio: 1 },
+    { supplierIndex: 3, daysAgo: 12, lines: [['Panneau Alucobond 4 mm rouge', 60], ['Panneau Alucobond 4 mm argent', 40]], paidRatio: 0.5 },
+    { supplierIndex: 1, daysAgo: 7, lines: [['Charnière invisible', 200], ['Poignée aluminium brossé', 80]], paidRatio: 0 },
   ];
 
   /**
@@ -471,9 +470,9 @@ export async function seedDemoData(): Promise<SeedReport> {
     const purchaseYear = Number(date.slice(0, 4));
     recordSequence('purchase', purchaseYear, purchaseSequence);
 
-    const lines = purchase.lines.map(([code, quantity]) => {
-      const seed = PRODUCTS.find((p) => p.code === code)!;
-      return { code, quantity, unitPrice: seed.purchasePrice, amount: seed.purchasePrice * quantity };
+    const lines = purchase.lines.map(([name, quantity]) => {
+      const seed = PRODUCTS.find((p) => p.name === name)!;
+      return { name, quantity, unitPrice: seed.purchasePrice, amount: seed.purchasePrice * quantity };
     });
 
     const total = lines.reduce((sum, l) => sum + l.amount, 0);
@@ -497,13 +496,12 @@ export async function seedDemoData(): Promise<SeedReport> {
       .returning({ id: purchaseInvoices.id });
 
     for (const line of lines) {
-      const productId = productIds.get(line.code)!;
-      const seed = PRODUCTS.find((p) => p.code === line.code)!;
+      const productId = productIds.get(line.name)!;
+      const seed = PRODUCTS.find((p) => p.name === line.name)!;
 
       await db.insert(purchaseInvoiceItems).values({
         invoiceId: invoice[0].id,
         productId,
-        productCode: line.code,
         productName: seed.name,
         unit: seed.unit,
         quantity: line.quantity,
@@ -574,16 +572,16 @@ export async function seedDemoData(): Promise<SeedReport> {
     paidRatio: number;
     method: string;
   }[] = [
-    { customerIndex: 0, daysAgo: 21, lines: [['MEU-005', 1], ['MEU-007', 6]], paidRatio: 1, method: 'Virement' },
-    { customerIndex: 2, daysAgo: 17, lines: [['MEU-002', 1]], paidRatio: 0.5, method: 'Mobile Money' },
-    { customerIndex: 3, daysAgo: 14, lines: [['ALU-001', 24.5], ['PLA-001', 40], ['PEI-001', 60]], paidRatio: 0.3, method: 'Espèces' },
-    { customerIndex: 1, daysAgo: 10, lines: [['MEU-001', 4], ['MEU-003', 2]], paidRatio: 1, method: 'Virement' },
-    { customerIndex: 4, daysAgo: 6, lines: [['MEU-004', 1]], paidRatio: 1, method: 'Espèces' },
-    { customerIndex: null, daysAgo: 5, lines: [['BRI-001', 500], ['BRI-002', 300]], paidRatio: 1, method: 'Espèces' },
-    { customerIndex: 5, daysAgo: 3, lines: [['PLA-001', 30], ['PLA-002', 40], ['PEI-002', 8]], paidRatio: 0.6, method: 'Mobile Money' },
-    { customerIndex: 0, daysAgo: 2, lines: [['MEU-007', 12], ['MEU-006', 1]], paidRatio: 0.25, method: 'Espèces' },
-    { customerIndex: null, daysAgo: 1, lines: [['PEI-001', 20], ['QUI-005', 5.5]], paidRatio: 1, method: 'Espèces' },
-    { customerIndex: 3, daysAgo: 0, lines: [['BRI-003', 150], ['MPR-002', 10]], paidRatio: 1, method: 'Mobile Money' },
+    { customerIndex: 0, daysAgo: 21, lines: [['Ensemble salon complet', 1], ['Chaise bois massif', 6]], paidRatio: 1, method: 'Virement' },
+    { customerIndex: 2, daysAgo: 17, lines: [['Lit 2 places avec tête de lit', 1]], paidRatio: 0.5, method: 'Mobile Money' },
+    { customerIndex: 3, daysAgo: 14, lines: [['Panneau Alucobond 4 mm rouge', 24.5], ['Plaque BA13 1,20 x 2,60 m', 40], ['Peinture acrylique blanche 20 L', 60]], paidRatio: 0.3, method: 'Espèces' },
+    { customerIndex: 1, daysAgo: 10, lines: [['Armoire 2 portes standard', 4], ['Table à manger 6 places', 2]], paidRatio: 1, method: 'Virement' },
+    { customerIndex: 4, daysAgo: 6, lines: [['Buffet bas 4 portes', 1]], paidRatio: 1, method: 'Espèces' },
+    { customerIndex: null, daysAgo: 5, lines: [['Brique pleine 15 trous', 500], ['Brique creuse 12 trous', 300]], paidRatio: 1, method: 'Espèces' },
+    { customerIndex: 5, daysAgo: 3, lines: [['Plaque BA13 1,20 x 2,60 m', 30], ['Rail R48', 40], ['Vernis bois brillant 5 L', 8]], paidRatio: 0.6, method: 'Mobile Money' },
+    { customerIndex: 0, daysAgo: 2, lines: [['Chaise bois massif', 12], ['Bureau de direction', 1]], paidRatio: 0.25, method: 'Espèces' },
+    { customerIndex: null, daysAgo: 1, lines: [['Peinture acrylique blanche 20 L', 20], ['Clous 50 mm (1 kg)', 5.5]], paidRatio: 1, method: 'Espèces' },
+    { customerIndex: 3, daysAgo: 0, lines: [['Bloc béton 20x20x40', 150], ['Ciment CEM II 50 kg', 10]], paidRatio: 1, method: 'Mobile Money' },
   ];
 
   const taxRate = settings.defaultTaxRate;
@@ -596,10 +594,10 @@ export async function seedDemoData(): Promise<SeedReport> {
     const year = Number(date.slice(0, 4));
     recordSequence('invoice', year, saleSequence);
 
-    const lines = sale.lines.map(([code, quantity]) => {
-      const seed = PRODUCTS.find((p) => p.code === code)!;
+    const lines = sale.lines.map(([name, quantity]) => {
+      const seed = PRODUCTS.find((p) => p.name === name)!;
       return {
-        code,
+        name,
         seed,
         quantity,
         unitPrice: seed.salePrice,
@@ -642,12 +640,11 @@ export async function seedDemoData(): Promise<SeedReport> {
       .returning({ id: salesInvoices.id });
 
     for (const line of lines) {
-      const productId = productIds.get(line.code)!;
+      const productId = productIds.get(line.name)!;
 
       await db.insert(salesInvoiceItems).values({
         invoiceId: invoice[0].id,
         productId,
-        productCode: line.code,
         productName: line.seed.name,
         unit: line.seed.unit,
         quantity: line.quantity,

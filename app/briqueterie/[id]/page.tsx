@@ -423,7 +423,7 @@ export default function BrickProductionDetailPage() {
           label="Stock du produit lié"
           tone="primary"
           value={<QuantityText value={product?.stock ?? 0} unit={unit} />}
-          hint={product ? `${product.code} — ${product.name}` : 'Produit lié introuvable'}
+          hint={product ? product.name : 'Produit lié introuvable'}
         />
       </div>
 
@@ -443,9 +443,7 @@ export default function BrickProductionDetailPage() {
           <InfoRow label="Date de fin">{formatDateLong(production.endDate)}</InfoRow>
           <InfoRow label="Produit lié (stock et prix de vente)">
             {product ? (
-              <span>
-                <span className="font-mono text-xs">{product.code}</span> — {product.name}
-              </span>
+              <span>{product.name}</span>
             ) : (
               '—'
             )}

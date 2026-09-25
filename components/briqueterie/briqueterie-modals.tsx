@@ -60,7 +60,6 @@ export type BrickTypeRow = {
   isActive: boolean;
   /** Produit lié : il porte le prix de vente **et** le stock des briques finies. */
   productName: string;
-  productCode: string;
   unit: string;
   salePrice: number;
   purchasePrice: number;
@@ -105,7 +104,6 @@ export type BrickProductionMaterialRow = {
   id: number;
   productionId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -256,7 +254,6 @@ export function goodQuantityOf(production: {
 
 export type ProductOption = {
   id: number;
-  code: string;
   name: string;
   unit: string;
   purchasePrice: number;
@@ -301,7 +298,6 @@ export function useBrickSelectOptions(enabled: boolean) {
           setProducts(
             (payload.data ?? []).map((product: any) => ({
               id: Number(product.id),
-              code: String(product.code ?? ''),
               name: String(product.name ?? ''),
               unit: String(product.unit ?? 'pièce'),
               purchasePrice: Number(product.purchasePrice ?? 0),

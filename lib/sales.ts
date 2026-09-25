@@ -74,7 +74,6 @@ export type SalesInvoiceItemRow = {
   id: number;
   invoiceId: number;
   productId: number | null;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -108,7 +107,6 @@ export type SalesInvoiceInput = {
 /** Ligne validée par `buildSalesItems` : instantanés + montant calculé. */
 export type SalesItemDraft = {
   productId: number;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -212,7 +210,6 @@ function mapItemRow(row: any): SalesInvoiceItemRow {
     id: Number(row.id),
     invoiceId: Number(row.invoice_id),
     productId: row.product_id == null ? null : Number(row.product_id),
-    productCode: row.product_code,
     productName: row.product_name,
     unit: row.unit,
     quantity: Number(row.quantity ?? 0),
@@ -308,7 +305,7 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
 
 async function getItemRecords(invoiceId: number): Promise<any[]> {
   return rawAll<any>(
-    `SELECT id, sync_id, invoice_id, product_id, product_code, product_name, unit,
+    `SELECT id, sync_id, invoice_id, product_id, product_name, unit,
             quantity, unit_price, discount, amount
      FROM sales_invoice_items
      WHERE invoice_id = ?
@@ -346,8 +343,8 @@ export function areQuantityMapsEqual(a: Map<number, number>, b: Map<number, numb
  * ------------------------------------------------------------------ */
 
 /**
- * Construit les lignes validées (instantanés `product_code` / `product_name` /
- * `unit`) et **vérifie le stock**.
+ * Construit les lignes validées (instantanés `product_name` / `unit`) et
+ * **vérifie le stock**.
  *
  * Le contrôle est volontairement **agrégé** : toutes les ruptures sont listées
  * dans une seule erreur, au format attendu par le front (§10.5 étape 1) :
@@ -414,7 +411,6 @@ export async function buildSalesItems(
 
     drafts.push({
       productId,
-      productCode: product.code,
       productName: product.name,
       unit: product.unit,
       quantity: roundQty(quantity),
@@ -494,7 +490,6 @@ function itemPayload(invoiceNumber: string, item: SalesItemDraft): Record<string
   // Règle §11.3 : jamais de référence par `id` local dans un payload de synchro.
   return {
     invoice_number: invoiceNumber,
-    product_code: item.productCode,
     product_name: item.productName,
     unit: item.unit,
     quantity: item.quantity,
@@ -515,7 +510,6 @@ async function insertInvoiceItems(
       .values({
         invoiceId,
         productId: item.productId,
-        productCode: item.productCode,
         productName: item.productName,
         unit: item.unit,
         quantity: item.quantity,
@@ -560,7 +554,6 @@ async function reconcileInvoiceItems(
         .update(salesInvoiceItems)
         .set({
           productId: item.productId,
-          productCode: item.productCode,
           productName: item.productName,
           unit: item.unit,
           quantity: item.quantity,
@@ -585,7 +578,6 @@ async function reconcileInvoiceItems(
       .values({
         invoiceId,
         productId: item.productId,
-        productCode: item.productCode,
         productName: item.productName,
         unit: item.unit,
         quantity: item.quantity,
@@ -608,7 +600,7 @@ async function reconcileInvoiceItems(
     await db.delete(salesInvoiceItems).where(eq(salesInvoiceItems.id, Number(surplus.id)));
     await enqueueSyncWrite('sales_invoice_items', surplus.sync_id, 'delete', {
       invoice_number: invoiceNumber,
-      product_code: surplus.product_code,
+      product_name: surplus.product_name,
     });
   }
 }

@@ -47,7 +47,6 @@ import { formatCurrency, formatNumber, formatQuantity, today } from '@/lib/forma
 
 type Product = {
   id: number;
-  code: string;
   name: string;
   unit: string;
   salePrice: number;
@@ -188,7 +187,6 @@ export default function NouvelleVentePage() {
           const row = (raw ?? {}) as Record<string, unknown>;
           return {
             id: Number(row.id ?? 0),
-            code: String(row.code ?? ''),
             name: String(row.name ?? ''),
             unit: String(row.unit ?? 'pièce'),
             salePrice: Number(row.salePrice ?? row.sale_price ?? 0) || 0,

@@ -607,7 +607,6 @@ export function StockInsightsPanel({
         render: (row) => (
           <div className="min-w-0">
             <div className="truncate font-medium">{row.name}</div>
-            <div className="text-xs text-base-content/50">{row.code}</div>
           </div>
         ),
       },

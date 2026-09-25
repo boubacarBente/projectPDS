@@ -360,7 +360,6 @@ async function getStockInsights(): Promise<RapportStockInsights> {
 
   const mapAlert = (product: {
     id: number;
-    code: string;
     name: string;
     unit: string;
     stock: number;
@@ -368,7 +367,6 @@ async function getStockInsights(): Promise<RapportStockInsights> {
     stockValue: number;
   }) => ({
     productId: product.id,
-    code: product.code,
     name: product.name,
     unit: product.unit,
     stock: Number(product.stock ?? 0),
@@ -730,7 +728,6 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
   const [soldRows, soldTotalRow] = await Promise.all([
     rawAll<any>(
       `SELECT i.product_id,
-              MAX(i.product_code)            AS product_code,
               MAX(i.product_name)            AS product_name,
               MAX(i.unit)                    AS unit,
               COALESCE(SUM(i.quantity), 0)   AS quantity,
@@ -757,7 +754,6 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
     const revenue = Number(row.revenue ?? 0);
     return {
       productId: row.product_id == null ? null : Number(row.product_id),
-      productCode: row.product_code ?? '',
       productName: row.product_name ?? 'Produit supprimé',
       unit: row.unit ?? '',
       quantity: Number(row.quantity ?? 0),

@@ -22,7 +22,7 @@ import { eq } from 'drizzle-orm';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
 import { enqueueSyncWrite } from '@/lib/sync';
 import { addStockMovement, adjustStock } from '@/lib/stock';
-import { getSettings, nextSequence } from '@/lib/settings';
+import { getSettings } from '@/lib/settings';
 import { DEFAULT_SETTINGS } from '@/lib/settings-schema';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
@@ -41,7 +41,6 @@ export function isCategoryKind(value: unknown): value is CategoryKind {
 
 export type ProductRow = {
   id: number;
-  code: string;
   name: string;
   categoryId: number | null;
   categoryName: string | null;
@@ -67,8 +66,6 @@ export type ProductRow = {
 };
 
 export type ProductInput = {
-  /** Laisser vide pour une génération automatique (`PRD-0001`). */
-  code?: string | null;
   name: string;
   categoryId?: number | null;
   unit?: string | null;
@@ -123,9 +120,6 @@ export type CategoryInput = {
   isActive?: boolean;
 };
 
-/** Préfixe du code interne, généré quand il n'est pas saisi. */
-export const PRODUCT_CODE_PREFIX = 'PRD';
-
 /* ------------------------------------------------------------------ *
  * Lecture — produits
  * ------------------------------------------------------------------ */
@@ -136,7 +130,7 @@ const PRODUCT_FROM = `
 `;
 
 const PRODUCT_COLUMNS = `
-  p.id, p.code, p.name, p.category_id, p.unit, p.purchase_price, p.sale_price,
+  p.id, p.name, p.category_id, p.unit, p.purchase_price, p.sale_price,
   p.stock, p.stock_min, p.description, p.is_active, p.created_at,
   c.name AS category_name, c.kind AS category_kind
 `;
@@ -150,7 +144,6 @@ function mapProductRow(row: any): ProductRow {
 
   return {
     id: Number(row.id),
-    code: row.code,
     name: row.name,
     categoryId: row.category_id == null ? null : Number(row.category_id),
     categoryName: row.category_name ?? null,
@@ -188,9 +181,9 @@ function buildProductWhere(options: ProductListOptions): { whereSql: string; arg
     args.push(options.kind);
   }
   if (options.search) {
-    where.push('(p.code LIKE ? OR p.name LIKE ? OR p.description LIKE ?)');
+    where.push('(p.name LIKE ? OR p.description LIKE ?)');
     const like = `%${options.search}%`;
-    args.push(like, like, like);
+    args.push(like, like);
   }
   if (options.lowStockOnly) {
     where.push('p.stock_min > 0 AND p.stock <= p.stock_min');
@@ -293,7 +286,6 @@ export async function getProductsSummary(): Promise<ProductsSummary> {
 
 /** Champs de `products` écrits en base, et leur nom de colonne pour le payload. */
 const PRODUCT_SYNC_FIELDS: Record<string, string> = {
-  code: 'code',
   name: 'name',
   unit: 'unit',
   purchasePrice: 'purchase_price',
@@ -368,19 +360,11 @@ async function resolveUnit(unit: string | null | undefined): Promise<string> {
   return match;
 }
 
-async function assertCodeAvailable(code: string, exceptId?: number): Promise<void> {
-  const row = await rawGet<{ id: number }>('SELECT id FROM products WHERE code = ?', [code]);
-  if (row && Number(row.id) !== exceptId) {
-    throw new ConflictError(`Le code « ${code} » est déjà utilisé par un autre produit.`);
-  }
-}
-
 /**
- * Le **nom est l'identifiant visible du produit** (demande client) : le code
- * interne n'est plus saisi ni affiché, donc deux produits ne peuvent pas porter
- * le même nom. La comparaison ignore la casse et les espaces de bord —
- * `LOWER(TRIM(name))` — sinon « Ciment 50 kg » et « ciment 50 kg » seraient deux
- * produits différents à l'écran.
+ * Le **nom est l'identifiant du produit** (demande client) : deux produits ne
+ * peuvent donc pas porter le même. La comparaison ignore la casse et les espaces
+ * de bord — `LOWER(TRIM(name))` — sinon « Ciment 50 kg » et « ciment 50 kg »
+ * seraient deux produits différents à l'écran.
  *
  * La même règle existe en base (index unique `products_name_unique`), pour
  * qu'aucun import, script ou synchronisation ne puisse la contourner.
@@ -395,23 +379,6 @@ async function assertProductNameAvailable(name: string, exceptId?: number): Prom
   }
 }
 
-/**
- * Code interne généré (`PRD-0001`) via le compteur `settings.seq_product_*`.
- * Le compteur étant annuel, on vérifie l'unicité : un `PRD-0001` de l'année
- * précédente ne doit pas être écrasé.
- */
-async function generateProductCode(): Promise<string> {
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    const sequence = await nextSequence('product');
-    const code = `${PRODUCT_CODE_PREFIX}-${String(sequence).padStart(4, '0')}`;
-    const existing = await rawGet<{ id: number }>('SELECT id FROM products WHERE code = ?', [code]);
-    if (!existing) return code;
-  }
-
-  // Repli déterministe : jamais de doublon, jamais d'échec de création.
-  return `${PRODUCT_CODE_PREFIX}-${Date.now().toString(36).toUpperCase()}`;
-}
-
 export async function createProduct(
   input: ProductInput,
   options: { userId?: number | null } = {},
@@ -423,15 +390,6 @@ export async function createProduct(
   const unit = await resolveUnit(input.unit);
   const category = await resolveCategory(input.categoryId);
 
-  const providedCode = (input.code ?? '').trim();
-  let code: string;
-  if (providedCode) {
-    await assertCodeAvailable(providedCode);
-    code = providedCode;
-  } else {
-    code = await generateProductCode();
-  }
-
   const initialStock = Number(input.stock ?? 0);
   if (!Number.isFinite(initialStock) || initialStock < 0) {
     throw new ValidationError('Le stock initial ne peut pas être négatif');
@@ -440,7 +398,6 @@ export async function createProduct(
   const inserted = await db
     .insert(products)
     .values({
-      code,
       name,
       categoryId: category?.id ?? null,
       unit,
@@ -462,7 +419,6 @@ export async function createProduct(
     'insert',
     toSyncPayload(
       {
-        code,
         name,
         categoryId: category?.id ?? null,
         unit,
@@ -505,13 +461,6 @@ export async function updateProduct(
     if (!name) throw new ValidationError('Le champ « Nom » est obligatoire');
     if (name !== existing.name) await assertProductNameAvailable(name, id);
     update.name = name;
-  }
-
-  if (patch.code !== undefined) {
-    const code = (patch.code ?? '').trim();
-    if (!code) throw new ValidationError('Le code produit ne peut pas être vide');
-    if (code !== existing.code) await assertCodeAvailable(code, id);
-    update.code = code;
   }
 
   if (patch.categoryId !== undefined) {

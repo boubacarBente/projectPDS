@@ -48,7 +48,6 @@ export type PurchaseDocumentSupplier = {
 
 export type PurchaseDocumentItem = {
   id?: number | string;
-  productCode: string;
   productName: string;
   unit: string;
   quantity: number;
@@ -243,7 +242,7 @@ export function PurchaseDocument({
               </thead>
               <tbody>
                 {items.map((item, index) => (
-                  <tr key={item.id ?? `${item.productCode}-${index}`} className="border-base-200/70">
+                  <tr key={item.id ?? index} className="border-base-200/70">
                     <td className="tabular text-base-content/60">{index + 1}</td>
                     <td className="break-words">{item.productName}</td>
                     <td className="tabular text-right">{formatQuantity(item.quantity)}</td>
