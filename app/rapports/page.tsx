@@ -517,17 +517,15 @@ export default function RapportsPage() {
                 kind: 'table' as const,
                 title: 'Produits vendus',
                 columns: [
-                  { label: 'Code' },
                   { label: 'Produit' },
                   { label: 'Qté', align: 'right' as const },
                   { label: "Chiffre d'affaires", align: 'right' as const },
                   { label: 'Part', align: 'right' as const },
                 ],
-                numeric: [2, 3, 4],
+                numeric: [1, 2, 3],
                 rows: report.soldByProduct
                   .slice(0, 25)
                   .map((product) => [
-                    product.productCode,
                     product.productName,
                     formatQuantity(product.quantity, product.unit),
                     money(product.revenue),

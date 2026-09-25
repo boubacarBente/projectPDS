@@ -261,7 +261,6 @@ function RequirementsPreview({
           <li key={line.productId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
             <span className="min-w-0">
               <span className="block truncate font-medium">{line.productName}</span>
-              <span className="block text-xs text-base-content/50">{line.productCode}</span>
             </span>
             <span className="flex flex-wrap items-center gap-3">
               <span className="text-xs text-base-content/60">
@@ -674,7 +673,7 @@ export function FurnitureOrderFormModal({
               <option value="">Aucun produit fini associé</option>
               {finishedGoods.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.code} — {product.name}
+                  {product.name}
                 </option>
               ))}
             </select>
@@ -1473,7 +1472,7 @@ export function OrderMaterialModal({
               <option value="">Sélectionner un matériau…</option>
               {(rawMaterials.length > 0 ? rawMaterials : products).map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.code} — {product.name} · stock {formatNumber(product.stock)} {product.unit}
+                  {product.name} · stock {formatNumber(product.stock)} {product.unit}
                   {alreadyOnOrder.has(product.id) ? ' · déjà sur la commande' : ''}
                 </option>
               ))}
@@ -1991,7 +1990,6 @@ export const orderMaterialColumns: Column<FurnitureOrderMaterialRow>[] = [
     render: (line) => (
       <div className="min-w-0">
         <div className="truncate font-medium">{line.productName}</div>
-        <div className="font-mono text-xs text-base-content/50">{line.productCode}</div>
       </div>
     ),
   },

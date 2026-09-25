@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real, uniqueIndex } from 'drizzle-orm/sqlite-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 /**
  * Schéma cible Planète Déco Sarlu — 30 tables métier + 5 tables de
@@ -148,24 +148,44 @@ export const categories = sqliteTable('categories', {
   ...syncCols(),
 });
 
-export const products = sqliteTable('products', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  code: text('code').notNull().unique(),
-  name: text('name').notNull(),
-  categoryId: integer('category_id').references(() => categories.id),
-  /** pièce, ensemble, carton, m², kg, sac, litre — liste fermée dans settings */
-  unit: text('unit').notNull().default('pièce'),
-  /** Prix d'achat — base du calcul de marge (ex-`unit_price` de Gaz, renommé). */
-  purchasePrice: real('purchase_price').notNull().default(0),
-  salePrice: real('sale_price').notNull().default(0),
-  /** real : le m² et le kg exigent du décimal (Gaz utilisait integer). */
-  stock: real('stock').notNull().default(0),
-  stockMin: real('stock_min').notNull().default(0),
-  description: text('description'),
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
+export const products = sqliteTable(
+  'products',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /*
+     * `code` reste une **référence technique** — générée automatiquement, plus
+     * jamais saisie ni affichée (§ le nom est l'identifiant visible). Il n'est
+     * pas supprimé : les documents déjà émis et les lignes d'historique en
+     * portent un instantané.
+     */
+    code: text('code').notNull().unique(),
+    name: text('name').notNull(),
+    categoryId: integer('category_id').references(() => categories.id),
+    /** pièce, ensemble, carton, m², kg, sac, litre — liste fermée dans settings */
+    unit: text('unit').notNull().default('pièce'),
+    /** Prix d'achat — base du calcul de marge (ex-`unit_price` de Gaz, renommé). */
+    purchasePrice: real('purchase_price').notNull().default(0),
+    salePrice: real('sale_price').notNull().default(0),
+    /** real : le m² et le kg exigent du décimal (Gaz utilisait integer). */
+    stock: real('stock').notNull().default(0),
+    stockMin: real('stock_min').notNull().default(0),
+    description: text('description'),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    createdAt: createdAt(),
+    ...syncCols(),
+  },
+  (table) => [
+    /*
+     * **Le nom d'un produit est unique** (demande client) — insensible à la
+     * casse et aux espaces de bord, sinon « Ciment 50 kg » et « ciment 50 kg »
+     * passeraient pour deux produits.
+     *
+     * La règle est ici **et** dans `lib/products.ts` : la base garantit qu'aucun
+     * import, script de reprise ou synchronisation ne peut créer un doublon.
+     */
+    uniqueIndex('products_name_unique').on(sql`lower(trim(${table.name}))`),
+  ],
+);
 
 /**
  * Journal unique du stock (§4).

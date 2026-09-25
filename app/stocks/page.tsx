@@ -429,12 +429,6 @@ export default function StocksPage() {
   const productColumns: Column<StockProduct>[] = useMemo(
     () => [
       {
-        key: 'code',
-        label: 'Code',
-        className: 'font-mono text-xs',
-        render: (p) => p.code,
-      },
-      {
         key: 'name',
         label: 'Nom',
         primary: true,
@@ -611,7 +605,7 @@ export default function StocksPage() {
               setSearch(value);
               setPage(1);
             }}
-            searchPlaceholder="Rechercher un code ou un nom de produit…"
+            searchPlaceholder="Rechercher un produit…"
             filters={
               <FilterSelect
                 value={categoryId}

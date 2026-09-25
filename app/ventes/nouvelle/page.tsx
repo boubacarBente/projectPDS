@@ -618,7 +618,7 @@ export default function NouvelleVentePage() {
                                 <option value="">Sélectionner un produit…</option>
                                 {products.map((entry) => (
                                   <option key={entry.id} value={entry.id}>
-                                    {entry.code} — {entry.name} ({formatNumber(entry.salePrice)} GNF)
+                                    {entry.name} ({formatNumber(entry.salePrice)} GNF)
                                   </option>
                                 ))}
                               </select>

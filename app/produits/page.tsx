@@ -288,12 +288,11 @@ export default function ProduitsPage() {
 
   const columns: Column<ProductView>[] = useMemo(
     () => [
-      {
-        key: 'code',
-        label: 'Code',
-        className: 'font-mono text-xs',
-        render: (product) => product.code,
-      },
+      /*
+       * La colonne « Code » est retirée (demande client) : le **nom** est
+       * l'identifiant du produit, et il est unique. Le code interne reste généré
+       * côté serveur comme référence technique, mais ne s'affiche plus.
+       */
       {
         key: 'name',
         label: 'Nom',
@@ -486,7 +485,7 @@ export default function ProduitsPage() {
           setSearch(value);
           setPage(1);
         }}
-        searchPlaceholder="Rechercher un code, un nom, une description…"
+        searchPlaceholder="Rechercher un nom ou une description…"
         filters={
           <>
             <div className="w-full sm:w-52">

@@ -424,7 +424,6 @@ export const jobMaterialColumns: Column<ServiceJobMaterialRow>[] = [
     render: (material) => (
       <div className="min-w-0">
         <div className="truncate font-medium">{material.productName}</div>
-        <div className="font-mono text-xs text-base-content/50">{material.productCode}</div>
       </div>
     ),
   },
@@ -1002,7 +1001,7 @@ export function JobMaterialModal({
               <option value="">— Sélectionner un produit —</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.code} — {product.name} ({formatQuantity(product.stock, product.unit)} en stock)
+                  {product.name} ({formatQuantity(product.stock, product.unit)} en stock)
                 </option>
               ))}
             </select>
@@ -1960,8 +1959,7 @@ export function DevisDocument({
                 <tr key={material.id}>
                   <td>
                     <div className="font-medium">{material.productName}</div>
-                    <div className="font-mono text-xs text-base-content/50">{material.productCode}</div>
-                  </td>
+                              </td>
                   <td className="text-sm">{material.unit}</td>
                   <td className="text-right">
                     <QuantityText value={material.quantity} />

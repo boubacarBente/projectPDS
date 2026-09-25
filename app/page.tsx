@@ -295,7 +295,6 @@ export default function DashboardPage() {
                       <li key={product.id} className="flex items-center justify-between gap-3 px-5 py-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{product.name}</p>
-                          <p className="text-xs text-base-content/50">{product.code}</p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <QuantityText value={product.stock} unit={product.unit} className="text-sm" />

@@ -431,9 +431,9 @@ export function buildRapportCsv(report: RapportData, company: RapportExportCompa
   lines.push('');
 
   row('PRODUITS VENDUS');
-  row('Produit', 'Code', 'Quantité', 'Unité', "Chiffre d'affaires", 'Part %');
+  row('Produit', 'Quantité', 'Unité', "Chiffre d'affaires", 'Part %');
   report.soldByProduct.forEach((item) =>
-    row(item.productName, item.productCode, item.quantity, item.unit, item.revenue, item.sharePercent),
+    row(item.productName, item.quantity, item.unit, item.revenue, item.sharePercent),
   );
   lines.push('');
 
@@ -484,12 +484,12 @@ export function buildRapportCsv(report: RapportData, company: RapportExportCompa
   lines.push('');
 
   row('STOCK');
-  row('Produit', 'Code', 'Stock', 'Unité', 'Seuil', "Valeur d'achat", 'État');
+  row('Produit', 'Stock', 'Unité', 'Seuil', "Valeur d'achat", 'État');
   report.stockInsights.outOfStock.forEach((item) =>
-    row(item.name, item.code, item.stock, item.unit, item.stockMin, item.stockValue, 'Rupture'),
+    row(item.name, item.stock, item.unit, item.stockMin, item.stockValue, 'Rupture'),
   );
   report.stockInsights.alerts.forEach((item) =>
-    row(item.name, item.code, item.stock, item.unit, item.stockMin, item.stockValue, 'Seuil atteint'),
+    row(item.name, item.stock, item.unit, item.stockMin, item.stockValue, 'Seuil atteint'),
   );
   row("Valeur d'achat du stock", report.stockInsights.purchaseValue);
   row('Valeur de vente du stock', report.stockInsights.saleValue);

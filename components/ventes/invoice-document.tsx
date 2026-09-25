@@ -247,7 +247,6 @@ export function InvoiceDocument({
               <thead>
                 <tr className="border-base-200">
                   <th className="text-left">#</th>
-                  <th className="text-left">Code</th>
                   <th className="text-left">Désignation</th>
                   <th className="text-right">Qté</th>
                   <th className="text-left">Unité</th>
@@ -263,7 +262,6 @@ export function InvoiceDocument({
                     className="border-base-200/70"
                   >
                     <td className="tabular text-base-content/60">{index + 1}</td>
-                    <td className="tabular break-all">{item.productCode}</td>
                     <td className="break-words">{item.productName}</td>
                     <td className="tabular text-right">{formatQuantity(item.quantity)}</td>
                     <td className="break-words">{item.unit}</td>

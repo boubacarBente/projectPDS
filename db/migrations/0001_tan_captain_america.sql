@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `products_name_unique` ON `products` (lower(trim("name")));

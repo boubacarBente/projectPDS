@@ -436,7 +436,6 @@ export const brickTypeColumns: Column<BrickTypeRow>[] = [
     label: 'Produit lié',
     render: (type) => (
       <div className="min-w-0">
-        <div className="font-mono text-xs">{type.productCode}</div>
         <div className="truncate text-sm">{type.productName}</div>
       </div>
     ),
@@ -481,7 +480,6 @@ export const productionMaterialColumns: Column<BrickProductionMaterialRow>[] = [
     render: (material) => (
       <div className="min-w-0">
         <div className="truncate font-medium">{material.productName}</div>
-        <div className="font-mono text-xs text-base-content/50">{material.productCode}</div>
       </div>
     ),
   },
@@ -897,7 +895,7 @@ export function ProductionMaterialModal({
               <option value="">— Sélectionner un produit —</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.code} — {product.name} ({formatQuantity(product.stock, product.unit)} en stock)
+                  {product.name} ({formatQuantity(product.stock, product.unit)} en stock)
                 </option>
               ))}
             </select>
@@ -1771,7 +1769,7 @@ function BrickTypeFormModal({
               <option value="">— Sélectionner un produit —</option>
               {products.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.code} — {product.name} ({formatNumber(product.salePrice)} GNF ·{' '}
+                  {product.name} ({formatNumber(product.salePrice)} GNF ·{' '}
                   {formatQuantity(product.stock, product.unit)})
                 </option>
               ))}

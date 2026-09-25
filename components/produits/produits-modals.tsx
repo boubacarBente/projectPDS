@@ -25,9 +25,6 @@ import { formatPercent } from '@/lib/format';
 // entrer dans le bundle navigateur.
 import type { CategoryKind, CategoryRow, ProductRow } from '@/lib/products';
 
-/** Miroir de `PRODUCT_CODE_PREFIX` de `lib/products.ts`, pour l'aide à la saisie. */
-const CODE_PREFIX = 'PRD';
-
 /** Ligne produit telle que sérialisée par l'API (`createdAt` devient une chaîne). */
 export type ProductView = Omit<ProductRow, 'createdAt'> & { createdAt?: string | null };
 
@@ -71,7 +68,6 @@ export async function readApiError(response: Response, fallback: string): Promis
  * ================================================================== */
 
 type ProductFormState = {
-  code: string;
   name: string;
   categoryId: string;
   unit: string;
@@ -85,7 +81,6 @@ type ProductFormState = {
 
 function emptyProductForm(units: string[]): ProductFormState {
   return {
-    code: '',
     name: '',
     categoryId: '',
     unit: units[0] ?? 'pièce',
@@ -100,7 +95,6 @@ function emptyProductForm(units: string[]): ProductFormState {
 
 function productToForm(product: ProductView): ProductFormState {
   return {
-    code: product.code,
     name: product.name,
     categoryId: product.categoryId ? String(product.categoryId) : '',
     unit: product.unit,
@@ -178,10 +172,9 @@ export function ProductFormModal({
         description: form.description.trim() || null,
         isActive: form.isActive,
       };
-      // À la création seulement : le code vide déclenche la génération (PRD-0001),
-      // et le stock initial devient un mouvement `entry` côté serveur.
+      // À la création seulement : le code interne est **généré par le serveur**
+      // (`PRD-0001`), et le stock initial devient un mouvement `entry`.
       if (!isEdit) {
-        body.code = form.code.trim() || null;
         body.stock = toAmount(form.stock);
       }
 
@@ -227,24 +220,13 @@ export function ProductFormModal({
         }}
       >
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField
-            label="Code interne"
-            hint={
-              isEdit
-                ? 'Code-barres interne, unique.'
-                : `Laissez vide pour une génération automatique (${CODE_PREFIX}-0001).`
-            }
-          >
-            <input
-              className="input input-bordered field-rounded w-full font-mono text-sm"
-              value={form.code}
-              disabled={isSubmitting}
-              placeholder={isEdit ? '' : 'Automatique'}
-              onChange={(event) => set('code', event.target.value)}
-            />
-          </FormField>
-
-          <FormField label="Nom" required>
+          {/*
+            Le champ « Code interne » a été retiré (demande client) : le **nom**
+            est l'identifiant du produit, et il est unique. Le code reste généré
+            automatiquement côté serveur (`PRD-0001`) comme référence technique,
+            mais il ne se saisit plus et ne s'affiche plus.
+          */}
+          <FormField label="Nom du produit" required>
             <input
               className="input input-bordered field-rounded w-full"
               value={form.name}

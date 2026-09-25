@@ -376,6 +376,26 @@ async function assertCodeAvailable(code: string, exceptId?: number): Promise<voi
 }
 
 /**
+ * Le **nom est l'identifiant visible du produit** (demande client) : le code
+ * interne n'est plus saisi ni affiché, donc deux produits ne peuvent pas porter
+ * le même nom. La comparaison ignore la casse et les espaces de bord —
+ * `LOWER(TRIM(name))` — sinon « Ciment 50 kg » et « ciment 50 kg » seraient deux
+ * produits différents à l'écran.
+ *
+ * La même règle existe en base (index unique `products_name_unique`), pour
+ * qu'aucun import, script ou synchronisation ne puisse la contourner.
+ */
+async function assertProductNameAvailable(name: string, exceptId?: number): Promise<void> {
+  const row = await rawGet<{ id: number }>(
+    'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))',
+    [name],
+  );
+  if (row && Number(row.id) !== exceptId) {
+    throw new ConflictError(`Un produit porte déjà le nom « ${name} ».`);
+  }
+}
+
+/**
  * Code interne généré (`PRD-0001`) via le compteur `settings.seq_product_*`.
  * Le compteur étant annuel, on vérifie l'unicité : un `PRD-0001` de l'année
  * précédente ne doit pas être écrasé.
@@ -398,6 +418,7 @@ export async function createProduct(
 ): Promise<ProductRow> {
   const name = (input.name ?? '').trim();
   if (!name) throw new ValidationError('Le champ « Nom » est obligatoire');
+  await assertProductNameAvailable(name);
 
   const unit = await resolveUnit(input.unit);
   const category = await resolveCategory(input.categoryId);
@@ -482,6 +503,7 @@ export async function updateProduct(
   if (patch.name !== undefined) {
     const name = (patch.name ?? '').trim();
     if (!name) throw new ValidationError('Le champ « Nom » est obligatoire');
+    if (name !== existing.name) await assertProductNameAvailable(name, id);
     update.name = name;
   }
 

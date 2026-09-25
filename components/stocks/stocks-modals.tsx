@@ -146,7 +146,6 @@ export const movementColumns: Column<StockMovementRow>[] = [
     render: (m) => (
       <div className="min-w-0">
         <div className="truncate font-medium">{m.productName}</div>
-        <div className="text-xs text-base-content/50">{m.productCode}</div>
       </div>
     ),
   },

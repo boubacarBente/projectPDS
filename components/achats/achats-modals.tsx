@@ -508,7 +508,6 @@ export function PurchaseDetailModal({
       render: (item: PurchaseInvoiceItemRow) => (
         <span className="flex min-w-0 flex-col">
           <span className="truncate font-medium">{item.productName}</span>
-          <span className="tabular text-xs text-base-content/50">{item.productCode}</span>
         </span>
       ),
     },

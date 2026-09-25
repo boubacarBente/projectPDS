@@ -231,9 +231,6 @@ export function SoldByProductTable({
         render: (row) => (
           <div className="min-w-0">
             <div className="truncate font-medium">{row.productName}</div>
-            {row.productCode && (
-              <div className="text-xs text-base-content/50">{row.productCode}</div>
-            )}
           </div>
         ),
       },
