@@ -107,11 +107,20 @@ export function Combobox({
   const [query, setQuery] = useState(selectedLabel);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [rect, setRect] = useState<{ top: number; left: number; width: number; up: boolean } | null>(null);
+  const [rect, setRect] = useState<{
+    top: number;
+    bottom: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+    up: boolean;
+  } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const typingRef = useRef(false);
+  /** Dernière position posée : évite un rendu par image quand rien ne bouge. */
+  const rectRef = useRef<typeof rect>(null);
 
   /* Le libellé suit la valeur choisie (sélection externe, réinitialisation…). */
   useEffect(() => {
@@ -131,28 +140,76 @@ export function Combobox({
   const visible = filtered.slice(0, maxResults);
   const truncated = filtered.length - visible.length;
 
-  /** Position du menu, d'après la place réellement occupée par le champ. */
+  /**
+   * Position du menu, d'après la place réellement occupée par le champ.
+   *
+   * Le menu **ne recouvre jamais le champ** : vers le bas il démarre sous le
+   * champ, vers le haut il s'arrête **au-dessus** de son bord supérieur. Se
+   * tromper d'ancrage (utiliser le bas du champ pour un menu qui s'ouvre vers le
+   * haut) masque la saisie en cours — c'est le défaut qui a été corrigé ici.
+   *
+   * La hauteur est plafonnée à la place disponible : le menu défile au lieu de
+   * sortir de l'écran, et reste compact (≈ 5 lignes).
+   */
   const place = useCallback(() => {
     const input = inputRef.current;
     if (!input) return;
     const box = input.getBoundingClientRect();
-    const estimated = Math.min(288, 44 * Math.max(1, visible.length) + 8);
-    const below = window.innerHeight - box.bottom;
-    setRect({
-      top: box.bottom + 4,
-      left: box.left,
-      width: box.width,
-      up: below < estimated && box.top > below,
-    });
+    const natural = Math.min(240, 40 * Math.max(1, visible.length) + 8);
+    const spaceBelow = window.innerHeight - box.bottom - 8;
+    const spaceAbove = box.top - 8;
+
+    // Vers le bas dès qu'on peut montrer quelques lignes ; vers le haut seulement
+    // si le bas est trop court ET que le haut offre davantage de place.
+    const up = spaceBelow < Math.min(natural, 132) && spaceAbove > spaceBelow;
+
+    const next = {
+      up,
+      left: Math.round(box.left),
+      width: Math.round(box.width),
+      top: Math.round(box.bottom + 4),
+      bottom: Math.max(8, Math.round(window.innerHeight - box.top + 4)),
+      maxHeight: Math.max(88, Math.min(240, Math.round(up ? spaceAbove : spaceBelow))),
+    };
+
+    // On ne re-rend que si la position a réellement bougé.
+    const previous = rectRef.current;
+    if (
+      previous &&
+      previous.up === next.up &&
+      previous.left === next.left &&
+      previous.width === next.width &&
+      previous.top === next.top &&
+      previous.bottom === next.bottom &&
+      previous.maxHeight === next.maxHeight
+    ) {
+      return;
+    }
+    rectRef.current = next;
+    setRect(next);
   }, [visible.length]);
 
   useLayoutEffect(() => {
     if (!open) return;
+    /*
+     * Le menu **suit le champ** tant qu'il est ouvert : le navigateur peut
+     * déplacer la page après l'ouverture (mise au point du champ par `focus()`,
+     * apparition d'une barre de défilement, ligne qui se redimensionne), et un
+     * calcul unique laisserait le menu décalé — jusqu'à sortir de l'écran.
+     * Une image par seconde de navigation suffit ; on ne re-rend que si la
+     * position a bougé (`place()` compare avant de poser l'état).
+     */
     place();
+    const tick = () => {
+      place();
+      frame = requestAnimationFrame(tick);
+    };
+    let frame = requestAnimationFrame(tick);
     const onScrollOrResize = () => place();
     window.addEventListener('scroll', onScrollOrResize, true);
     window.addEventListener('resize', onScrollOrResize);
     return () => {
+      cancelAnimationFrame(frame);
       window.removeEventListener('scroll', onScrollOrResize, true);
       window.removeEventListener('resize', onScrollOrResize);
     };
@@ -236,13 +293,28 @@ export function Combobox({
       aria-label={ariaLabel ?? 'Suggestions'}
       style={{
         position: 'fixed',
+        // Vers le bas : sous le champ. Vers le haut : arrêté au-dessus de son
+        // bord supérieur — jamais par-dessus, la saisie doit rester lisible.
         top: rect.up ? undefined : rect.top,
-        bottom: rect.up ? window.innerHeight - rect.top + 8 : undefined,
+        bottom: rect.up ? rect.bottom : undefined,
         left: rect.left,
         width: Math.max(rect.width, 260),
+        maxHeight: rect.maxHeight,
+        /*
+         * Marges et puces annulées **en style en ligne** : un `<ul>` porte 16 px
+         * de marge haute par défaut, ce qui décalerait le menu exactement sous le
+         * champ. Les classes Tailwind le font aussi, mais uniquement quand la
+         * feuille du projet est chargée — le composant ne doit pas en dépendre.
+         */
+        margin: 0,
+        padding: '4px 0',
+        listStyle: 'none',
+        // `max-height` doit englober le remplissage, sinon le menu dépasse de
+        // quelques pixels le bas de la fenêtre (mesuré : 4 px).
+        boxSizing: 'border-box',
         zIndex: 80,
       }}
-      className="max-h-72 overflow-y-auto rounded-xl border border-base-300 bg-base-100 py-1 shadow-2xl"
+      className="overflow-y-auto rounded-xl border border-base-300 bg-base-100 shadow-2xl"
     >
       {visible.length === 0 && (
         <li className="px-3 py-2 text-sm text-base-content/50">Aucun résultat</li>
