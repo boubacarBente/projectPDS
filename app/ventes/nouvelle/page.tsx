@@ -51,8 +51,6 @@ type Product = {
   name: string;
   unit: string;
   salePrice: number;
-  /** Coût courant : sert à **avertir** d'une vente à perte, jamais à préremplir. */
-  purchasePrice: number;
   stock: number;
 };
 
@@ -194,7 +192,6 @@ export default function NouvelleVentePage() {
             name: String(row.name ?? ''),
             unit: String(row.unit ?? 'pièce'),
             salePrice: Number(row.salePrice ?? row.sale_price ?? 0) || 0,
-            purchasePrice: Number(row.purchasePrice ?? row.purchase_price ?? 0) || 0,
             stock: Number(row.stock ?? 0) || 0,
           };
         })
@@ -245,11 +242,7 @@ export default function NouvelleVentePage() {
     setLines((current) =>
       current.map((line, index) =>
         index === 0
-          ? {
-              ...line,
-              productId: String(first.id),
-              unitPrice: first.salePrice > 0 ? String(first.salePrice) : '',
-            }
+          ? { ...line, productId: String(first.id), unitPrice: String(first.salePrice) }
           : line,
       ),
     );
@@ -370,16 +363,7 @@ export default function NouvelleVentePage() {
   const removeLine = (key: string) =>
     setLines((current) => (current.length <= 1 ? current : current.filter((line) => line.key !== key)));
 
-  /**
-   * Repose automatiquement le **prix de vente** du produit (modifiable ensuite).
-   *
-   * ⚠️ Jamais le prix d'achat : un prix d'achat est un **coût**, pas un prix de
-   * facturation. Le préremplir ferait vendre à marge nulle et fausserait le
-   * chiffre d'affaires comme les bénéfices (§15). Un produit sans prix de vente
-   * (les matières premières, par exemple) laisse donc le champ **vide** plutôt
-   * qu'à `0` : la ligne affiche « Prix de vente non défini » et le vendeur
-   * saisit le prix du jour.
-   */
+  /** Repose automatiquement le **prix de vente** du produit (modifiable ensuite). */
   const handleProductChange = (key: string, productId: string) => {
     const product = productById.get(Number(productId));
     setLines((current) =>
@@ -388,7 +372,7 @@ export default function NouvelleVentePage() {
           ? {
               ...line,
               productId,
-              unitPrice: product && product.salePrice > 0 ? String(product.salePrice) : '',
+              unitPrice: product ? String(product.salePrice) : '',
             }
           : line,
       ),
@@ -634,9 +618,7 @@ export default function NouvelleVentePage() {
                                 <option value="">Sélectionner un produit…</option>
                                 {products.map((entry) => (
                                   <option key={entry.id} value={entry.id}>
-                                    {entry.code} — {entry.name} · vente{' '}
-                                    {formatNumber(entry.salePrice)} GNF · achat{' '}
-                                    {formatNumber(entry.purchasePrice)} GNF
+                                    {entry.code} — {entry.name} ({formatNumber(entry.salePrice)} GNF)
                                   </option>
                                 ))}
                               </select>
@@ -650,29 +632,6 @@ export default function NouvelleVentePage() {
                                       Quantité supérieure au stock disponible
                                     </Badge>
                                   )}
-                                  {/*
-                                    Deux avertissements, jamais de blocage : le
-                                    prix reste une décision du vendeur (§15,
-                                    Q18 « avertir, on ne bloque pas »).
-                                  */}
-                                  {product.salePrice <= 0 && (
-                                    <Badge
-                                      tone="warning"
-                                      title="Ce produit n’a pas de prix de vente enregistré : saisissez le prix, ou complétez la fiche produit."
-                                    >
-                                      Prix de vente non défini
-                                    </Badge>
-                                  )}
-                                  {product.salePrice > 0 &&
-                                    computed.unitPrice > 0 &&
-                                    computed.unitPrice < product.purchasePrice && (
-                                      <Badge
-                                        tone="warning"
-                                        title={`Prix d’achat actuel : ${formatNumber(product.purchasePrice)} GNF — cette ligne est vendue à perte.`}
-                                      >
-                                        Vente à perte
-                                      </Badge>
-                                    )}
                                 </span>
                               )}
                             </td>
