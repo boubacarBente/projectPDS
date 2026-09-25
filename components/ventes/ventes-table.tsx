@@ -13,7 +13,7 @@
 
 import type { ReactNode } from 'react';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
-import { ToolbarButton } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
@@ -126,37 +126,32 @@ export function VentesTable({
       data={data}
       getRowKey={(invoice) => invoice.id}
       tableClassName="table-sm"
-      actionsClassName="w-64"
+      actionsClassName="w-44"
       actions={(invoice) => (
-        <div
-          className="flex flex-wrap justify-end gap-1"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <ToolbarButton onClick={() => onOpenDetail(invoice)} title="Voir le détail de la facture">
-            Détail
-          </ToolbarButton>
-          <ToolbarButton onClick={() => onOpenInvoice(invoice)} title="Ouvrir la facture (impression, exports)">
-            Facture
-          </ToolbarButton>
+        <RowActions>
+          <IconAction icon="view" label="Voir le détail de la facture" onClick={() => onOpenDetail(invoice)} />
+          <IconAction
+            icon="receipt"
+            label="Ouvrir la facture (impression, exports)"
+            onClick={() => onOpenInvoice(invoice)}
+          />
           {canCollect(invoice, canPay) && (
-            <ToolbarButton
-              variant="primary"
+            <IconAction
+              icon="pay"
+              tone="primary"
+              label="Enregistrer un paiement"
               onClick={() => onOpenPayment(invoice)}
-              title="Enregistrer un paiement"
-            >
-              Paiement
-            </ToolbarButton>
+            />
           )}
           {canCancel && invoice.status !== 'cancelled' && (
-            <ToolbarButton
-              variant="error"
+            <IconAction
+              icon="cancel"
+              tone="danger"
+              label="Annuler la vente (avec motif)"
               onClick={() => onOpenCancel(invoice)}
-              title="Annuler la vente (avec motif)"
-            >
-              Annuler
-            </ToolbarButton>
+            />
           )}
-        </div>
+        </RowActions>
       )}
     />
   );

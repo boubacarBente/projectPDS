@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/page-header';
 import { DataToolbar } from '@/components/data-toolbar';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import {
   Badge,
@@ -279,11 +280,12 @@ export default function FournisseursPage() {
       ),
     },
     {
-      key: 'phone',
-      label: 'Téléphone',
-      render: (supplier) => supplier.phone || '—',
-    },
-    {
+      /*
+       * La colonne « Téléphone » a été retirée : le numéro reste lisible dans la
+       * fiche (« Détail »), et la place gagnée revient aux colonnes chiffrées
+       * (Nb achats, Total acheté, Payé, Dette) — c'est le tableau qui sert.
+       * La recherche continue de porter sur le téléphone (`lib/suppliers.ts`).
+       */
       key: 'purchaseCount',
       label: 'Nb achats',
       hideOnMobile: true,
@@ -441,56 +443,44 @@ export default function FournisseursPage() {
             getRowKey={(supplier) => supplier.id}
             emptyMessage="Aucun fournisseur."
             actions={(supplier) => (
-              <>
-                <button
-                  type="button"
+              <RowActions>
+                <IconAction
+                  icon="view"
+                  label="Voir le détail du fournisseur"
                   onClick={() => openDetail(supplier)}
-                  className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-                  title="Détail"
-                >
-                  Détail
-                </button>
+                />
                 {canUpdate && (
-                  <button
-                    type="button"
+                  <IconAction
+                    icon="edit"
+                    label="Modifier le fournisseur"
                     onClick={() => openEdit(supplier)}
-                    className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-                    title="Modifier"
-                  >
-                    Modifier
-                  </button>
+                  />
                 )}
                 {canPay && supplier.balance > 0.001 && (
-                  <button
-                    type="button"
+                  <IconAction
+                    icon="pay"
+                    tone="primary"
+                    label="Payer une dette fournisseur"
                     onClick={() => openPay(supplier)}
-                    className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-                    title="Payer une dette"
-                  >
-                    Payer
-                  </button>
+                  />
                 )}
                 {canDelete &&
                   (supplier.isActive ? (
-                    <button
-                      type="button"
+                    <IconAction
+                      icon="deactivate"
+                      tone="danger"
+                      label="Désactiver le fournisseur"
                       onClick={() => openStatusDialog(supplier)}
-                      className="btn btn-ghost btn-sm min-h-11 text-error sm:min-h-0"
-                      title="Désactiver"
-                    >
-                      Désactiver
-                    </button>
+                    />
                   ) : (
-                    <button
-                      type="button"
+                    <IconAction
+                      icon="activate"
+                      tone="success"
+                      label="Réactiver le fournisseur"
                       onClick={() => openStatusDialog(supplier)}
-                      className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-                      title="Réactiver"
-                    >
-                      Réactiver
-                    </button>
+                    />
                   ))}
-              </>
+              </RowActions>
             )}
           />
         </div>

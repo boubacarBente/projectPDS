@@ -231,7 +231,19 @@ Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 `PageHeader`, `BackButton`, `ExportDropdown`, `DatePicker`, `SearchBar`,
 `FilterSelect`, `Pagination`, `ResponsiveTable`, `SurfaceCard`, `MetricCard`,
 `ColorField` (nuancier natif + code hexadécimal éditable),
-`PasswordInput` (mot de passe + icône afficher/masquer).
+`PasswordInput` (mot de passe + icône afficher/masquer),
+`IconAction` + `RowActions` (`components/row-actions.tsx`).
+
+> **Les actions de ligne sont des icônes, jamais du texte.** Quatre à cinq
+> boutons « Détail · Modifier · Payer · Désactiver » par ligne mangeaient la
+> moitié du tableau et se repliaient sur deux lignes. `IconAction` impose le
+> reste : jeu d'icônes **fermé** (`ActionIcon` — deux écrans qui font la même
+> chose montrent la même icône), `title` + `aria-label` + `<span class="sr-only">`
+> pour que l'icône seule ne soit jamais une devinette, cible **≥ 44 px sur
+> mobile** (32 px sur desktop), et couleur = sens (`danger` pour ce qui retire un
+> droit ou annule, `primary` pour l'action attendue, `success` pour réactiver).
+> Les boutons d'en-tête et de pied de modale, eux, restent **en texte** : c'est
+> là qu'on explique ce qu'on va faire.
 
 > **Tout mot de passe passe par `PasswordInput`.** L'icône « œil » vivait
 > uniquement sur l'écran de connexion ; ailleurs les champs étaient soit

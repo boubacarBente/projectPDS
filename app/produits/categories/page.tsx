@@ -13,7 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -290,38 +291,39 @@ export default function ProduitsCategoriesPage() {
   );
 
   const renderActions = (category: CategoryView) => (
-    <div className="flex flex-wrap items-center justify-end gap-1">
+    <RowActions>
       {canUpdate && (
-        <ToolbarButton
+        <IconAction
+          icon="edit"
+          label="Modifier la catégorie"
           onClick={() => {
             setCategoryToEdit(category);
             setShowEditModal(true);
           }}
-          title="Modifier la catégorie"
-        >
-          Modifier
-        </ToolbarButton>
+        />
       )}
 
       {canDelete &&
         (category.isActive ? (
-          <ToolbarButton
-            variant="ghost"
-            onClick={() => openDeactivateModal(category)}
-            title={
+          <IconAction
+            icon="deactivate"
+            tone="danger"
+            label={
               category.activeProductCount > 0
                 ? `Impossible : ${category.activeProductCount} produit(s) actif(s) rattaché(s)`
                 : 'Désactiver la catégorie'
             }
-          >
-            <span className={category.activeProductCount > 0 ? '' : 'text-error'}>Désactiver</span>
-          </ToolbarButton>
+            onClick={() => openDeactivateModal(category)}
+          />
         ) : (
-          <ToolbarButton onClick={() => void reactivate(category)} title="Réactiver la catégorie">
-            Réactiver
-          </ToolbarButton>
+          <IconAction
+            icon="activate"
+            tone="success"
+            label="Réactiver la catégorie"
+            onClick={() => void reactivate(category)}
+          />
         ))}
-    </div>
+    </RowActions>
   );
 
   return (

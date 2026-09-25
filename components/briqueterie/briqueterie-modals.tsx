@@ -6,6 +6,7 @@ import { Modal } from '@/components/modal';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { ToolbarButton } from '@/components/data-toolbar';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { DatePicker } from '@/components/date-picker';
 import {
   Badge,
@@ -2037,25 +2038,27 @@ export function BrickTypesManagerModal({
               actions={
                 canManage
                   ? (type) => (
-                      <>
-                        <ToolbarButton
+                      <RowActions>
+                        <IconAction
+                          icon="edit"
+                          label="Modifier le type de brique"
                           onClick={() => {
                             setEditingType(type);
                             setIsFormOpen(true);
                           }}
-                        >
-                          Modifier
-                        </ToolbarButton>
-                        <ToolbarButton
-                          variant={type.isActive ? 'error' : 'primary'}
+                        />
+                        <IconAction
+                          icon={type.isActive ? 'deactivate' : 'activate'}
+                          tone={type.isActive ? 'danger' : 'success'}
+                          label={
+                            type.isActive ? 'Désactiver le type de brique' : 'Réactiver le type de brique'
+                          }
                           onClick={() => {
                             setTargetType(type);
                             setIsDeactivateOpen(true);
                           }}
-                        >
-                          {type.isActive ? 'Désactiver' : 'Réactiver'}
-                        </ToolbarButton>
-                      </>
+                        />
+                      </RowActions>
                     )
                   : undefined
               }

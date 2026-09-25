@@ -20,7 +20,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction } from '@/components/row-actions';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { DatePicker } from '@/components/date-picker';
@@ -602,9 +603,12 @@ export default function AtelierPage() {
             getRowKey={(order) => order.id}
             tableClassName="table-sm"
             actions={(order) => (
-              <ToolbarButton variant="primary" onClick={() => router.push(`/atelier/${order.id}`)}>
-                Ouvrir
-              </ToolbarButton>
+              <IconAction
+                icon="view"
+                tone="primary"
+                label="Ouvrir la commande d’atelier"
+                onClick={() => router.push(`/atelier/${order.id}`)}
+              />
             )}
           />
           <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />

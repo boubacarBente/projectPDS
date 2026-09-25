@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { DatePicker } from '@/components/date-picker';
@@ -709,27 +710,27 @@ export default function StocksPage() {
                 data={products}
                 getRowKey={(p) => p.id}
                 actions={(p) => (
-                  <>
-                    <ToolbarButton
+                  <RowActions>
+                    <IconAction
+                      icon="history"
+                      label="Historique des mouvements de ce produit"
                       onClick={() => {
                         setHistoryProduct(p);
                         setIsHistoryOpen(true);
                       }}
-                    >
-                      Historique
-                    </ToolbarButton>
+                    />
                     {canAdjust && (
-                      <ToolbarButton
-                        variant="primary"
+                      <IconAction
+                        icon="adjust"
+                        tone="primary"
+                        label="Ajuster le stock (inventaire)"
                         onClick={() => {
                           setAdjustProduct(p);
                           setIsAdjustOpen(true);
                         }}
-                      >
-                        Ajuster
-                      </ToolbarButton>
+                      />
                     )}
-                  </>
+                  </RowActions>
                 )}
               />
               <Pagination

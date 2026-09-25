@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { DatePicker } from '@/components/date-picker';
@@ -658,35 +659,32 @@ export default function BriqueteriePage() {
             actions={(production) => {
               const next = nextBrickStage(production.stage);
               return (
-                <>
-                  <Link
+                <RowActions>
+                  <IconAction
+                    icon="view"
+                    label="Ouvrir la fiche du lot"
                     href={`/briqueterie/${production.id}`}
-                    className="btn btn-ghost btn-sm min-h-11 border border-base-300 sm:min-h-0"
-                  >
-                    Fiche
-                  </Link>
+                  />
                   {canUpdate && next && (
-                    <ToolbarButton
-                      variant="primary"
+                    <IconAction
+                      icon="advance"
+                      tone="primary"
                       disabled={isAdvancing === production.id}
+                      label={`Passer à l’étape « ${brickStageLabel(next.key)} »`}
                       onClick={() => void advance(production)}
-                      title={`Passer à l’étape « ${brickStageLabel(next.key)} »`}
-                    >
-                      {isAdvancing === production.id ? 'Étape…' : `→ ${brickStageLabel(next.key)}`}
-                    </ToolbarButton>
+                    />
                   )}
                   {canUpdate && (
-                    <ToolbarButton
-                      variant="outline"
+                    <IconAction
+                      icon="broken"
+                      label="Enregistrer des briques cassées"
                       onClick={() => {
                         setBrokenTarget(production);
                         setIsBrokenOpen(true);
                       }}
-                    >
-                      Casse
-                    </ToolbarButton>
+                    />
                   )}
-                </>
+                </RowActions>
               );
             }}
           />

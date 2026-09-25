@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { DatePicker } from '@/components/date-picker';
@@ -614,25 +615,23 @@ export default function DepensesPage() {
             actions={
               canUpdate || canCancel
                 ? (expense) => (
-                    <>
+                    <RowActions>
                       {canUpdate && (
-                        <ToolbarButton
+                        <IconAction
+                          icon="edit"
+                          label="Modifier cette dépense"
                           onClick={() => openEditModal(expense)}
-                          title="Modifier cette dépense"
-                        >
-                          Modifier
-                        </ToolbarButton>
+                        />
                       )}
                       {canCancel && (
-                        <ToolbarButton
-                          variant="error"
+                        <IconAction
+                          icon="cancel"
+                          tone="danger"
+                          label="Annuler cette dépense (aucune suppression)"
                           onClick={() => openCancelModal(expense)}
-                          title="Annuler cette dépense (aucune suppression)"
-                        >
-                          Annuler
-                        </ToolbarButton>
+                        />
                       )}
-                    </>
+                    </RowActions>
                   )
                 : undefined
             }

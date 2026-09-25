@@ -13,7 +13,7 @@
 
 import type { ReactNode } from 'react';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
-import { ToolbarButton } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
@@ -149,45 +149,39 @@ export function AchatsTable({
       data={data}
       getRowKey={(invoice) => invoice.id}
       tableClassName="table-sm"
-      actionsClassName="w-72"
+      actionsClassName="w-52"
       actions={(invoice) => (
-        <div className="flex flex-wrap justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-          <ToolbarButton onClick={() => onOpenDetail(invoice)} title="Voir le détail de l'achat">
-            Détail
-          </ToolbarButton>
-          <ToolbarButton
+        <RowActions>
+          <IconAction icon="view" label="Voir le détail de l'achat" onClick={() => onOpenDetail(invoice)} />
+          <IconAction
+            icon="document"
+            label="Ouvrir le bon d'achat (impression, exports)"
             onClick={() => onOpenDocument(invoice)}
-            title="Ouvrir le bon d'achat (impression, exports)"
-          >
-            Bon
-          </ToolbarButton>
+          />
           {canUpdate && invoice.status !== 'cancelled' && (
-            <ToolbarButton
+            <IconAction
+              icon="edit"
+              label="Modifier cet achat (stock ajusté par différence)"
               onClick={() => onOpenEdit(invoice)}
-              title="Modifier cet achat (stock ajusté par différence)"
-            >
-              Modifier
-            </ToolbarButton>
+            />
           )}
           {canSettle(invoice, canPay) && (
-            <ToolbarButton
-              variant="primary"
+            <IconAction
+              icon="pay"
+              tone="primary"
+              label="Enregistrer un règlement fournisseur"
               onClick={() => onOpenPayment(invoice)}
-              title="Enregistrer un règlement fournisseur"
-            >
-              Payer
-            </ToolbarButton>
+            />
           )}
           {canCancel && invoice.status !== 'cancelled' && (
-            <ToolbarButton
-              variant="error"
+            <IconAction
+              icon="cancel"
+              tone="danger"
+              label="Annuler l'achat (avec motif)"
               onClick={() => onOpenCancel(invoice)}
-              title="Annuler l'achat (avec motif)"
-            >
-              Annuler
-            </ToolbarButton>
+            />
           )}
-        </div>
+        </RowActions>
       )}
     />
   );

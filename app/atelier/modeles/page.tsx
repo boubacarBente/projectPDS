@@ -16,7 +16,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { Pagination } from '@/components/search-filter';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import {
@@ -292,38 +293,38 @@ export default function AtelierModelesPage() {
             getRowKey={(model) => model.id}
             tableClassName="table-sm"
             actions={(model) => (
-              <>
-                <ToolbarButton
-                  variant="primary"
+              <RowActions>
+                <IconAction
+                  icon="list"
+                  tone="primary"
+                  label="Ouvrir la nomenclature du modèle"
                   onClick={() => {
                     setBomModel(model);
                     setIsBomOpen(true);
                   }}
-                >
-                  Nomenclature
-                </ToolbarButton>
+                />
                 {canUpdate && (
-                  <ToolbarButton
+                  <IconAction
+                    icon="edit"
+                    label="Modifier le modèle"
                     onClick={() => {
                       setEditingModel(model);
                       setIsFormOpen(true);
                     }}
-                  >
-                    Modifier
-                  </ToolbarButton>
+                  />
                 )}
                 {canDelete && model.isActive && (
-                  <ToolbarButton
-                    variant="error"
+                  <IconAction
+                    icon="deactivate"
+                    tone="danger"
+                    label="Désactiver le modèle"
                     onClick={() => {
                       setDeactivateModel(model);
                       setIsDeactivateOpen(true);
                     }}
-                  >
-                    Désactiver
-                  </ToolbarButton>
+                  />
                 )}
-              </>
+              </RowActions>
             )}
           />
           <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />

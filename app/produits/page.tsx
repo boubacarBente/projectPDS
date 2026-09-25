@@ -16,7 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar, ToolbarButton } from '@/components/data-toolbar';
+import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -358,38 +359,40 @@ export default function ProduitsPage() {
   );
 
   const renderActions = (product: ProductView) => (
-    <div className="flex flex-wrap items-center justify-end gap-1">
+    <RowActions>
       {canUpdate && (
-        <ToolbarButton onClick={() => openEditModal(product)} title="Modifier le produit">
-          Modifier
-        </ToolbarButton>
+        <IconAction
+          icon="edit"
+          label="Modifier le produit"
+          onClick={() => openEditModal(product)}
+        />
       )}
 
       {product.isActive && (
-        <Link
+        <IconAction
+          icon="adjust"
+          label="Ajuster le stock (mouvement d’inventaire)"
           href={`/stocks?productId=${product.id}`}
-          title="Ajuster le stock (mouvement d’inventaire)"
-          className="btn btn-sm btn-ghost min-h-11 border border-base-300 sm:min-h-0"
-        >
-          Ajuster le stock
-        </Link>
+        />
       )}
 
       {canDelete &&
         (product.isActive ? (
-          <ToolbarButton
-            variant="ghost"
+          <IconAction
+            icon="deactivate"
+            tone="danger"
+            label="Désactiver le produit"
             onClick={() => openDeactivateModal(product)}
-            title="Désactiver le produit"
-          >
-            <span className="text-error">Désactiver</span>
-          </ToolbarButton>
+          />
         ) : (
-          <ToolbarButton onClick={() => void reactivate(product)} title="Réactiver le produit">
-            Réactiver
-          </ToolbarButton>
+          <IconAction
+            icon="activate"
+            tone="success"
+            label="Réactiver le produit"
+            onClick={() => void reactivate(product)}
+          />
         ))}
-    </div>
+    </RowActions>
   );
 
   return (

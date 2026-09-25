@@ -18,6 +18,7 @@ import { useParams } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { Pagination } from '@/components/search-filter';
 import {
   Badge,
@@ -246,13 +247,9 @@ export default function ClientPaymentsPage() {
       hideOnMobile: true,
       className: 'text-right whitespace-nowrap',
       render: (payment: PaymentRecord) => (
-        <Link
-          href={`/recus/${payment.id}`}
-          className="link link-primary text-sm font-medium"
-          onClick={(event) => event.stopPropagation()}
-        >
-          Voir le reçu
-        </Link>
+        <RowActions>
+          <IconAction icon="receipt" label="Voir le reçu" href={`/recus/${payment.id}`} />
+        </RowActions>
       ),
     },
   ] satisfies Column<PaymentRecord>[];

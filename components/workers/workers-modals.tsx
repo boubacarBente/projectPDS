@@ -6,6 +6,7 @@ import { Modal } from '@/components/modal';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { ToolbarButton } from '@/components/data-toolbar';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { IconAction, RowActions } from '@/components/row-actions';
 import {
   Badge,
   EmptyState,
@@ -553,25 +554,25 @@ export function WorkersManagerModal({
               actions={
                 canManage
                   ? (w) => (
-                      <>
-                        <ToolbarButton
+                      <RowActions>
+                        <IconAction
+                          icon="edit"
+                          label="Modifier l’ouvrier"
                           onClick={() => {
                             setEditingWorker(w);
                             setIsFormOpen(true);
                           }}
-                        >
-                          Modifier
-                        </ToolbarButton>
-                        <ToolbarButton
-                          variant={w.isActive ? 'error' : 'primary'}
+                        />
+                        <IconAction
+                          icon={w.isActive ? 'deactivate' : 'activate'}
+                          tone={w.isActive ? 'danger' : 'success'}
+                          label={w.isActive ? 'Désactiver l’ouvrier' : 'Réactiver l’ouvrier'}
                           onClick={() => {
                             setTargetWorker(w);
                             setIsDeactivateOpen(true);
                           }}
-                        >
-                          {w.isActive ? 'Désactiver' : 'Réactiver'}
-                        </ToolbarButton>
-                      </>
+                        />
+                      </RowActions>
                     )
                   : undefined
               }

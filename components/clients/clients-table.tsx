@@ -14,7 +14,7 @@
 
 import type { ReactNode } from 'react';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
-import { ToolbarButton } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { Badge, MoneyText } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
@@ -125,39 +125,30 @@ export function ClientsTable({
       data={data}
       getRowKey={(customer) => customer.id}
       tableClassName="table-sm"
-      actionsClassName="w-56"
+      actionsClassName="w-44"
       actions={(customer) => (
-        <div
-          className="flex flex-wrap justify-end gap-1"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <ToolbarButton onClick={() => onOpenDetail(customer)} title="Voir le détail du client">
-            Détail
-          </ToolbarButton>
+        <RowActions>
+          <IconAction icon="view" label="Voir le détail du client" onClick={() => onOpenDetail(customer)} />
           {canUpdate && (
-            <ToolbarButton onClick={() => onOpenForm(customer)} title="Modifier le client">
-              Modifier
-            </ToolbarButton>
+            <IconAction icon="edit" label="Modifier le client" onClick={() => onOpenForm(customer)} />
           )}
           {canPay && customer.balance > 0.001 && (
-            <ToolbarButton
-              variant="primary"
+            <IconAction
+              icon="pay"
+              tone="primary"
+              label="Enregistrer un paiement"
               onClick={() => onOpenPayment(customer)}
-              title="Enregistrer un paiement"
-            >
-              Paiement
-            </ToolbarButton>
+            />
           )}
           {canDelete && customer.isActive && (
-            <ToolbarButton
-              variant="error"
+            <IconAction
+              icon="deactivate"
+              tone="danger"
+              label="Désactiver le client"
               onClick={() => onOpenDeactivate(customer)}
-              title="Désactiver le client"
-            >
-              Désactiver
-            </ToolbarButton>
+            />
           )}
-        </div>
+        </RowActions>
       )}
     />
   );

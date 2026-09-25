@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar } from '@/components/data-toolbar';
+import { IconAction, RowActions } from '@/components/row-actions';
 import { FilterSelect } from '@/components/search-filter';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { Pagination } from '@/components/search-filter';
@@ -625,46 +626,35 @@ function UtilisateursContent() {
           data={users}
           getRowKey={(user) => user.id}
           actions={(user) => (
-            <>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+            <RowActions>
+              <IconAction
+                icon="edit"
+                label={`Modifier ${user.name}`}
                 onClick={() => setEditingUser(user)}
-                title={`Modifier ${user.name}`}
-              >
-                Modifier
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+              />
+              <IconAction
+                icon="key"
+                label={`Changer le mot de passe de ${user.name}`}
                 onClick={() => setPasswordUser(user)}
-                title={`Changer le mot de passe de ${user.name}`}
-              >
-                Mot de passe
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-                onClick={() => setPermissionsUser(user)}
-                title={
+              />
+              <IconAction
+                icon="shield"
+                label={
                   user.role === 'admin'
                     ? "L'administrateur détient toutes les permissions"
                     : `Définir les permissions de ${user.name}`
                 }
-              >
-                Permissions
-              </button>
-              <button
-                type="button"
-                className={`btn btn-sm min-h-11 sm:min-h-0 ${user.isActive ? 'btn-ghost text-error' : 'btn-ghost text-success'}`}
+                onClick={() => setPermissionsUser(user)}
+              />
+              <IconAction
+                icon={user.isActive ? 'deactivate' : 'activate'}
+                tone={user.isActive ? 'danger' : 'success'}
+                label={user.isActive ? `Désactiver ${user.name}` : `Réactiver ${user.name}`}
                 onClick={() => setStatusUser(user)}
-                title={user.isActive ? `Désactiver ${user.name}` : `Réactiver ${user.name}`}
-              >
-                {user.isActive ? 'Désactiver' : 'Réactiver'}
-              </button>
-            </>
+              />
+            </RowActions>
           )}
-          actionsClassName="w-80"
+          actionsClassName="w-44"
         />
       )}
 
