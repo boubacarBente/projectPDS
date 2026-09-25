@@ -74,13 +74,17 @@ export function Badge({
   children,
   tone = 'neutral',
   className = '',
+  title,
 }: {
   children: ReactNode;
   tone?: BadgeTone;
   className?: string;
+  /** Explication au survol : un badge court doit pouvoir se justifier. */
+  title?: string;
 }) {
   return (
     <span
+      title={title}
       className={`badge-pill inline-flex items-center gap-1 border px-2.5 py-0.5 text-xs font-medium whitespace-nowrap ${TONE_CLASSES[tone]} ${className}`.trim()}
     >
       {children}

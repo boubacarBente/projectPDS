@@ -51,6 +51,8 @@ type Product = {
   name: string;
   unit: string;
   purchasePrice: number;
+  /** Prix de vente courant : affiché pour situer la marge, jamais prérempli ici. */
+  salePrice: number;
   stock: number;
 };
 
@@ -178,6 +180,7 @@ function AchatsNouvelleContent() {
               unit: String(row.unit ?? 'pièce'),
               // C'est bien le **prix d'achat** qui est reposé ici (§7.5).
               purchasePrice: Number(row.purchasePrice ?? row.purchase_price ?? 0) || 0,
+              salePrice: Number(row.salePrice ?? row.sale_price ?? 0) || 0,
               stock: Number(row.stock ?? 0) || 0,
             };
           })
@@ -575,7 +578,9 @@ function AchatsNouvelleContent() {
                                 <option value="">Sélectionner un produit…</option>
                                 {products.map((entry) => (
                                   <option key={entry.id} value={entry.id}>
-                                    {entry.code} — {entry.name} ({formatNumber(entry.purchasePrice)} GNF)
+                                    {entry.code} — {entry.name} · achat{' '}
+                                    {formatNumber(entry.purchasePrice)} GNF · vente{' '}
+                                    {formatNumber(entry.salePrice)} GNF
                                   </option>
                                 ))}
                               </select>
