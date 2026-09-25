@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Modal } from '@/components/modal';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { FormField } from '@/components/design-system';
+import { PasswordInput } from '@/components/password-input';
 import { ROLES, ROLE_LABELS, type Role } from '@/lib/permissions';
 // ⚠️ `MIN_PASSWORD_LENGTH` vient de `lib/constants.ts`, et non de `lib/users.ts` :
 // ce dernier est un module **serveur** (il importe `@/db`). L'importer ici
@@ -18,7 +19,7 @@ import type { UserRow } from '@/lib/users';
  *  1. **Créer** — nom, identifiant, mot de passe, rôle, téléphone ;
  *  2. **Modifier** — mêmes champs **sans** le mot de passe (route dédiée) ;
  *  3. **Changer le mot de passe** — réinitialisation par un administrateur,
- *     avec double saisie et bouton « afficher » ;
+ *     avec double saisie et une icône « afficher » **par champ** ;
  *  4. **Désactiver / Réactiver** — `ConfirmDialog`, jamais `window.confirm`.
  *
  * Contrat respecté ici :
@@ -243,12 +244,11 @@ function UserFormModal({
             required
             hint={`Au moins ${MIN_PASSWORD_LENGTH} caractères. Il ne sera plus jamais affiché.`}
           >
-            <input
+            <PasswordInput
               id="user-password"
-              type="password"
-              className="input input-bordered w-full min-h-11"
               value={form.password}
-              onChange={(event) => set('password', event.target.value)}
+              onChange={(value) => set('password', value)}
+              className="min-h-11"
               autoComplete="new-password"
               disabled={isSubmitting}
             />
@@ -329,14 +329,12 @@ function PasswordModal({
 }) {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
-  const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setPassword('');
     setConfirmation('');
-    setShow(false);
     setError(null);
   }, [isOpen, user]);
 
@@ -372,39 +370,33 @@ function PasswordModal({
         </p>
 
         <FormField label="Nouveau mot de passe" htmlFor="new-password" required hint={`Au moins ${MIN_PASSWORD_LENGTH} caractères`}>
-          <input
+          <PasswordInput
             id="new-password"
-            type={show ? 'text' : 'password'}
-            className="input input-bordered w-full min-h-11"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={setPassword}
+            className="min-h-11"
             autoComplete="new-password"
             disabled={isSubmitting}
           />
         </FormField>
 
         <FormField label="Confirmation" htmlFor="confirm-password" required>
-          <input
+          <PasswordInput
             id="confirm-password"
-            type={show ? 'text' : 'password'}
-            className="input input-bordered w-full min-h-11"
             value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
+            onChange={setConfirmation}
+            className="min-h-11"
             autoComplete="new-password"
             disabled={isSubmitting}
           />
         </FormField>
 
-        <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm">
-          <input
-            type="checkbox"
-            className="toggle toggle-sm"
-            checked={show}
-            onChange={(event) => setShow(event.target.checked)}
-            disabled={isSubmitting}
-          />
-          Afficher les mots de passe saisis
-        </label>
+        {/*
+          L'ancien interrupteur « Afficher les mots de passe saisis » est retiré :
+          chaque champ porte désormais sa propre icône, on peut donc vérifier la
+          seule confirmation sans dévoiler le premier champ (voir
+          `components/password-input.tsx`).
+        */}
 
         {error && (
           <p className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">

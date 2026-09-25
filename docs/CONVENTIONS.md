@@ -230,7 +230,17 @@ Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 `RoleGate` + `usePermission`, `DataToolbar` + `ToolbarButton`,
 `PageHeader`, `BackButton`, `ExportDropdown`, `DatePicker`, `SearchBar`,
 `FilterSelect`, `Pagination`, `ResponsiveTable`, `SurfaceCard`, `MetricCard`,
-`ColorField` (nuancier natif + code hexadécimal éditable).
+`ColorField` (nuancier natif + code hexadécimal éditable),
+`PasswordInput` (mot de passe + icône afficher/masquer).
+
+> **Tout mot de passe passe par `PasswordInput`.** L'icône « œil » vivait
+> uniquement sur l'écran de connexion ; ailleurs les champs étaient soit
+> définitifs, soit révélés par une case à cocher **globale** qui dévoilait les
+> deux champs d'un coup. `PasswordInput` porte son propre état : on affiche le
+> champ qu'on veut, quand on veut, et le bouton est un vrai
+> `<button type="button">` (il ne soumet jamais le formulaire), avec
+> `aria-label` et `aria-pressed` qui décrivent l'action. Ne pas réécrire un
+> `<input type="password">` à la main.
 
 > **Champ contrôlé = `value` + `onChange`.** Un `<input value={x}>` sans
 > `onChange` déclenche un avertissement React **et devient réellement
