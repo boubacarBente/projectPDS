@@ -229,7 +229,17 @@ passé » qui écrase une saisie plus récente.
 Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 `RoleGate` + `usePermission`, `DataToolbar` + `ToolbarButton`,
 `PageHeader`, `BackButton`, `ExportDropdown`, `DatePicker`, `SearchBar`,
-`FilterSelect`, `Pagination`, `ResponsiveTable`, `SurfaceCard`, `MetricCard`.
+`FilterSelect`, `Pagination`, `ResponsiveTable`, `SurfaceCard`, `MetricCard`,
+`ColorField` (nuancier natif + code hexadécimal éditable).
+
+> **Champ contrôlé = `value` + `onChange`.** Un `<input value={x}>` sans
+> `onChange` déclenche un avertissement React **et devient réellement
+> `readOnly`** : le champ est inutilisable à la saisie. C'est le défaut qui
+> existait sur le code hexadécimal de la barre latérale (`/parametres`) —
+> corrigé par `ColorField`, qui garde la frappe dans un brouillon local et
+> n'enregistre qu'à la fin (blur ou `Entrée`), avec retour à la valeur
+> enregistrée si le code est incomplet. Si un champ doit rester en lecture
+> seule, écrire `readOnly` **explicitement**, jamais l'omettre.
 
 ### Contrat responsive (règle des 5 largeurs)
 

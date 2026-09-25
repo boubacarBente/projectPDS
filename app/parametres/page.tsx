@@ -15,6 +15,7 @@ import { PageHeader } from '@/components/page-header';
 import { UpdateStatus } from '@/components/update-status';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { FormField, PageSection, Skeleton, Card } from '@/components/design-system';
+import { ColorField } from '@/components/color-field';
 import { usePermission } from '@/components/role-gate';
 import { useAuth } from '@/components/auth-provider';
 import { useTheme } from '@/components/theme-provider';
@@ -572,62 +573,24 @@ export default function ParametresPage() {
         <Card>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <FormField label="Couleur principale" hint="Actions, accents, éléments actifs.">
-              <div className="flex items-center gap-3">
-                <input
-                  type="color"
-                  className="h-11 w-14 cursor-pointer rounded-lg border border-base-300 bg-base-100"
-                  value={settings.primaryColor}
-                  disabled={!canUpdate}
-                  onChange={(e) => {
-                    previewColors(e.target.value, settings.sidebarColor);
-                    void updateSettings({ primaryColor: e.target.value }, { silent: true });
-                  }}
-                />
-                <input
-                  className="input input-bordered field-rounded w-full font-mono text-sm"
-                  value={settings.primaryColor}
-                  disabled={!canUpdate}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    if (/^#[0-9a-fA-F]{0,6}$/.test(value)) {
-                      previewColors(value, settings.sidebarColor);
-                    }
-                  }}
-                  onBlur={(e) => {
-                    if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) {
-                      void updateSettings({ primaryColor: e.target.value });
-                    }
-                  }}
-                />
-              </div>
+              <ColorField
+                value={settings.primaryColor}
+                disabled={!canUpdate}
+                onPreview={(hex) => previewColors(hex, settings.sidebarColor)}
+                onSave={(hex, options) => void updateSettings({ primaryColor: hex }, options)}
+              />
             </FormField>
 
             <FormField
               label="Couleur de la barre latérale"
               hint="Le texte s’adapte automatiquement pour rester lisible."
             >
-              <div className="flex items-center gap-3">
-                <input
-                  type="color"
-                  className="h-11 w-14 cursor-pointer rounded-lg border border-base-300 bg-base-100"
-                  value={settings.sidebarColor}
-                  disabled={!canUpdate}
-                  onChange={(e) => {
-                    previewColors(settings.primaryColor, e.target.value);
-                    void updateSettings({ sidebarColor: e.target.value }, { silent: true });
-                  }}
-                />
-                <input
-                  className="input input-bordered field-rounded w-full font-mono text-sm"
-                  value={settings.sidebarColor}
-                  disabled={!canUpdate}
-                  onBlur={(e) => {
-                    if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) {
-                      void updateSettings({ sidebarColor: e.target.value });
-                    }
-                  }}
-                />
-              </div>
+              <ColorField
+                value={settings.sidebarColor}
+                disabled={!canUpdate}
+                onPreview={(hex) => previewColors(settings.primaryColor, hex)}
+                onSave={(hex, options) => void updateSettings({ sidebarColor: hex }, options)}
+              />
             </FormField>
 
             <FormField label="Réduction des animations" hint="Respecte le réglage du système.">
