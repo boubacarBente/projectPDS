@@ -1048,6 +1048,8 @@ Reprise du patron `SettingsCard` (titre + icône colorée + corps) de Gaz :
 
 > Les cartes **Zone dangereuse** et **Préremplir** restent **masquées en production et dans l'app desktop** (`hideDatabaseActions`), comme dans Gaz — outils de développement uniquement.
 
+> **Prise en main** : les données de démonstration remplissent aussi les trois modules de fabrication (chantiers, briqueterie, atelier). Le pas-à-pas écran par écran, l'ordre des actions et ce que chacune produit ailleurs (stock, caisse, dettes, rapports) sont dans [docs/PARCOURS-DEMO.md](docs/PARCOURS-DEMO.md).
+
 ---
 
 ## 10. La création de ventes
