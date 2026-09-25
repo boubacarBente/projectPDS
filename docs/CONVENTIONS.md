@@ -233,14 +233,16 @@ Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 `PasswordInput` (mot de passe + icône afficher/masquer),
 `IconAction` + `RowActions` (`components/row-actions.tsx`),
 `Combobox` (`components/combobox.tsx` — champ texte à suggestions),
-`HelpTooltip` (`components/help-tooltip.tsx` — icône « ? » + bulle d'explication).
+`Tooltip` (`components/tooltip.tsx` — bulle d'explication autour d'une commande).
 
 > **Une précision ne se met pas dans un `title` natif.** La bulle système
 > s'affiche après une seconde, ignore le thème et **ne s'ouvre pas au clavier**.
-> `HelpTooltip` la remplace : bulle daisyUI (jetons de couleur du thème) ouverte
-> **au survol**, **au focus clavier** et **au clic** (donc utilisable au doigt),
-> reliée au bouton par `aria-describedby` pour les lecteurs d'écran. Les libellés
-> de boutons restent courts : l'explication va dans l'icône d'aide, à côté.
+> `Tooltip` la remplace : bulle daisyUI (jetons de couleur du thème) ouverte
+> **au survol et au focus clavier** de la commande qu'elle enveloppe, avec
+> `aria-describedby` posé sur le bouton (le texte est annoncé par les lecteurs
+> d'écran). Les libellés de boutons restent courts : l'explication va dans la
+> bulle. Ne pas envelopper une commande dont l'action est déjà explicite, et
+> **jamais deux bulles sur le même écran** pour la même question.
 
 > **Choisir dans une liste = taper, pas dérouler.** Chercher un produit ou un
 > client dans un `<select>` natif oblige à parcourir la liste à l'œil. `Combobox`
