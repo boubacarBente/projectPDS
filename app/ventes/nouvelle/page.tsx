@@ -27,6 +27,7 @@ import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DatePicker } from '@/components/date-picker';
 import { Combobox } from '@/components/combobox';
+import { HelpTooltip } from '@/components/help-tooltip';
 import {
   Badge,
   Card,
@@ -1030,15 +1031,26 @@ export default function NouvelleVentePage() {
               >
                 Annuler
               </button>
-              <button
-                type="button"
-                className="btn btn-outline min-h-11 sm:min-h-0"
-                onClick={() => void submit('draft')}
-                disabled={isSubmitting || !canCreate}
-                title="Enregistrer comme brouillon : ni le stock ni la caisse ne sont touchés"
-              >
-                Enregistrer comme brouillon
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="btn btn-outline min-h-11 sm:min-h-0"
+                  onClick={() => void submit('draft')}
+                  disabled={isSubmitting || !canCreate}
+                >
+                  Enregistrer comme brouillon
+                </button>
+                {/*
+                  L'explication était un `title` natif — illisible (bulle système,
+                  hors thème) et invisible au clavier. Elle vit maintenant dans
+                  l'icône d'aide, qui s'ouvre au survol, au focus et au clic.
+                */}
+                <HelpTooltip label="Aide : enregistrer comme brouillon">
+                  Un brouillon enregistre la vente <strong>sans toucher au stock</strong> ni à la
+                  caisse, et sans émettre de reçu. Vous pourrez la reprendre, la modifier, puis
+                  l&apos;enregistrer définitivement depuis la liste des ventes.
+                </HelpTooltip>
+              </div>
               <button
                 type="submit"
                 className="btn btn-primary min-h-11 sm:min-h-0"

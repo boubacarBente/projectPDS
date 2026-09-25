@@ -232,7 +232,15 @@ Autres : `Modal` (`components/modal.tsx`), `ConfirmDialog`,
 `ColorField` (nuancier natif + code hexadécimal éditable),
 `PasswordInput` (mot de passe + icône afficher/masquer),
 `IconAction` + `RowActions` (`components/row-actions.tsx`),
-`Combobox` (`components/combobox.tsx` — champ texte à suggestions).
+`Combobox` (`components/combobox.tsx` — champ texte à suggestions),
+`HelpTooltip` (`components/help-tooltip.tsx` — icône « ? » + bulle d'explication).
+
+> **Une précision ne se met pas dans un `title` natif.** La bulle système
+> s'affiche après une seconde, ignore le thème et **ne s'ouvre pas au clavier**.
+> `HelpTooltip` la remplace : bulle daisyUI (jetons de couleur du thème) ouverte
+> **au survol**, **au focus clavier** et **au clic** (donc utilisable au doigt),
+> reliée au bouton par `aria-describedby` pour les lecteurs d'écran. Les libellés
+> de boutons restent courts : l'explication va dans l'icône d'aide, à côté.
 
 > **Choisir dans une liste = taper, pas dérouler.** Chercher un produit ou un
 > client dans un `<select>` natif oblige à parcourir la liste à l'œil. `Combobox`
