@@ -28,6 +28,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { Tooltip } from '@/components/tooltip';
 
 export type ActionIcon =
   | 'view'
@@ -220,23 +221,20 @@ export function IconAction({
 
   if (href && !disabled) {
     return (
-      <Link href={href} className={className} title={label} aria-label={label}>
-        {content}
-      </Link>
+      <Tooltip label={label} ariaDescribedBy={false}>
+        <Link href={href} className={className} aria-label={label}>
+          {content}
+        </Link>
+      </Tooltip>
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={className}
-      title={label}
-      aria-label={label}
-    >
-      {content}
-    </button>
+    <Tooltip label={label} ariaDescribedBy={false}>
+      <button type="button" onClick={onClick} disabled={disabled} className={className} aria-label={label}>
+        {content}
+      </button>
+    </Tooltip>
   );
 }
 

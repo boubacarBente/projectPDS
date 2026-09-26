@@ -59,9 +59,16 @@ interface TooltipProps {
   side?: 'top' | 'bottom';
   /** Marge minimale avec les bords de la fenêtre. */
   gap?: number;
+  /**
+   * Relier la bulle à la commande par `aria-describedby` (vrai par défaut).
+   * À désactiver quand le texte est **déjà** le nom accessible de la commande
+   * (icône de ligne : `aria-label` + `<span class="sr-only">`) — sinon il est
+   * annoncé deux fois.
+   */
+  ariaDescribedBy?: boolean;
 }
 
-export function Tooltip({ label, children, side = 'top', gap = 8 }: TooltipProps) {
+export function Tooltip({ label, children, side = 'top', gap = 8, ariaDescribedBy = true }: TooltipProps) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [placed, setPlaced] = useState<{ top: number; left: number; below: boolean } | null>(null);
@@ -136,23 +143,32 @@ export function Tooltip({ label, children, side = 'top', gap = 8 }: TooltipProps
     placedRef.current = null;
   };
 
-  /** Compose avec un éventuel gestionnaire déjà présent sur l'enfant. */
-  const compose = <E,>(existing: ((event: E) => void) | undefined, handler: (event: E) => void) => (event: E) => {
-    existing?.(event);
-    handler(event);
-  };
+  /**
+   * Les gestionnaires sont posés sur une **enveloppe `display: contents`**, pas
+   * sur l'enfant. C'est indispensable : certains déclencheurs ne transmettent
+   * pas les accessoires qu'on leur ajoute (`ToolbarButton` aplatissait ses
+   * props, `next/link` ne relaie pas tout) — l'infobulle ne s'affichait alors
+   * jamais, ou restait ouverte. `display: contents` ne crée **aucune boîte** :
+   * la mise en page est strictement identique à celle d'un enfant nu.
+   */
+  const wrapperRef = useRef<HTMLSpanElement>(null);
+  const commandElement = () => wrapperRef.current?.firstElementChild as HTMLElement | null;
 
-  const trigger = isValidElement(children)
-    ? cloneElement(children, {
-        'aria-describedby': id,
-        onMouseEnter: compose(children.props.onMouseEnter, (event: React.MouseEvent) =>
-          show(event.currentTarget as HTMLElement),
-        ),
-        onMouseLeave: compose(children.props.onMouseLeave, hide),
-        onFocus: compose(children.props.onFocus, (event: React.FocusEvent) => show(event.currentTarget as HTMLElement)),
-        onBlur: compose(children.props.onBlur, hide),
-      })
-    : children;
+  const trigger = (
+    <span
+      ref={wrapperRef}
+      data-tooltip-trigger=""
+      style={{ display: 'contents' }}
+      onMouseEnter={() => show(commandElement())}
+      onMouseLeave={hide}
+      onFocus={() => show(commandElement())}
+      onBlur={hide}
+    >
+      {isValidElement(children) && ariaDescribedBy
+        ? cloneElement(children, { 'aria-describedby': id })
+        : children}
+    </span>
+  );
 
   const bubble = (
     <div

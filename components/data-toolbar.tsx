@@ -102,7 +102,14 @@ export function DataToolbar({
   );
 }
 
-/** Bouton d'action d'en-tête, cible tactile ≥ 44 px sur mobile (§5.5 règle 3). */
+/**
+ * Bouton d'action d'en-tête, cible tactile ≥ 44 px sur mobile (§5.5 règle 3).
+ *
+ * `...rest` est **transmis au bouton** : c'est ainsi que `Tooltip` lui pose ses
+ * gestionnaires de survol et son `aria-describedby` quand un écran l'enveloppe.
+ * Sans cette transmission, les accessoires étaient silencieusement perdus et les
+ * infobulles ne s'affichaient pas sur les barres d'outils.
+ */
 export function ToolbarButton({
   onClick,
   children,
@@ -110,6 +117,7 @@ export function ToolbarButton({
   disabled,
   title,
   type = 'button',
+  ...rest
 }: {
   onClick?: () => void;
   children: ReactNode;
@@ -117,7 +125,7 @@ export function ToolbarButton({
   disabled?: boolean;
   title?: string;
   type?: 'button' | 'submit';
-}) {
+} & Omit<React.ComponentProps<'button'>, 'onClick' | 'children' | 'type' | 'disabled' | 'title'>) {
   const variants: Record<string, string> = {
     ghost: 'btn-ghost border border-base-300',
     primary: 'btn-primary',
@@ -126,6 +134,7 @@ export function ToolbarButton({
   };
   return (
     <button
+      {...rest}
       type={type}
       onClick={onClick}
       disabled={disabled}
