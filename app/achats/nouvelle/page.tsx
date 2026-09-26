@@ -40,6 +40,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { BackButton } from '@/components/back-button';
+import { Combobox } from '@/components/combobox';
 import { DatePicker } from '@/components/date-picker';
 import { Tooltip } from '@/components/tooltip';
 import { IconAction } from '@/components/row-actions';
@@ -292,7 +293,7 @@ const ICONS = {
  * badges de stock, un centrage vertical ferait monter le champ produit.
  */
 const LINE_GRID =
-  'xl:grid xl:grid-cols-[minmax(0,1fr)_76px_128px_96px_32px] xl:items-start xl:gap-2';
+  'xl:grid xl:grid-cols-[minmax(0,1fr)_92px_128px_88px_32px] xl:items-start xl:gap-2';
 
 /* ------------------------------------------------------------------ *
  * Page
@@ -314,7 +315,7 @@ function AchatsNouvelleContent() {
   const [date, setDate] = useState(today());
   const [dueDate, setDueDate] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Espèces');
-  const [amountPaid, setAmountPaid] = useState('');
+  const [amountPaid, setAmountPaid] = useState('0');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<Line[]>([newLine()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -324,10 +325,9 @@ function AchatsNouvelleContent() {
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Le montant payé suit le total tant que l'utilisateur n'y a pas touché : le
-  // formulaire s'ouvre « payé », on repasse à un acompte à la main.
-  const amountTouchedRef = useRef(false);
-  const previousTotalRef = useRef(0);
+  // Le montant payé s'ouvre à **0** (choix client) : par défaut l'achat part en
+  // dette fournisseur (« 0 = achat à crédit ») et l'utilisateur saisit lui-même
+  // un comptant ou un acompte — plus aucun recalage automatique sur le total.
   const initializedRef = useRef(false);
 
   const load = useCallback(
@@ -430,13 +430,10 @@ function AchatsNouvelleContent() {
           setAmountPaid(
             Number(invoice.amountPaid ?? invoice.amount_paid ?? 0) > 0
               ? String(Number(invoice.amountPaid ?? invoice.amount_paid ?? 0))
-              : '',
+              : '0',
           );
           setNotes(String(invoice.notes ?? '') || '');
 
-          // Le montant est repris tel quel : on ne veut PAS qu'il se recale sur
-          // le total recalculé pendant l'édition.
-          amountTouchedRef.current = true;
           initializedRef.current = true;
 
           const nextLines: Line[] = rawItems.map((raw, index) => ({
@@ -517,20 +514,10 @@ function AchatsNouvelleContent() {
     return { key: 'paid', label: 'Payé', tone: 'success' as const };
   }, [totals.paid, totals.remaining]);
 
-  /* Le montant payé suit le total tant qu'il n'a pas été saisi à la main. */
-  useEffect(() => {
-    if (amountTouchedRef.current) return;
-    const previous = previousTotalRef.current;
-    if (previous > 0 && Math.abs(toAmount(amountPaid) - previous) > 0.001) return;
-
-    const next = totals.total > 0 ? String(Math.round(totals.total * 100) / 100) : '';
-    setAmountPaid((current) => (current === next ? current : next));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totals.total]);
-
-  useEffect(() => {
-    previousTotalRef.current = totals.total;
-  }, [totals.total]);
+  /*
+   * Aucun recalage du montant payé (choix client) : le champ reste à **0**
+   * (achat à crédit) tant que l'utilisateur n'a pas saisi un montant.
+   */
 
   const addLine = () => setLines((current) => [...current, newLine()]);
 
@@ -557,6 +544,21 @@ function AchatsNouvelleContent() {
   const setLineField = (key: string, field: 'quantity' | 'unitPrice', value: string) => {
     setLines((current) =>
       current.map((line) => (line.key === key ? { ...line, [field]: value } : line)),
+    );
+  };
+
+  /**
+   * Compteur de quantité (− / +). La quantité reste une **chaîne** dans l'état,
+   * comme la saisie clavier : le pas de 1 ne change donc rien au reste des
+   * calculs. Arrondi au millième, sinon 0,1 + 0,2 afficherait 0,30000000000000004.
+   */
+  const stepQuantity = (key: string, delta: number) => {
+    setLines((current) =>
+      current.map((line) => {
+        if (line.key !== key) return line;
+        const next = Math.max(0, Math.round((toAmount(line.quantity) + delta) * 1000) / 1000);
+        return { ...line, quantity: String(next) };
+      }),
     );
   };
 
@@ -798,32 +800,33 @@ function AchatsNouvelleContent() {
                     return (
                       <li key={line.key} className="min-w-0 px-4 py-4 sm:px-5">
                         <div className={`flex min-w-0 flex-wrap items-start gap-x-3 gap-y-3 ${LINE_GRID}`}>
-                          {/* Produit : sélecteur + badges de stock. */}
+                          {/* Produit : recherche avec suggestions (gabarit
+                              ventes) + badges de stock. */}
                           <div className="min-w-0 w-full xl:w-auto">
                             <FieldLabel>Produit</FieldLabel>
-                            <select
-                              className="select select-bordered field-rounded h-11 w-full bg-base-100 font-medium sm:h-9"
+                            <Combobox
+                              className="h-11 w-full sm:h-9"
                               value={line.productId}
-                              onChange={(event) => handleProductChange(line.key, event.target.value)}
-                              aria-label={`Produit de la ligne ${index + 1}`}
-                            >
-                              <option value="">Sélectionner un produit…</option>
-                              {products.map((entry) => (
-                                <option key={entry.id} value={entry.id}>
-                                  {entry.name} ({formatNumber(entry.purchasePrice)} GNF)
-                                </option>
-                              ))}
-                            </select>
-                            <span className="mt-1.5 flex flex-wrap items-center gap-2">
+                              onChange={(value) => handleProductChange(line.key, value)}
+                              options={products.map((entry) => ({
+                                value: String(entry.id),
+                                label: entry.name,
+                                hint: `${formatNumber(entry.purchasePrice)} GNF`,
+                              }))}
+                              emptyLabel="Sélectionner un produit…"
+                              placeholder="Tapez le nom du produit…"
+                              ariaLabel={`Produit de la ligne ${index + 1}`}
+                            />
+                            <span className="mt-1.5 flex flex-row flex-wrap items-center gap-2">
                               {product ? (
                                 <>
                                   {/* Le stock va **augmenter** : on montre l'état
                                       actuel puis l'état après cet achat. */}
-                                  <Badge tone="info">
+                                  <Badge tone="info" className="shrink-0">
                                     Stock actuel : {formatQuantity(product.stock, product.unit)}
                                   </Badge>
                                   {computed.quantity > 0 && (
-                                    <Badge tone="success">
+                                    <Badge tone="success" className="shrink-0">
                                       Après achat : {formatQuantity(projectedStock, product.unit)}
                                     </Badge>
                                   )}
@@ -836,25 +839,47 @@ function AchatsNouvelleContent() {
                             </span>
                           </div>
 
-                          {/* Quantité : champ simple (maquette achats). */}
-                          <div className="min-w-0 grow basis-[calc(50%-0.375rem)] xl:w-auto xl:grow-0 xl:basis-auto">
+                          {/* Quantité : compteur bordé − / + (gabarit ventes).
+                              Largeur figée : le champ ne s'étale plus en
+                              demi-colonne entre 1024 et 1280 px. */}
+                          <div className="w-[104px] min-w-0 shrink-0 sm:w-[92px] xl:w-auto">
                             <FieldLabel>Qté</FieldLabel>
-                            <input
-                              type="number"
-                              min={0}
-                              step="any"
-                              inputMode="decimal"
-                              className="input input-bordered field-rounded h-11 w-full bg-base-100 text-center text-sm tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:h-9"
-                              value={line.quantity}
-                              onChange={(event) =>
-                                setLineField(line.key, 'quantity', event.target.value)
-                              }
-                              aria-label={`Quantité de la ligne ${index + 1}`}
-                            />
+                            <div className="field-rounded flex h-11 w-full items-stretch overflow-hidden rounded-xl border border-base-300 bg-base-100 transition-colors focus-within:border-primary sm:h-9">
+                              <button
+                                type="button"
+                                className="flex w-11 shrink-0 items-center justify-center text-lg text-base-content/60 transition-colors hover:bg-base-200 disabled:opacity-30 sm:w-8 xl:w-7"
+                                onClick={() => stepQuantity(line.key, -1)}
+                                disabled={toAmount(line.quantity) <= 0}
+                                aria-label={`Diminuer la quantité de la ligne ${index + 1}`}
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                min={0}
+                                step="any"
+                                inputMode="decimal"
+                                className="min-h-0 min-w-0 flex-1 border-0 bg-transparent text-center text-sm tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                value={line.quantity}
+                                onChange={(event) =>
+                                  setLineField(line.key, 'quantity', event.target.value)
+                                }
+                                aria-label={`Quantité de la ligne ${index + 1}`}
+                              />
+                              <button
+                                type="button"
+                                className="flex w-11 shrink-0 items-center justify-center text-lg text-base-content/60 transition-colors hover:bg-base-200 sm:w-8 xl:w-7"
+                                onClick={() => stepQuantity(line.key, 1)}
+                                aria-label={`Augmenter la quantité de la ligne ${index + 1}`}
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
 
-                          {/* Prix d'achat : suffixe « GNF » dans le champ. */}
-                          <div className="min-w-0 grow basis-[calc(50%-0.375rem)] xl:w-auto xl:grow-0 xl:basis-auto">
+                          {/* Prix d'achat : suffixe « GNF » dans le champ,
+                              largeur figée (maquette). */}
+                          <div className="w-[136px] min-w-0 shrink-0 sm:w-[124px] xl:w-auto">
                             <FieldLabel>Prix d&apos;achat</FieldLabel>
                             <SuffixedInput
                               value={line.unitPrice}
@@ -1119,10 +1144,7 @@ function AchatsNouvelleContent() {
                         inputMode="decimal"
                         className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 text-right tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
                         value={amountPaid}
-                        onChange={(event) => {
-                          amountTouchedRef.current = true;
-                          setAmountPaid(event.target.value);
-                        }}
+                        onChange={(event) => setAmountPaid(event.target.value)}
                         placeholder="0"
                       />
                       <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] font-medium text-base-content/45">
