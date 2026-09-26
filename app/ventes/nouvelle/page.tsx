@@ -380,14 +380,6 @@ export default function NouvelleVentePage() {
   const [isCustomerStatsLoading, setIsCustomerStatsLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  /**
-   * Vrai dès que l'utilisateur a saisi un montant encaissé à la main.
-   * Tant qu'il est faux, le montant suit le total (§10.2) : le formulaire
-   * s'ouvre « payé » et l'utilisateur ne fait rien pour une vente comptant.
-   */
-  const amountTouchedRef = useRef(false);
-  /** Total précédent, pour ne pas écraser un encaissement partiel en cours. */
-  const previousTotalRef = useRef(0);
   /** Première initialisation des lignes : elle ne doit se produire qu'une fois. */
   const initializedRef = useRef(false);
 
@@ -589,24 +581,12 @@ export default function NouvelleVentePage() {
     return { subTotal, globalDiscount, totalHt, rate, taxAmount, totalToPay, paid, remaining };
   }, [computedLines, discountAmount, taxRate, amountPaid]);
 
-  /**
-   * Le montant encaissé suit le total tant que l'utilisateur n'y a pas touché,
-   * et tant qu'il était réglé au centime près (vente comptant). Un acompte
-   * volontaire (50 000 sur 200 000) n'est donc jamais écrasé par une frappe.
+  /*
+   * Le champ « Montant encaissé » démarre **vide** (choix du client) : la vente
+   * est donc à crédit tant qu'on n'a pas saisi un encaissement. Le payload envoie
+   * 0 quand le champ est vide — le badge « En attente » et l'échéance prennent le
+   * relais. Un acompte volontaire (50 000 sur 200 000) est respecté tel quel.
    */
-  useEffect(() => {
-    if (amountTouchedRef.current) return;
-    const previous = previousTotalRef.current;
-    if (previous > 0 && Math.abs(toAmount(amountPaid) - previous) > 0.001) return;
-
-    const next = totals.totalToPay > 0 ? String(Math.round(totals.totalToPay * 100) / 100) : '';
-    setAmountPaid((current) => (current === next ? current : next));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totals.totalToPay]);
-
-  useEffect(() => {
-    previousTotalRef.current = totals.totalToPay;
-  }, [totals.totalToPay]);
 
   /* ------------------------------------------------------------------
    * Lignes
@@ -1447,7 +1427,6 @@ export default function NouvelleVentePage() {
                           className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 text-right tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
                           value={amountPaid}
                           onChange={(event) => {
-                            amountTouchedRef.current = true;
                             setAmountPaid(event.target.value);
                           }}
                           placeholder="0"
