@@ -42,6 +42,11 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+/** Demi-base du triangle de la flèche, en pixels (daisyUI : 0,25 rem). */
+const ARROW_SIZE = 6;
+/** Marge minimale entre la flèche et l'extrémité de la bulle. */
+const ARROW_MARGIN = ARROW_SIZE + 8;
+
 type TriggerProps = {
   'aria-describedby'?: string;
   onMouseEnter?: (event: React.MouseEvent) => void;
@@ -71,7 +76,7 @@ interface TooltipProps {
 export function Tooltip({ label, children, side = 'top', gap = 8, ariaDescribedBy = true }: TooltipProps) {
   const id = useId();
   const [open, setOpen] = useState(false);
-  const [placed, setPlaced] = useState<{ top: number; left: number; below: boolean } | null>(null);
+  const [placed, setPlaced] = useState<{ top: number; left: number; below: boolean; arrow: number } | null>(null);
 
   const triggerRef = useRef<HTMLElement | null>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
@@ -97,9 +102,26 @@ export function Tooltip({ label, children, side = 'top', gap = 8, ariaDescribedB
     const below = side === 'bottom' ? t.bottom + h + gap <= vh || roomAbove < gap : roomAbove < gap;
     const top = below ? Math.min(t.bottom + gap, vh - h - gap) : Math.max(gap, roomAbove);
 
-    const next = { top: Math.round(top), left: Math.round(left), below };
+    /*
+     * Position de la flèche : **face au centre de la commande**. Quand la bulle
+     * est écrêtée à un bord de la fenêtre, la flèche rentre dans la bulle au
+     * lieu de la dépasser — elle pointe toujours vers la commande.
+     */
+    const arrow = Math.round(
+      Math.max(ARROW_MARGIN, Math.min(t.left + t.width / 2 - left, w - ARROW_MARGIN)),
+    );
+
+    const next = { top: Math.round(top), left: Math.round(left), below, arrow };
     const previous = placedRef.current;
-    if (previous && previous.top === next.top && previous.left === next.left && previous.below === next.below) return;
+    if (
+      previous &&
+      previous.top === next.top &&
+      previous.left === next.left &&
+      previous.below === next.below &&
+      previous.arrow === next.arrow
+    ) {
+      return;
+    }
     placedRef.current = next;
     setPlaced(next);
   }, [gap, side]);
@@ -183,13 +205,41 @@ export function Tooltip({ label, children, side = 'top', gap = 8, ariaDescribedB
         // Opacité (et non `display`/`visibility`) : la bulle reste annoncée aux
         // lecteurs d'écran via `aria-describedby`, et n'intercepte jamais la souris.
         opacity: open && placed ? 1 : 0,
+        /*
+         * Animation daisyUI : fondu **et** glissement de 4 px, 200 ms, retard de
+         * 75 ms. La bulle part légèrement vers la commande (vers le bas si elle
+         * s'affiche au-dessus, vers le haut sinon) puis se pose.
+         */
+        transform: open && placed ? 'none' : `translateY(${placed?.below ? '-4px' : '4px'})`,
+        transition:
+          'opacity .2s cubic-bezier(.4,0,.2,1) 75ms, transform .2s cubic-bezier(.4,0,.2,1) 75ms',
         pointerEvents: 'none',
-        transition: 'opacity .15s ease-out',
         zIndex: 80,
       }}
       className="w-max rounded-xl bg-neutral px-3 py-1.5 text-sm text-neutral-content shadow-xl"
     >
       <div className="text-left leading-snug">{label}</div>
+      {/*
+        Flèche : un triangle CSS qui pointe vers la commande, aligné sur son
+        centre (`placed.arrow`). Elle bascule avec la bulle — sous la bulle quand
+        celle-ci est au-dessus, au-dessus quand elle est en dessous. La couleur
+        est le jeton du thème, pas une valeur figée.
+      */}
+      <span
+        aria-hidden
+        data-tooltip-arrow=""
+        style={{
+          position: 'absolute',
+          left: placed?.arrow ?? 0,
+          width: 0,
+          height: 0,
+          borderLeft: `${ARROW_SIZE}px solid transparent`,
+          borderRight: `${ARROW_SIZE}px solid transparent`,
+          ...(placed?.below
+            ? { top: -ARROW_SIZE, borderBottom: `${ARROW_SIZE}px solid var(--color-neutral)` }
+            : { bottom: -ARROW_SIZE, borderTop: `${ARROW_SIZE}px solid var(--color-neutral)` }),
+        }}
+      />
     </div>
   );
 
