@@ -867,8 +867,8 @@ export default function NouvelleVentePage() {
               <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Nouvelle vente</h1>
             </div>
             <p className="mt-2.5 max-w-2xl text-sm leading-6 text-base-content/60">
-              Enregistrez une nouvelle vente de produits ou de gaz : plusieurs produits, remises,
-              TVA et encaissement immédiat.
+              Enregistrez une nouvelle vente : plusieurs produits, remises, TVA et
+              encaissement immédiat.
             </p>
           </div>
           {/* Logo de l'application : `settings.companyLogo` quand un logo est
