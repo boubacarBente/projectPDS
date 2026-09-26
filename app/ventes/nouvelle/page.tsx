@@ -3,18 +3,20 @@
 /**
  * Création d'une vente — README §10.2 à §10.5.
  *
- * Reprise **exacte** de la structure du projet Gaz :
+ * **Logique métier** : reprise exacte du projet Gaz, inchangée.
  *   - produits chargés via `GET /api/produits?limit=500` avec `AbortController` ;
  *   - première ligne **préremplie** avec le premier produit et son prix de vente ;
  *   - changement de produit → le prix de vente est reposé automatiquement, mais
  *     reste modifiable (remise négociée) ;
- *   - tableau de saisie `table table-xs` : Produit · Qté · Prix unit. · Remise ·
- *     Total · (supprimer), avec pied **Total général** ;
- *   - calculs (§10.3) et statut de paiement (§10.4) affichés en direct.
+ *   - remise par ligne (en montant) et remise globale, TVA, moyen de paiement,
+ *     montant encaissé, échéance, calculs (§10.3) et statut de paiement (§10.4) ;
+ *   - `POST /api/ventes` identique, brouillon compris.
  *
- * Ce tableau est le **seul** `<table>` écrit à la main autorisé (README §10.2,
- * CONVENTIONS §7) : il est balisé `data-entry-table` et son conteneur porte le
- * défilement horizontal — c'est la seule exception admise au contrat 360 px.
+ * **Mise en page** : refondue sur la maquette validée par le client — page en
+ * cartes, deux colonnes sur grand écran, barre d'actions collée en bas. Le
+ * tableau de saisie `table table-xs` a cédé la place à des lignes en grille qui
+ * se replient d'elles-mêmes : la page ne défile plus horizontalement, donc
+ * l'exception `data-entry-table` du README §5.5 n'est plus nécessaire ici.
  *
  * Le serveur reste **seul juge** du stock : un dépassement est signalé ici, mais
  * n'empêche pas la soumission ; son erreur agrégée (liste de tous les produits en
@@ -22,12 +24,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { DatePicker } from '@/components/date-picker';
 import { Combobox } from '@/components/combobox';
 import { Tooltip } from '@/components/tooltip';
+import { IconAction, RowActions } from '@/components/row-actions';
 import {
   Badge,
   Card,
@@ -38,9 +42,12 @@ import {
   MoneyText,
   SkeletonTable,
 } from '@/components/design-system';
+import { CustomerFormModal, type CustomerRecord } from '@/components/clients/clients-modals';
 import { usePermission } from '@/components/role-gate';
 import { useSettings } from '@/app/parametres/page';
 import { readApiError } from '@/components/ventes/ventes-modals';
+import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
+import { formatDateShort } from '@/lib/date-format';
 import { formatCurrency, formatNumber, formatQuantity, today } from '@/lib/format';
 
 /* ------------------------------------------------------------------ *
@@ -75,6 +82,10 @@ type CustomerStats = {
   balance: number;
   creditLimit: number;
   creditLimitExceeded: boolean;
+  /** Téléphone de la fiche, plus frais que la liste chargée au montage. */
+  phone: string | null;
+  /** Dernier achat connu : « — » si le client n'a jamais acheté. */
+  lastPurchaseDate: string | null;
 };
 
 type ComputedLine = {
@@ -113,6 +124,50 @@ function computeLine(line: Line): ComputedLine {
   return { quantity, unitPrice, discount, total: gross - discount };
 }
 
+/**
+ * Puce d'icône d'en-tête de carte.
+ *
+ * Elle reprend le vocabulaire des `Card` du projet (pastille `bg-primary/15`)
+ * sans jamais poser de couleur en dur : les jetons du thème suivent le choix de
+ * l'utilisateur (`lib/colors.ts`).
+ */
+function CardIcon({ d }: { d: string }) {
+  return (
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={1.8}
+        aria-hidden
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+      </svg>
+    </span>
+  );
+}
+
+/** Libellé de colonne, au-dessus de chaque champ de ligne (mobile comme desktop). */
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-base-content/50">
+      {children}
+    </span>
+  );
+}
+
+const ICONS = {
+  products: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+  notes:
+    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+  summary: 'M9 7h6m-6 4h6m-6 4h3M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z',
+  customer: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
+  payment: 'M3 10h18M5 6h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z',
+  amount: 'M3 8h18v8H3V8zm9 2.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3z',
+} as const;
+
 /* ------------------------------------------------------------------ *
  * Page
  * ------------------------------------------------------------------ */
@@ -121,6 +176,7 @@ export default function NouvelleVentePage() {
   const router = useRouter();
   const { settings } = useSettings();
   const canCreate = usePermission('sales.create');
+  const canCreateCustomer = usePermission('customers.create');
 
   /* ---- État du formulaire (§10.2, repris tel quel) ---- */
   const [products, setProducts] = useState<Product[]>([]);
@@ -135,6 +191,13 @@ export default function NouvelleVentePage() {
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<Line[]>([newLine()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  /* ---- Ajout rapide d'un produit (barre de la carte « Produits vendus ») ---- */
+  const [productToAdd, setProductToAdd] = useState('');
+  /** Menu ⋮ d'une ligne : une seule ligne ouverte à la fois. */
+  const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
+  /** Modale de création client — composant partagé du module Clients. */
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
 
   /* ---- Chargements ---- */
   const [isLoading, setIsLoading] = useState(true);
@@ -280,13 +343,16 @@ export default function NouvelleVentePage() {
         const payload = (await response.json()) as {
           balance?: number;
           creditLimitExceeded?: boolean;
-          customer?: { creditLimit?: number };
+          lastPurchaseDate?: string | null;
+          customer?: { creditLimit?: number; phone?: string | null };
         };
         if (!active) return;
         setCustomerStats({
           balance: Number(payload.balance ?? 0) || 0,
           creditLimit: Number(payload.customer?.creditLimit ?? 0) || 0,
           creditLimitExceeded: Boolean(payload.creditLimitExceeded),
+          phone: payload.customer?.phone ?? null,
+          lastPurchaseDate: payload.lastPurchaseDate ?? null,
         });
       } catch (caught) {
         if (caught instanceof Error && caught.name === 'AbortError') return;
@@ -303,6 +369,27 @@ export default function NouvelleVentePage() {
       controller.abort();
     };
   }, [customerId]);
+
+  /* Fermeture du menu ⋮ : clic extérieur ou `Échap`. */
+  useEffect(() => {
+    if (!openMenuKey) return;
+
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('[data-line-menu]')) return;
+      setOpenMenuKey(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenMenuKey(null);
+    };
+
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openMenuKey]);
 
   /* ------------------------------------------------------------------
    * Calculs en direct (§10.3) et statut de paiement (§10.4)
@@ -360,8 +447,43 @@ export default function NouvelleVentePage() {
 
   const addLine = () => setLines((current) => [...current, newLine()]);
 
-  const removeLine = (key: string) =>
-    setLines((current) => (current.length <= 1 ? current : current.filter((line) => line.key !== key)));
+  /** Ajoute une ligne déjà porteuse du produit choisi dans la barre d'ajout. */
+  const addProductLine = () => {
+    const product = productById.get(Number(productToAdd));
+    const line = newLine();
+    if (product) {
+      line.productId = String(product.id);
+      line.unitPrice = String(product.salePrice);
+    }
+    setLines((current) => [...current, line]);
+    setProductToAdd('');
+  };
+
+  const removeLine = (key: string) => {
+    setOpenMenuKey(null);
+    setLines((current) =>
+      current.length <= 1 ? current : current.filter((line) => line.key !== key),
+    );
+  };
+
+  /** Duplication : la copie se place juste sous la ligne d'origine. */
+  const duplicateLine = (key: string) => {
+    setOpenMenuKey(null);
+    setLines((current) => {
+      const index = current.findIndex((line) => line.key === key);
+      if (index < 0) return current;
+      const copy: Line = { ...current[index], key: newLine().key };
+      return [...current.slice(0, index + 1), copy, ...current.slice(index + 1)];
+    });
+  };
+
+  /** Remet la ligne à son état d'origine (produit compris). */
+  const resetLine = (key: string) => {
+    setOpenMenuKey(null);
+    setLines((current) =>
+      current.map((line) => (line.key === key ? { ...newLine(), key: line.key } : line)),
+    );
+  };
 
   /** Repose automatiquement le **prix de vente** du produit (modifiable ensuite). */
   const handleProductChange = (key: string, productId: string) => {
@@ -382,6 +504,21 @@ export default function NouvelleVentePage() {
   const setLineField = (key: string, field: 'quantity' | 'unitPrice' | 'discount', value: string) => {
     setLines((current) =>
       current.map((line) => (line.key === key ? { ...line, [field]: value } : line)),
+    );
+  };
+
+  /**
+   * Compteur de quantité (− / +). La quantité reste une **chaîne** dans l'état,
+   * comme la saisie clavier : le pas de 1 ne change donc rien au reste des
+   * calculs. Arrondi au millième, sinon 0,1 + 0,2 afficherait 0,30000000000000004.
+   */
+  const stepQuantity = (key: string, delta: number) => {
+    setLines((current) =>
+      current.map((line) => {
+        if (line.key !== key) return line;
+        const next = Math.max(0, Math.round((toAmount(line.quantity) + delta) * 1000) / 1000);
+        return { ...line, quantity: String(next) };
+      }),
     );
   };
 
@@ -416,6 +553,40 @@ export default function NouvelleVentePage() {
   }, [settings.paymentMethods]);
 
   const isCredit = totals.paid <= 0;
+
+  /* ------------------------------------------------------------------
+   * Client : sélection et création à la volée
+   * ------------------------------------------------------------------ */
+
+  const selectCustomer = (option: CustomerOption | null) => {
+    setCustomerId(option ? String(option.id) : '');
+    // Le nom affiché sur la facture suit la fiche choisie.
+    setCustomerName(option ? option.name : '');
+  };
+
+  /**
+   * Client créé depuis **la modale partagée du module Clients**
+   * (`CustomerFormModal`, qui poste sur `/api/clients`) : on l'insère en tête de
+   * la liste locale puis on le sélectionne, sans recharger la page ni dupliquer
+   * le formulaire.
+   */
+  const handleCustomerCreated = (saved: CustomerRecord) => {
+    const option: CustomerOption = {
+      id: saved.id,
+      name: saved.name,
+      phone: saved.phone ?? null,
+      creditLimit: Number(saved.creditLimit ?? 0) || 0,
+    };
+
+    setCustomers((current) =>
+      current.some((customer) => customer.id === option.id)
+        ? current.map((customer) => (customer.id === option.id ? option : customer))
+        : [option, ...current],
+    );
+    setShowCustomerModal(false);
+    selectCustomer(option);
+    toast.success(`Client « ${option.name} » créé et sélectionné pour cette vente.`);
+  };
 
   /* ------------------------------------------------------------------
    * Enregistrement
@@ -515,6 +686,7 @@ export default function NouvelleVentePage() {
   };
 
   const currency = settings.currency || 'GNF';
+  const companyLogo = settings.companyLogo || DEFAULT_COMPANY_LOGO;
 
   /* ------------------------------------------------------------------
    * Rendu
@@ -523,9 +695,28 @@ export default function NouvelleVentePage() {
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
       <PageHeader
-        eyebrow="Commercial"
+        eyebrow={
+          <span className="flex items-center gap-1.5">
+            <span>Commercial</span>
+            <span aria-hidden>›</span>
+            <Link href="/ventes" className="hover:underline">
+              Ventes
+            </Link>
+          </span>
+        }
         title="Nouvelle vente"
         description="Vente comptoir ou client enregistré, plusieurs produits, remises, TVA et encaissement immédiat."
+        actions={
+          /* Le client a demandé le **logo de l'application** à cet emplacement :
+             `settings.companyLogo` quand un logo est téléversé, sinon le logo
+             livré avec l'application (même règle que les documents imprimés). */
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={companyLogo}
+            alt={`Logo ${settings.companyName || 'Planète Déco'}`}
+            className="ml-auto h-12 w-12 shrink-0 rounded-xl object-contain sm:ml-0 sm:h-14 sm:w-14"
+          />
+        }
       />
 
       {loadError ? (
@@ -551,71 +742,89 @@ export default function NouvelleVentePage() {
           />
         </div>
       ) : (
-        <form
-          className="space-y-6"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit('active');
-          }}
-        >
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            {/* ── Colonne principale : lignes de la vente ─────────────── */}
-            <div className="space-y-4 lg:col-span-2">
-              <Card padded={false} className="overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-base-200 bg-base-200/60 px-4 py-3">
-                  <h2 className="text-sm font-semibold">Produits vendus</h2>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline min-h-11 sm:min-h-0"
-                    onClick={addLine}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-4 w-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
+        <>
+          <form
+            className="space-y-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit('active');
+            }}
+          >
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+              {/* ── Colonne principale ─────────────────────────────────── */}
+              <div className="min-w-0 space-y-4 lg:col-span-2">
+                {/* 1. Produits vendus */}
+                <Card padded={false} className="min-w-0">
+                  <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-5">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <CardIcon d={ICONS.products} />
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold">Produits vendus</h2>
+                        <p className="text-xs text-base-content/60">
+                          Recherchez un produit, puis ajustez quantité, prix et remise. Le prix de
+                          vente enregistré est reposé automatiquement.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Barre d'ajout : choix du produit + bouton d'ajout. */}
+                  <div className="flex flex-wrap items-center gap-2 px-5 py-4">
+                    <div className="min-w-0 grow basis-56">
+                      <Combobox
+                        id="sale-add-product"
+                        className="h-11 w-full sm:h-10"
+                        value={productToAdd}
+                        onChange={setProductToAdd}
+                        options={products.map((entry) => ({
+                          value: String(entry.id),
+                          label: entry.name,
+                          hint: `${formatNumber(entry.salePrice)} GNF`,
+                        }))}
+                        emptyLabel="Sélectionner un produit…"
+                        placeholder="Rechercher un produit à ajouter…"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-outline min-h-11 shrink-0 sm:min-h-0"
+                      onClick={addProductLine}
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                    </svg>
-                    Ajouter une ligne
-                  </button>
-                </div>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Ajouter un produit
+                    </button>
+                  </div>
 
-                {/* Conteneur à défilement horizontal : le tableau de saisie est
-                    l'unique exception balisée au contrat 360 px (§5.5 règle 1). */}
-                <div className="w-full overflow-x-auto" data-entry-table="vente">
-                  <table className="table table-xs w-full min-w-[46rem]">
-                    <thead>
-                      <tr className="bg-base-200">
-                        <th className="min-w-[16rem] text-left">Produit</th>
-                        <th className="w-24 text-right">Qté</th>
-                        <th className="w-32 text-right">Prix unit.</th>
-                        <th className="w-28 text-right">Remise</th>
-                        <th className="w-32 text-right">Total</th>
-                        <th className="w-12 text-right">
-                          <span className="sr-only">Supprimer</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((line, index) => {
-                        const product = productById.get(Number(line.productId));
-                        const computed = computedLines[index];
-                        const exceedsStock =
-                          product !== undefined && computed.quantity > 0 && computed.quantity > product.stock;
+                  {/* Les lignes se replient d'elles-mêmes : ni tableau large, ni
+                      défilement horizontal, même à 360 px. */}
+                  <ul className="divide-y divide-base-200 border-t border-base-200">
+                    {lines.map((line, index) => {
+                      const product = productById.get(Number(line.productId));
+                      const computed = computedLines[index];
+                      const exceedsStock =
+                        product !== undefined &&
+                        computed.quantity > 0 &&
+                        computed.quantity > product.stock;
+                      const gross = computed.quantity * computed.unitPrice;
+                      const discountPercent = gross > 0 ? (computed.discount / gross) * 100 : 0;
 
-                        return (
-                          <tr key={line.key} className="align-top">
-                            <td>
-                              {/*
-                                Champ texte à suggestions plutôt qu'une liste
-                                déroulante native : on tape le nom (même sans
-                                accent) et la liste se réduit au fur et à mesure.
-                                Le menu est rendu dans un portail, sinon il serait
-                                coupé par le défilement horizontal de ce tableau.
-                              */}
+                      return (
+                        <li key={line.key} className="min-w-0 px-5 py-4">
+                          {/* Une seule ligne de champs dès que la place le permet ;
+                              en dessous, les blocs se replient deux par deux — jamais
+                              de défilement horizontal. */}
+                          <div className="flex min-w-0 flex-wrap items-start gap-2">
+                            <div className="min-w-0 grow basis-36">
                               <Combobox
                                 className="h-11 sm:h-9"
                                 value={line.productId}
@@ -629,36 +838,59 @@ export default function NouvelleVentePage() {
                                 placeholder="Tapez le nom du produit…"
                                 ariaLabel={`Produit de la ligne ${index + 1}`}
                               />
-                              {product && (
-                                <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
-                                  <span className="tabular">
-                                    Stock : {formatQuantity(product.stock, product.unit)}
-                                  </span>
-                                  {exceedsStock && (
-                                    <Badge tone="warning">
-                                      Quantité supérieure au stock disponible
-                                    </Badge>
-                                  )}
+                              <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
+                                <span className="tabular">
+                                  {product
+                                    ? `Stock : ${formatQuantity(product.stock, product.unit)}`
+                                    : 'Aucun produit sélectionné'}
                                 </span>
-                              )}
-                            </td>
-                            <td>
-                              <input
-                                type="number"
-                                min={0}
-                                step="any"
-                                inputMode="decimal"
-                                className={`input input-bordered input-sm h-11 w-full text-right tabular sm:h-9 ${
-                                  exceedsStock ? 'border-warning' : ''
-                                }`}
-                                value={line.quantity}
-                                onChange={(event) =>
-                                  setLineField(line.key, 'quantity', event.target.value)
-                                }
-                                aria-label={`Quantité de la ligne ${index + 1}`}
-                              />
-                            </td>
-                            <td>
+                                {exceedsStock && (
+                                  <Badge tone="warning">
+                                    Quantité supérieure au stock disponible
+                                  </Badge>
+                                )}
+                              </span>
+                            </div>
+
+                            <div className="min-w-0 grow basis-28">
+                              <FieldLabel>Quantité</FieldLabel>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm btn-square min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+                                  onClick={() => stepQuantity(line.key, -1)}
+                                  disabled={toAmount(line.quantity) <= 0}
+                                  aria-label={`Diminuer la quantité de la ligne ${index + 1}`}
+                                >
+                                  −
+                                </button>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="any"
+                                  inputMode="decimal"
+                                  className={`input input-bordered input-sm h-11 min-w-0 flex-1 text-right tabular sm:h-9 ${
+                                    exceedsStock ? 'border-warning' : ''
+                                  }`}
+                                  value={line.quantity}
+                                  onChange={(event) =>
+                                    setLineField(line.key, 'quantity', event.target.value)
+                                  }
+                                  aria-label={`Quantité de la ligne ${index + 1}`}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-sm btn-square min-h-11 min-w-11 sm:min-h-0 sm:min-w-0"
+                                  onClick={() => stepQuantity(line.key, 1)}
+                                  aria-label={`Augmenter la quantité de la ligne ${index + 1}`}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="min-w-0 grow basis-20">
+                              <FieldLabel>Prix unit.</FieldLabel>
                               <input
                                 type="number"
                                 min={0}
@@ -671,8 +903,10 @@ export default function NouvelleVentePage() {
                                 }
                                 aria-label={`Prix unitaire de la ligne ${index + 1}`}
                               />
-                            </td>
-                            <td>
+                            </div>
+
+                            <div className="min-w-0 grow basis-20">
+                              <FieldLabel>Remise</FieldLabel>
                               <input
                                 type="number"
                                 min={0}
@@ -685,390 +919,560 @@ export default function NouvelleVentePage() {
                                 }
                                 aria-label={`Remise de la ligne ${index + 1}`}
                               />
-                            </td>
-                            <td className="text-right">
-                              <MoneyText value={computed.total} className="text-sm" />
-                            </td>
-                            <td className="text-right">
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm btn-square text-error"
-                                onClick={() => removeLine(line.key)}
-                                disabled={lines.length <= 1}
-                                title={
-                                  lines.length <= 1
-                                    ? 'Une vente doit conserver au moins une ligne'
-                                    : 'Supprimer cette ligne'
-                                }
-                                aria-label={`Supprimer la ligne ${index + 1}`}
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  className="h-4 w-4"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                  strokeWidth={2}
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                              {/* Remise exprimée en montant (elle est déduite telle
+                                  quelle du total) : le pourcentage n'est qu'une
+                                  lecture, il ne change pas le calcul. */}
+                              <span className="mt-1 block text-right text-xs text-base-content/50">
+                                {formatNumber(discountPercent, 1)} %
+                              </span>
+                            </div>
+
+                            <div className="min-w-0 grow basis-28">
+                              <FieldLabel>Total</FieldLabel>
+                              <span className="flex min-h-11 items-center justify-end sm:min-h-9">
+                                <MoneyText value={computed.total} className="text-sm" bold />
+                              </span>
+                            </div>
+
+                            <div className="ml-auto flex shrink-0 items-center gap-1 self-start pt-5">
+                              <RowActions>
+                                <div className="relative" data-line-menu>
+                                  <IconAction
+                                    icon="menu"
+                                    label={`Autres actions sur la ligne ${index + 1}`}
+                                    onClick={() =>
+                                      setOpenMenuKey((current) =>
+                                        current === line.key ? null : line.key,
+                                      )
+                                    }
                                   />
-                                </svg>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colSpan={4} className="text-right text-sm font-semibold">
-                          Total général
-                        </td>
-                        <td className="text-right">
-                          <MoneyText value={totals.totalToPay} bold />
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </Card>
-
-              {stockWarnings.length > 0 && (
-                <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
-                  <p className="font-semibold">Stock insuffisant — la vente reste possible</p>
-                  <ul className="mt-1 list-inside list-disc">
-                    {stockWarnings.map((warning) => (
-                      <li key={warning.product.id}>
-                        {warning.product.name} : disponible{' '}
-                        <span className="tabular">
-                          {formatQuantity(warning.product.stock, warning.product.unit)}
-                        </span>
-                        , demandé{' '}
-                        <span className="tabular">
-                          {formatQuantity(warning.quantity, warning.product.unit)}
-                        </span>
-                      </li>
-                    ))}
+                                  {openMenuKey === line.key && (
+                                    <div className="absolute right-0 top-full z-30 mt-1 w-56 rounded-xl border border-base-200 bg-base-100 p-1 shadow-lg">
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm w-full justify-start font-normal"
+                                        onClick={() => duplicateLine(line.key)}
+                                      >
+                                        Dupliquer la ligne
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm w-full justify-start font-normal"
+                                        onClick={() => resetLine(line.key)}
+                                      >
+                                        Réinitialiser la ligne
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                <IconAction
+                                  icon="trash"
+                                  tone="danger"
+                                  label={
+                                    lines.length <= 1
+                                      ? 'Une vente doit conserver au moins une ligne'
+                                      : `Supprimer la ligne ${index + 1}`
+                                  }
+                                  disabled={lines.length <= 1}
+                                  onClick={() => removeLine(line.key)}
+                                />
+                              </RowActions>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
-                  <p className="mt-1 text-xs">
-                    Le serveur vérifie le stock à l&apos;enregistrement et refuse la vente si la
-                    quantité dépasse le disponible.
-                  </p>
-                </div>
-              )}
 
-              <Card>
-                <FormField
-                  label="Notes"
-                  htmlFor="sale-notes"
-                  hint="Conditions particulières, référence de commande, mention d’une remise négociée…"
-                >
-                  <textarea
-                    id="sale-notes"
-                    rows={2}
-                    className="textarea textarea-bordered w-full"
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
-                    placeholder="Note interne facultative"
-                  />
-                </FormField>
-              </Card>
-            </div>
-
-            {/* ── Colonne latérale : client, règlement, totaux ─────────── */}
-            <div className="space-y-4">
-              <Card className="space-y-4">
-                <h2 className="text-sm font-semibold">Client</h2>
-
-                <FormField
-                  label="Client enregistré"
-                  htmlFor="sale-customer"
-                  hint="Tapez le nom du client, ou laissez « Vente comptoir » pour un client de passage."
-                >
-                  <Combobox
-                    id="sale-customer"
-                    className="min-h-11 sm:min-h-0"
-                    value={customerId}
-                    onChange={(value) => {
-                      setCustomerId(value);
-                      const found = customers.find((customer) => customer.id === Number(value));
-                      // Le nom affiché sur la facture suit la fiche choisie.
-                      setCustomerName(found ? found.name : '');
-                    }}
-                    options={customers.map((customer) => ({
-                      value: String(customer.id),
-                      label: customer.name,
-                      hint: customer.phone ?? undefined,
-                    }))}
-                    emptyLabel="Vente comptoir"
-                    showEmptyLabel
-                    placeholder="Tapez le nom du client…"
-                  />
-                </FormField>
-
-                <FormField
-                  label="Nom sur la facture"
-                  htmlFor="sale-customer-name"
-                  hint="Modifiable : un nom libre crée une vente comptoir rattachable plus tard."
-                >
-                  <input
-                    id="sale-customer-name"
-                    type="text"
-                    className="input input-bordered min-h-11 w-full sm:min-h-0"
-                    value={customerName}
-                    onChange={(event) => setCustomerName(event.target.value)}
-                    placeholder="Client comptoir"
-                    autoComplete="off"
-                  />
-                </FormField>
-
-                {selectedCustomer && (
-                  <div className="rounded-xl border border-base-200 bg-base-200/50 px-3 py-2 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-base-content/60">Encours actuel</span>
-                      <MoneyText value={customerStats?.balance ?? 0} colored bold />
-                    </div>
-                    <div className="mt-0.5 flex items-center justify-between gap-2">
-                      <span className="text-base-content/60">Plafond de crédit</span>
-                      <span className="tabular font-medium">
-                        {(customerStats?.creditLimit || selectedCustomer.creditLimit) > 0
-                          ? formatCurrency(
-                              customerStats?.creditLimit || selectedCustomer.creditLimit,
-                              currency,
-                            )
-                          : 'Aucun'}
-                      </span>
-                    </div>
-                    {isCustomerStatsLoading && (
-                      <p className="mt-1 text-base-content/50">Chargement de l’encours…</p>
-                    )}
-                  </div>
-                )}
-
-                {creditWarning && (
-                  <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                    <p className="font-semibold">Plafond de crédit dépassé</p>
-                    <p className="mt-0.5">
-                      Encours actuel {formatCurrency(creditWarning.balance, currency)} + cette vente{' '}
-                      {formatCurrency(totals.totalToPay, currency)} ={' '}
-                      {formatCurrency(creditWarning.projected, currency)} pour un plafond de{' '}
-                      {formatCurrency(creditWarning.limit, currency)}.
-                    </p>
-                    <p className="mt-0.5">La vente reste possible : l’application avertit seulement.</p>
-                  </div>
-                )}
-              </Card>
-
-              <Card className="space-y-4">
-                <h2 className="text-sm font-semibold">Règlement</h2>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
-                  <FormField label="Date de la vente" htmlFor="sale-date" required>
-                    <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
-                  </FormField>
-
-                  <FormField label="Moyen de paiement" htmlFor="sale-payment-method" required>
-                    <select
-                      id="sale-payment-method"
-                      className="select select-bordered min-h-11 w-full sm:min-h-0"
-                      value={paymentMethod}
-                      onChange={(event) => setPaymentMethod(event.target.value)}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-base-200 px-5 py-3">
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm min-h-11 font-medium text-primary sm:min-h-0"
+                      onClick={addLine}
                     >
-                      {paymentMethods.map((method) => (
-                        <option key={method} value={method}>
-                          {method}
-                        </option>
-                      ))}
-                    </select>
-                  </FormField>
+                      + Ajouter un autre produit
+                    </button>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-sm text-base-content/60">Total produits</span>
+                      <MoneyText value={totals.subTotal} bold className="text-base" />
+                    </div>
+                  </div>
+                </Card>
 
-                  <FormField
-                    label="Montant encaissé (GNF)"
-                    htmlFor="sale-amount-paid"
-                    hint="0 = vente à crédit."
-                  >
-                    <input
-                      id="sale-amount-paid"
-                      type="number"
-                      min={0}
-                      step={1000}
-                      inputMode="decimal"
-                      className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
-                      value={amountPaid}
-                      onChange={(event) => {
-                        amountTouchedRef.current = true;
-                        setAmountPaid(event.target.value);
-                      }}
-                      placeholder="0"
+                {stockWarnings.length > 0 && (
+                  <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
+                    <p className="font-semibold">Stock insuffisant — la vente reste possible</p>
+                    <ul className="mt-1 list-inside list-disc">
+                      {stockWarnings.map((warning) => (
+                        <li key={warning.product.id}>
+                          {warning.product.name} : disponible{' '}
+                          <span className="tabular">
+                            {formatQuantity(warning.product.stock, warning.product.unit)}
+                          </span>
+                          , demandé{' '}
+                          <span className="tabular">
+                            {formatQuantity(warning.quantity, warning.product.unit)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs">
+                      Le serveur vérifie le stock à l&apos;enregistrement et refuse la vente si la
+                      quantité dépasse le disponible.
+                    </p>
+                  </div>
+                )}
+
+                {/* 2. Notes */}
+                <Card className="min-w-0 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <CardIcon d={ICONS.notes} />
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-semibold">Notes</h2>
+                      <p className="text-xs text-base-content/60">
+                        Visible uniquement dans l’application, jamais sur le reçu du client.
+                      </p>
+                    </div>
+                  </div>
+
+                  <FormField label="Note interne" htmlFor="sale-notes">
+                    <textarea
+                      id="sale-notes"
+                      rows={3}
+                      className="textarea textarea-bordered w-full"
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      placeholder="Note interne facultative…"
                     />
                   </FormField>
 
-                  {isCredit && (
-                    <FormField
-                      label="Échéance"
-                      htmlFor="sale-due-date"
-                      hint="Vente à crédit : date promise de règlement."
-                    >
-                      <DatePicker value={dueDate} onChange={setDueDate} placeholder="jj/mm/aaaa" />
-                    </FormField>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <ul className="list-inside list-disc space-y-0.5 text-xs text-base-content/50">
+                      <li>Conditions particulières</li>
+                      <li>Référence de commande</li>
+                      <li>Mention d’une remise négociée</li>
+                    </ul>
+                    <span className="tabular text-xs text-base-content/50">
+                      {notes.length} caractère{notes.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </Card>
+
+                {/* 3. Récapitulatif */}
+                <Card className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <CardIcon d={ICONS.summary} />
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold">Récapitulatif</h2>
+                        <p className="text-xs text-base-content/60">
+                          Montants recalculés en direct à chaque modification.
+                        </p>
+                      </div>
+                    </div>
+                    <Badge tone={paymentStatus.tone}>{paymentStatus.label}</Badge>
+                  </div>
+
+                  <div className="pt-1">
+                    <InfoRow label="Sous-total">
+                      <MoneyText value={totals.subTotal} />
+                    </InfoRow>
+                    <InfoRow label="Remise globale">
+                      <MoneyText value={totals.globalDiscount} />
+                    </InfoRow>
+                    <InfoRow label="Total HT">
+                      <MoneyText value={totals.totalHt} />
+                    </InfoRow>
+                    <InfoRow label={`TVA (${formatNumber(totals.rate, 2)} %)`}>
+                      <MoneyText value={totals.taxAmount} />
+                    </InfoRow>
+                  </div>
+
+                  <div className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-primary">Total à payer</span>
+                      <MoneyText value={totals.totalToPay} bold className="text-primary" />
+                    </div>
+                  </div>
+
+                  <ul className="grid grid-cols-1 gap-1 pt-1 text-xs text-base-content/60 sm:grid-cols-2">
+                    <li className="flex items-center gap-2">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-4 w-4 shrink-0 text-success"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Stock mis à jour automatiquement
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-4 w-4 shrink-0 text-success"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Enregistrement rapide et sécurisé
+                    </li>
+                  </ul>
+                </Card>
+              </div>
+
+              {/* ── Colonne latérale ───────────────────────────────────── */}
+              <div className="min-w-0 space-y-4">
+                {/* 4. Client */}
+                <Card className="min-w-0 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <CardIcon d={ICONS.customer} />
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-semibold">Client</h2>
+                      <p className="text-xs text-base-content/60">
+                        Client enregistré, ou vente comptoir sans fiche.
+                      </p>
+                    </div>
+                  </div>
+
+                  <FormField label="Client enregistré" htmlFor="sale-customer">
+                    <Combobox
+                      id="sale-customer"
+                      className="min-h-11 sm:min-h-0"
+                      value={customerId}
+                      onChange={(value) =>
+                        selectCustomer(
+                          customers.find((customer) => customer.id === Number(value)) ?? null,
+                        )
+                      }
+                      options={customers.map((customer) => ({
+                        value: String(customer.id),
+                        label: customer.name,
+                        hint: customer.phone ?? undefined,
+                      }))}
+                      emptyLabel="Vente comptoir"
+                      showEmptyLabel
+                      placeholder="Tapez le nom du client…"
+                    />
+                  </FormField>
+
+                  {selectedCustomer ? (
+                    <div className="rounded-xl border border-base-200 bg-base-200/50 px-3 py-2 text-xs">
+                      <p className="truncate text-sm font-medium">{selectedCustomer.name}</p>
+                      <p className="text-base-content/60">
+                        {customerStats?.phone || selectedCustomer.phone || 'Téléphone non renseigné'}
+                      </p>
+                      <p className="mt-1 text-base-content/60">
+                        Dernier achat :{' '}
+                        <span className="font-medium text-base-content/80">
+                          {formatDateShort(customerStats?.lastPurchaseDate)}
+                        </span>
+                      </p>
+                      <div className="mt-2 flex items-center justify-between gap-2 border-t border-base-300 pt-2">
+                        <span className="text-base-content/60">Encours actuel</span>
+                        <MoneyText value={customerStats?.balance ?? 0} colored bold />
+                      </div>
+                      <div className="mt-0.5 flex items-center justify-between gap-2">
+                        <span className="text-base-content/60">Plafond de crédit</span>
+                        <span className="tabular font-medium">
+                          {(customerStats?.creditLimit || selectedCustomer.creditLimit) > 0
+                            ? formatCurrency(
+                                customerStats?.creditLimit || selectedCustomer.creditLimit,
+                                currency,
+                              )
+                            : 'Aucun'}
+                        </span>
+                      </div>
+                      {isCustomerStatsLoading && (
+                        <p className="mt-1 text-base-content/50">Chargement de l’encours…</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-base-200 bg-base-200/50 px-3 py-2 text-xs text-base-content/60">
+                      Aucun client sélectionné : la vente sera enregistrée au nom du client
+                      comptoir.
+                    </p>
+                  )}
+
+                  {creditWarning && (
+                    <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      <p className="font-semibold">Plafond de crédit dépassé</p>
+                      <p className="mt-0.5">
+                        Encours actuel {formatCurrency(creditWarning.balance, currency)} + cette
+                        vente {formatCurrency(totals.totalToPay, currency)} ={' '}
+                        {formatCurrency(creditWarning.projected, currency)} pour un plafond de{' '}
+                        {formatCurrency(creditWarning.limit, currency)}.
+                      </p>
+                      <p className="mt-0.5">
+                        La vente reste possible : l’application avertit seulement.
+                      </p>
+                    </div>
                   )}
 
                   <FormField
-                    label="Taux de TVA (%)"
-                    htmlFor="sale-tax-rate"
-                    hint={`Taux par défaut : ${formatNumber(settings.defaultTaxRate ?? 0, 2)} %`}
+                    label="Nom sur la facture"
+                    htmlFor="sale-customer-name"
+                    hint="Modifiable : un nom libre crée une vente comptoir rattachable plus tard."
                   >
                     <input
-                      id="sale-tax-rate"
-                      type="number"
-                      min={0}
-                      step="any"
-                      inputMode="decimal"
-                      className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
-                      value={taxRate}
-                      onChange={(event) => {
-                        taxTouchedRef.current = true;
-                        setTaxRate(event.target.value);
-                      }}
+                      id="sale-customer-name"
+                      type="text"
+                      className="input input-bordered min-h-11 w-full sm:min-h-0"
+                      value={customerName}
+                      onChange={(event) => setCustomerName(event.target.value)}
+                      placeholder="Client comptoir"
+                      autoComplete="off"
                     />
                   </FormField>
 
-                  <FormField
-                    label="Remise globale (GNF)"
-                    htmlFor="sale-global-discount"
-                    hint="Déduite du sous-total, avant TVA."
+                  <button
+                    type="button"
+                    className="btn btn-outline min-h-11 w-full sm:min-h-0"
+                    onClick={() => setShowCustomerModal(true)}
+                    disabled={!canCreateCustomer}
                   >
-                    <input
-                      id="sale-global-discount"
-                      type="number"
-                      min={0}
-                      step={1000}
-                      inputMode="decimal"
-                      className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
-                      value={discountAmount}
-                      onChange={(event) => setDiscountAmount(event.target.value)}
-                      placeholder="0"
+                    + Nouveau client
+                  </button>
+                </Card>
+
+                {/* 5. Règlement */}
+                <Card className="min-w-0 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <CardIcon d={ICONS.payment} />
+                    <div className="min-w-0">
+                      <h2 className="text-sm font-semibold">Règlement</h2>
+                      <p className="text-xs text-base-content/60">
+                        Date, moyen de paiement et encaissement immédiat.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                    <FormField label="Date de la vente" htmlFor="sale-date" required>
+                      <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
+                    </FormField>
+
+                    <FormField label="Moyen de paiement" htmlFor="sale-payment-method" required>
+                      <select
+                        id="sale-payment-method"
+                        className="select select-bordered min-h-11 w-full sm:min-h-0"
+                        value={paymentMethod}
+                        onChange={(event) => setPaymentMethod(event.target.value)}
+                      >
+                        {paymentMethods.map((method) => (
+                          <option key={method} value={method}>
+                            {method}
+                          </option>
+                        ))}
+                      </select>
+                    </FormField>
+
+                    <FormField
+                      label={`Montant encaissé (${currency})`}
+                      htmlFor="sale-amount-paid"
+                      hint="0 = vente à crédit."
+                    >
+                      <input
+                        id="sale-amount-paid"
+                        type="number"
+                        min={0}
+                        step={1000}
+                        inputMode="decimal"
+                        className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
+                        value={amountPaid}
+                        onChange={(event) => {
+                          amountTouchedRef.current = true;
+                          setAmountPaid(event.target.value);
+                        }}
+                        placeholder="0"
+                      />
+                    </FormField>
+
+                    {isCredit && (
+                      <FormField
+                        label="Échéance"
+                        htmlFor="sale-due-date"
+                        hint="Vente à crédit : date promise de règlement."
+                      >
+                        <DatePicker value={dueDate} onChange={setDueDate} placeholder="jj/mm/aaaa" />
+                      </FormField>
+                    )}
+
+                    <FormField
+                      label="Taux de TVA (%)"
+                      htmlFor="sale-tax-rate"
+                      hint={`Taux par défaut : ${formatNumber(settings.defaultTaxRate ?? 0, 2)} %`}
+                    >
+                      <input
+                        id="sale-tax-rate"
+                        type="number"
+                        min={0}
+                        step="any"
+                        inputMode="decimal"
+                        className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
+                        value={taxRate}
+                        onChange={(event) => {
+                          taxTouchedRef.current = true;
+                          setTaxRate(event.target.value);
+                        }}
+                      />
+                    </FormField>
+
+                    <FormField
+                      label={`Remise globale (${currency})`}
+                      htmlFor="sale-global-discount"
+                      hint="Déduite du sous-total, avant TVA."
+                    >
+                      <input
+                        id="sale-global-discount"
+                        type="number"
+                        min={0}
+                        step={1000}
+                        inputMode="decimal"
+                        className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
+                        value={discountAmount}
+                        onChange={(event) => setDiscountAmount(event.target.value)}
+                        placeholder="0"
+                      />
+                    </FormField>
+                  </div>
+
+                  {isCredit && (
+                    <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      Aucun encaissement saisi : la vente sera enregistrée <strong>à crédit</strong>,
+                      le stock est déduit et le reste à payer suivi dans la liste des ventes.
+                    </div>
+                  )}
+                </Card>
+
+                {/* 6. Montant à encaisser (carte mise en avant) */}
+                <Card className="min-w-0 space-y-3 ring-2 ring-primary/30">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <CardIcon d={ICONS.amount} />
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold">Montant à encaisser</h2>
+                        <p className="text-xs text-base-content/60">
+                          Mode de paiement : <strong>{paymentMethod}</strong>
+                        </p>
+                      </div>
+                    </div>
+                    <Badge tone={paymentStatus.tone}>{paymentStatus.label}</Badge>
+                  </div>
+
+                  <div className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-primary">Reste à payer</span>
+                      <MoneyText value={totals.remaining} bold className="text-primary" />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <MiniStat
+                      label="Encaissé"
+                      tone={totals.paid > 0 ? 'success' : 'neutral'}
+                      value={<MoneyText value={totals.paid} />}
                     />
-                  </FormField>
-                </div>
-
-                {isCredit && (
-                  <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                    Aucun encaissement saisi : la vente sera enregistrée <strong>à crédit</strong>,
-                    le stock est déduit et le reste à payer suivi dans la liste des ventes.
+                    <MiniStat
+                      label="Reste à payer"
+                      tone={totals.remaining > 0.001 ? 'error' : 'success'}
+                      value={<MoneyText value={totals.remaining} colored bold />}
+                    />
                   </div>
-                )}
-              </Card>
 
-              <Card className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold">Totaux</h2>
-                  <Badge tone={paymentStatus.tone}>{paymentStatus.label}</Badge>
-                </div>
-
-                <InfoRow label="Sous-total">
-                  <MoneyText value={totals.subTotal} />
-                </InfoRow>
-                <InfoRow label="Remise globale">
-                  <MoneyText value={totals.globalDiscount} />
-                </InfoRow>
-                <InfoRow label="Total HT">
-                  <MoneyText value={totals.totalHt} />
-                </InfoRow>
-                <InfoRow label={`TVA (${formatNumber(totals.rate, 2)} %)`}>
-                  <MoneyText value={totals.taxAmount} />
-                </InfoRow>
-
-                <div className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-primary">Total à payer</span>
-                    <MoneyText value={totals.totalToPay} bold className="text-primary" />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <MiniStat
-                    label="Encaissé"
-                    tone={totals.paid > 0 ? 'success' : 'neutral'}
-                    value={<MoneyText value={totals.paid} />}
-                  />
-                  <MiniStat
-                    label="Reste à payer"
-                    tone={totals.remaining > 0.001 ? 'error' : 'success'}
-                    value={<MoneyText value={totals.remaining} colored bold />}
-                  />
-                </div>
-              </Card>
-
-              {formError && (
-                <p
-                  role="alert"
-                  className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error"
-                >
-                  {formError}
-                </p>
-              )}
+                  <p className="text-xs text-base-content/60">
+                    Règlement en <strong>{paymentMethod}</strong>
+                    {isCredit
+                      ? ' — vente à crédit, à suivre depuis la liste des ventes.'
+                      : ' — encaissement immédiat à l’enregistrement.'}
+                  </p>
+                </Card>
+              </div>
             </div>
-          </div>
 
-          {/* Pied d'actions collant : « Enregistrer » reste atteignable sur un
-              long formulaire mobile (§5.5 règle 4). */}
-          <div className="sticky bottom-0 z-20 -mx-2 flex flex-wrap items-center justify-between gap-3 border-t border-base-200 bg-base-100/95 px-2 py-3 backdrop-blur-sm">
-            <div className="min-w-0">
-              <p className="text-xs text-base-content/50">Total à payer</p>
-              <MoneyText value={totals.totalToPay} bold className="text-lg" />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="btn btn-ghost min-h-11 sm:min-h-0"
-                onClick={() => router.push('/ventes')}
-                disabled={isSubmitting}
+            {formError && (
+              <p
+                role="alert"
+                className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error"
               >
-                Annuler
-              </button>
-              {/*
-                L'explication était un `title` natif — bulle système, hors thème,
-                invisible au clavier. Elle est désormais portée par la bulle du
-                bouton lui-même : on survole (ou on tabule sur) « Enregistrer
-                comme brouillon » et l'explication s'affiche.
-              */}
-              <Tooltip
-                label={
-                  <>
-                    Un brouillon enregistre la vente <strong>sans toucher au stock</strong> ni à la
-                    caisse, et sans émettre de reçu. Vous pourrez la reprendre, la modifier, puis
-                    l&apos;enregistrer définitivement depuis la liste des ventes.
-                  </>
-                }
-              >
+                {formError}
+              </p>
+            )}
+
+            {/* Pied d'actions collant : « Enregistrer » reste atteignable sur un
+                long formulaire mobile (§5.5 règle 4). */}
+            <div className="sticky bottom-0 z-20 -mx-2 flex flex-wrap items-center justify-between gap-3 border-t border-base-200 bg-base-100/95 px-2 py-3 backdrop-blur-sm">
+              <div className="min-w-0">
+                <p className="text-xs text-base-content/50">Total à payer</p>
+                <MoneyText value={totals.totalToPay} bold className="text-lg" />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="btn btn-outline min-h-11 sm:min-h-0"
-                  onClick={() => void submit('draft')}
+                  className="btn btn-ghost min-h-11 sm:min-h-0"
+                  onClick={() => router.push('/ventes')}
+                  disabled={isSubmitting}
+                >
+                  Annuler
+                </button>
+                {/*
+                  L'explication était un `title` natif — bulle système, hors thème,
+                  invisible au clavier. Elle est désormais portée par la bulle du
+                  bouton lui-même : on survole (ou on tabule sur) « Enregistrer
+                  comme brouillon » et l'explication s'affiche.
+                */}
+                <Tooltip
+                  label={
+                    <>
+                      Un brouillon enregistre la vente <strong>sans toucher au stock</strong> ni à la
+                      caisse, et sans émettre de reçu. Vous pourrez la reprendre, la modifier, puis
+                      l&apos;enregistrer définitivement depuis la liste des ventes.
+                    </>
+                  }
+                >
+                  <button
+                    type="button"
+                    className="btn btn-outline min-h-11 sm:min-h-0"
+                    onClick={() => void submit('draft')}
+                    disabled={isSubmitting || !canCreate}
+                  >
+                    Enregistrer comme brouillon
+                  </button>
+                </Tooltip>
+                <button
+                  type="submit"
+                  className="btn btn-primary min-h-11 sm:min-h-0"
                   disabled={isSubmitting || !canCreate}
                 >
-                  Enregistrer comme brouillon
+                  {isSubmitting ? (
+                    <span className="loading loading-spinner loading-sm" />
+                  ) : (
+                    'Enregistrer la vente'
+                  )}
                 </button>
-              </Tooltip>
-              <button
-                type="submit"
-                className="btn btn-primary min-h-11 sm:min-h-0"
-                disabled={isSubmitting || !canCreate}
-              >
-                {isSubmitting ? (
-                  <span className="loading loading-spinner loading-sm" />
-                ) : (
-                  'Enregistrer la vente'
-                )}
-              </button>
+              </div>
             </div>
-          </div>
-        </form>
+          </form>
+
+          {/*
+            Modale partagée du module Clients : elle porte son **propre** `<form>`,
+            elle est donc montée hors du formulaire de vente (un `<form>` imbriqué
+            est invalide en HTML).
+          */}
+          <CustomerFormModal
+            isOpen={showCustomerModal}
+            onClose={() => setShowCustomerModal(false)}
+            onSaved={handleCustomerCreated}
+            idPrefix="sale-create"
+          />
+        </>
       )}
     </div>
   );

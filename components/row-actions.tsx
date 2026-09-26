@@ -46,7 +46,9 @@ export type ActionIcon =
   | 'advance'
   | 'broken'
   | 'list'
-  | 'workers';
+  | 'workers'
+  | 'trash'
+  | 'menu';
 
 /** Tracés 24×24, `stroke` hérité de la couleur du bouton (aucune couleur en dur). */
 const PATHS: Record<ActionIcon, ReactNode> = {
@@ -170,6 +172,22 @@ const PATHS: Record<ActionIcon, ReactNode> = {
       <circle cx="9" cy="8" r="3.2" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M3.5 19.5c0-3 2.5-4.8 5.5-4.8s5.5 1.8 5.5 4.8" />
       <path strokeLinecap="round" d="M16 5.5a3 3 0 010 5.6M18.5 19.5c0-2.2-.6-3.8-1.7-4.8" />
+    </>
+  ),
+  trash: (
+    <>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </>
+  ),
+  menu: (
+    <>
+      <circle cx="12" cy="5.5" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <circle cx="12" cy="18.5" r="1.5" />
     </>
   ),
 };

@@ -1,7 +1,13 @@
 import { BackButton } from '@/components/back-button';
 
 type PageHeaderProps = {
-  eyebrow: string;
+  /**
+   * Contexte de la page, au-dessus du titre. Une **chaîne** suffit le plus
+   * souvent ; un `ReactNode` permet d'y placer un fil d'Ariane dont le dernier
+   * segment est un lien (page « Nouvelle vente »), sans changer le rendu des
+   * appelants existants.
+   */
+  eyebrow: React.ReactNode;
   title: string;
   description: string;
   actions?: React.ReactNode;
