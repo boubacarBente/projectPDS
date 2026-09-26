@@ -21,15 +21,28 @@
  * un `amountPaid` inférieur au déjà-payé est refusé par le serveur : on ne
  * supprime jamais un décaissement, on annule l'achat.
  *
- * Le tableau de lignes est l'**unique exception balisée** au contrat 360 px
- * (§5.5 règle 1) : il défile horizontalement (`data-entry-table`, `overflow-x-auto`).
+ * **Mise en page** : refonte visuelle calée sur la maquette validée par le
+ * client, **identique à la page ventes** (gabarits copiés) — en-tête panneau
+ * teinté `from-primary/10 to-base-100` avec carré primaire et logo, pastilles
+ * d'icônes colorées en tête de carte, ligne produit en grille à colonnes
+ * étiquetées (en-tête sur grand écran), suffixe « GNF » dans le champ prix,
+ * encadré vert « Stock mis à jour automatiquement », pilules de la carte Notes,
+ * rangée pleine largeur « Total à payer » et barre d'actions collée en bas.
+ * Deux colonnes sur grand écran, une seule sur mobile : la page ne défile
+ * jamais horizontalement — l'ancienne exception `data-entry-table` du README
+ * §5.5 n'est plus nécessaire ici, la grille se replie d'elle-même.
+ *
+ * Le payload `POST /api/achats` (et `PUT /api/achats/[id]`) est **strictement
+ * inchangé** : seule la présentation a été refondue.
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'react-toastify';
-import { PageHeader } from '@/components/page-header';
+import { BackButton } from '@/components/back-button';
 import { DatePicker } from '@/components/date-picker';
+import { Tooltip } from '@/components/tooltip';
+import { IconAction } from '@/components/row-actions';
 import {
   Badge,
   Card,
@@ -43,7 +56,12 @@ import {
 import { usePermission } from '@/components/role-gate';
 import { useSettings } from '@/app/parametres/page';
 import { readApiError } from '@/components/achats/achats-modals';
+import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
 import { formatCurrency, formatNumber, formatQuantity, today } from '@/lib/format';
+
+/* ------------------------------------------------------------------ *
+ * Types
+ * ------------------------------------------------------------------ */
 
 type Product = {
   id: number;
@@ -96,6 +114,189 @@ function computeLine(line: Line): ComputedLine {
   const unitPrice = toAmount(line.unitPrice);
   return { quantity, unitPrice, total: quantity * unitPrice };
 }
+
+/* ------------------------------------------------------------------ *
+ * Briques visuelles locales (maquette) — copiées de la page ventes,
+ * jetons du thème uniquement
+ * ------------------------------------------------------------------ */
+
+/** Icône de tracé 24×24, `stroke` hérité (aucune couleur en dur). */
+function Icon({
+  d,
+  children,
+  className = 'h-5 w-5',
+  strokeWidth = 1.8,
+}: {
+  d?: string;
+  children?: React.ReactNode;
+  className?: string;
+  strokeWidth?: number;
+}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      aria-hidden
+    >
+      {children ?? <path strokeLinecap="round" strokeLinejoin="round" d={d} />}
+    </svg>
+  );
+}
+
+/** Teintes douces des pastilles d'en-tête de carte (variantes /10 du thème). */
+const PASTILLE_TONES = {
+  primary: 'bg-primary/10 text-primary',
+  success: 'bg-success/10 text-success',
+  info: 'bg-info/10 text-info',
+  accent: 'bg-accent/10 text-accent',
+} as const;
+
+type PastilleTone = keyof typeof PASTILLE_TONES;
+
+/**
+ * En-tête de carte : pastille d'icône carrée arrondie (~40 px) + titre gras +
+ * sous-titre discret, actions éventuelles à droite (maquette).
+ */
+function CardTitle({
+  icon,
+  tone,
+  title,
+  subtitle,
+  actions,
+}: {
+  icon: React.ReactNode;
+  tone: PastilleTone;
+  title: string;
+  subtitle?: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${PASTILLE_TONES[tone]}`}
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold leading-tight">{title}</h2>
+          {subtitle && <p className="mt-0.5 text-xs text-base-content/60">{subtitle}</p>}
+        </div>
+      </div>
+      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+/** Libellé de colonne au-dessus de chaque champ — masqué dès que la grille XL
+ * fournit sa ligne d'en-tête (maquette). */
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-base-content/50 xl:hidden">
+      {children}
+    </span>
+  );
+}
+
+/** Champ numérique avec suffixe **dans** le champ (« GNF » — maquette). */
+function SuffixedInput({
+  value,
+  onChange,
+  suffix,
+  ariaLabel,
+  placeholder,
+  min = 0,
+  step = 'any',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  suffix: string;
+  ariaLabel: string;
+  placeholder?: string;
+  min?: number;
+  step?: number | 'any';
+}) {
+  return (
+    <label className="relative block w-full">
+      <input
+        type="number"
+        min={min}
+        step={step}
+        inputMode="decimal"
+        aria-label={ariaLabel}
+        className="input input-bordered field-rounded h-11 w-full bg-base-100 pr-12 text-right text-sm tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:h-9"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+      <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] font-medium text-base-content/45">
+        {suffix}
+      </span>
+    </label>
+  );
+}
+
+/** Ligne « libellé / valeur » du récapitulatif, à fond alterné (maquette). */
+function RecapRow({
+  label,
+  children,
+  tinted = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  tinted?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm ${
+        tinted ? 'bg-base-200/60' : 'bg-base-200/25'
+      }`}
+    >
+      <span className="text-base-content/60">{label}</span>
+      <span className="text-right font-medium">{children}</span>
+    </div>
+  );
+}
+
+const ICONS = {
+  /** Chariot de l'en-tête (maquette : carré primaire, icône blanche). */
+  cart: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z',
+  /** Caisse / colis « Marchandises achetées ». */
+  box: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+  notes:
+    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+  summary: 'M9 7h6m-6 4h6m-6 4h3M7 3h10a2 2 0 012 2v14a2 2 0 01-2 2H7a2 2 0 01-2-2V5a2 2 0 012-2z',
+  supplier: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z',
+  payment: 'M3 10h18M5 6h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z',
+  amount: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z',
+  calendar: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+  coins:
+    'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
+  cube: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+  lock: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',
+  stock: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4',
+} as const;
+
+/*
+ * Grille d'une ligne produit (maquette, gabarit ventes) : Produit | Qté |
+ * Prix d'achat | Total | Actions. Même gabarit pour la ligne d'en-tête et
+ * chaque ligne ; en dessous de XL, les champs se replient deux par deux.
+ *
+ * Largeurs : la colonne **Produit** prend tout le reste (1fr) et les autres
+ * colonnes sont fixes et serrées — c'est elle qui porte le nom du produit.
+ * Alignement **en haut** (`items-start`) : la cellule produit empile champ +
+ * badges de stock, un centrage vertical ferait monter le champ produit.
+ */
+const LINE_GRID =
+  'xl:grid xl:grid-cols-[minmax(0,1fr)_76px_128px_96px_32px] xl:items-start xl:gap-2';
+
+/* ------------------------------------------------------------------ *
+ * Page
+ * ------------------------------------------------------------------ */
 
 function AchatsNouvelleContent() {
   const router = useRouter();
@@ -309,7 +510,9 @@ function AchatsNouvelleContent() {
   }, [computedLines, amountPaid]);
 
   const paymentStatus = useMemo(() => {
-    if (totals.paid <= 0) return { key: 'unpaid', label: 'À payer', tone: 'error' as const };
+    // « En attente » (maquette) : rien n'est encore réglé — l'achat repartira
+    // en dette fournisseur ; puis « Partiel » et « Payé ».
+    if (totals.paid <= 0) return { key: 'unpaid', label: 'En attente', tone: 'error' as const };
     if (totals.remaining > 0.001) return { key: 'partial', label: 'Partiel', tone: 'warning' as const };
     return { key: 'paid', label: 'Payé', tone: 'success' as const };
   }, [totals.paid, totals.remaining]);
@@ -468,14 +671,46 @@ function AchatsNouvelleContent() {
   };
 
   const currency = settings.currency || 'GNF';
+  const companyLogo = settings.companyLogo || DEFAULT_COMPANY_LOGO;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6">
-      <PageHeader
-        eyebrow="Commercial"
-        title={isEditing ? 'Modifier un achat' : 'Nouvel achat'}
-        description="Marchandises achetées, prix d’achat, entrée en stock immédiate et règlement fournisseur (comptant, acompte ou à crédit)."
-      />
+    <div className="mx-auto w-full max-w-7xl space-y-5">
+      {/* ── En-tête de page (maquette : panneau teinté, carré primaire, logo) ── */}
+      <header className="rounded-3xl border border-base-200 bg-linear-to-r from-primary/10 to-base-100 p-5 shadow-sm sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs text-base-content/60">
+              <BackButton withMargin={false} />
+              <span className="flex items-center gap-1.5">
+                <span>Achats</span>
+                <span aria-hidden>›</span>
+                <span className="font-medium">Nouvel achat</span>
+              </span>
+            </div>
+            <div className="mt-3 flex items-center gap-3 sm:gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-content shadow-sm sm:h-12 sm:w-12">
+                <Icon d={ICONS.cart} className="h-6 w-6" strokeWidth={2} />
+              </span>
+              <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                {isEditing ? 'Modifier un achat' : 'Nouvel achat'}
+              </h1>
+            </div>
+            <p className="mt-2.5 max-w-2xl text-sm leading-6 text-base-content/60">
+              Enregistrez vos achats de marchandises, matières premières ou fournitures auprès de
+              vos fournisseurs : entrée en stock immédiate et règlement (comptant, acompte ou à
+              crédit).
+            </p>
+          </div>
+          {/* Logo de l'application : `settings.companyLogo` quand un logo est
+              téléversé, sinon le logo livré avec l'application. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={companyLogo}
+            alt={`Logo ${settings.companyName || 'Planète Déco'}`}
+            className="h-12 w-12 shrink-0 rounded-xl object-contain sm:h-14 sm:w-14"
+          />
+        </div>
+      </header>
 
       {loadError ? (
         <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
@@ -510,208 +745,271 @@ function AchatsNouvelleContent() {
         </div>
       ) : (
         <form
-          className="space-y-6"
+          className="space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <div className="space-y-4 lg:col-span-2">
-              <Card padded={false} className="overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-base-200 bg-base-200/60 px-4 py-3">
-                  <h2 className="text-sm font-semibold">Marchandises achetées</h2>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-outline min-h-11 sm:min-h-0"
-                    onClick={addLine}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-4 w-4"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={2}
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                    </svg>
-                    Ajouter une ligne
-                  </button>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            {/* ── Colonne principale ─────────────────────────────────── */}
+            <div className="min-w-0 space-y-5 lg:col-span-2">
+              {/* 1. Marchandises achetées */}
+              <Card padded={false} className="min-w-0">
+                <div className="px-5 pt-5">
+                  <CardTitle
+                    icon={<Icon d={ICONS.box} />}
+                    tone="primary"
+                    title="Marchandises achetées"
+                    subtitle="Ajoutez les produits ou services achetés"
+                    actions={
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm h-11 min-h-11 shrink-0 rounded-full px-4 font-semibold sm:h-9 sm:min-h-0"
+                        onClick={addLine}
+                      >
+                        <Icon d="M12 4v16m8-8H4" className="h-4 w-4" strokeWidth={2.2} />
+                        Ajouter une ligne
+                      </button>
+                    }
+                  />
                 </div>
 
-                {/* Conteneur à défilement horizontal : le tableau de saisie est
-                    l'unique exception balisée au contrat 360 px (§5.5 règle 1). */}
-                <div className="w-full overflow-x-auto" data-entry-table="achat">
-                  <table className="table table-xs w-full min-w-[42rem]">
-                    <thead>
-                      <tr className="bg-base-200">
-                        <th className="min-w-[16rem] text-left">Produit</th>
-                        <th className="w-24 text-right">Qté</th>
-                        <th className="w-32 text-right">Prix d&apos;achat</th>
-                        <th className="w-32 text-right">Total</th>
-                        <th className="w-12 text-right">
-                          <span className="sr-only">Supprimer</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((line, index) => {
-                        const product = productById.get(Number(line.productId));
-                        const computed = computedLines[index];
-                        const projectedStock = product ? product.stock + computed.quantity : 0;
+                {/* Ligne d'en-tête de la grille produit (grand écran, maquette). */}
+                <div
+                  className={`mt-4 hidden border-b border-base-200 bg-base-200/40 px-5 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/50 ${LINE_GRID}`}
+                  aria-hidden
+                >
+                  <span>Produit</span>
+                  <span>Qté</span>
+                  <span>Prix d&apos;achat</span>
+                  <span className="text-right">Total</span>
+                  <span />
+                </div>
 
-                        return (
-                          <tr key={line.key} className="align-top">
-                            <td>
-                              <select
-                                className="select select-bordered select-sm h-11 w-full sm:h-9"
-                                value={line.productId}
-                                onChange={(event) => handleProductChange(line.key, event.target.value)}
-                                aria-label={`Produit de la ligne ${index + 1}`}
-                              >
-                                <option value="">Sélectionner un produit…</option>
-                                {products.map((entry) => (
-                                  <option key={entry.id} value={entry.id}>
-                                    {entry.name} ({formatNumber(entry.purchasePrice)} GNF)
-                                  </option>
-                                ))}
-                              </select>
-                              {product && (
-                                <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
+                {/* Les lignes se replient d'elles-mêmes : ni tableau large, ni
+                    défilement horizontal, même à 360 px. */}
+                <ul className="divide-y divide-base-200">
+                  {lines.map((line, index) => {
+                    const product = productById.get(Number(line.productId));
+                    const computed = computedLines[index];
+                    const projectedStock = product ? product.stock + computed.quantity : 0;
+
+                    return (
+                      <li key={line.key} className="min-w-0 px-4 py-4 sm:px-5">
+                        <div className={`flex min-w-0 flex-wrap items-start gap-x-3 gap-y-3 ${LINE_GRID}`}>
+                          {/* Produit : sélecteur + badges de stock. */}
+                          <div className="min-w-0 w-full xl:w-auto">
+                            <FieldLabel>Produit</FieldLabel>
+                            <select
+                              className="select select-bordered field-rounded h-11 w-full bg-base-100 font-medium sm:h-9"
+                              value={line.productId}
+                              onChange={(event) => handleProductChange(line.key, event.target.value)}
+                              aria-label={`Produit de la ligne ${index + 1}`}
+                            >
+                              <option value="">Sélectionner un produit…</option>
+                              {products.map((entry) => (
+                                <option key={entry.id} value={entry.id}>
+                                  {entry.name} ({formatNumber(entry.purchasePrice)} GNF)
+                                </option>
+                              ))}
+                            </select>
+                            <span className="mt-1.5 flex flex-wrap items-center gap-2">
+                              {product ? (
+                                <>
                                   {/* Le stock va **augmenter** : on montre l'état
                                       actuel puis l'état après cet achat. */}
-                                  <span className="tabular">
+                                  <Badge tone="info">
                                     Stock actuel : {formatQuantity(product.stock, product.unit)}
-                                  </span>
+                                  </Badge>
                                   {computed.quantity > 0 && (
                                     <Badge tone="success">
                                       Après achat : {formatQuantity(projectedStock, product.unit)}
                                     </Badge>
                                   )}
+                                </>
+                              ) : (
+                                <span className="text-xs text-base-content/50">
+                                  Aucun produit sélectionné
                                 </span>
                               )}
-                            </td>
-                            <td>
-                              <input
-                                type="number"
-                                min={0}
-                                step="any"
-                                inputMode="decimal"
-                                className="input input-bordered input-sm h-11 w-full text-right tabular sm:h-9"
-                                value={line.quantity}
-                                onChange={(event) =>
-                                  setLineField(line.key, 'quantity', event.target.value)
-                                }
-                                aria-label={`Quantité de la ligne ${index + 1}`}
-                              />
-                            </td>
-                            <td>
-                              <input
-                                type="number"
-                                min={0}
-                                step={1000}
-                                inputMode="decimal"
-                                className="input input-bordered input-sm h-11 w-full text-right tabular sm:h-9"
-                                value={line.unitPrice}
-                                onChange={(event) =>
-                                  setLineField(line.key, 'unitPrice', event.target.value)
-                                }
-                                aria-label={`Prix d'achat de la ligne ${index + 1}`}
-                              />
-                            </td>
-                            <td className="text-right">
-                              <MoneyText value={computed.total} className="text-sm" />
-                            </td>
-                            <td className="text-right">
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm btn-square text-error"
-                                onClick={() => removeLine(line.key)}
-                                disabled={lines.length <= 1}
-                                title={
-                                  lines.length <= 1
-                                    ? 'Un achat doit conserver au moins une ligne'
-                                    : 'Supprimer cette ligne'
-                                }
-                                aria-label={`Supprimer la ligne ${index + 1}`}
-                              >
-                                <svg
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  className="h-4 w-4"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                  strokeWidth={2}
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                  />
-                                </svg>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colSpan={3} className="text-right text-sm font-semibold">
-                          Total général
-                        </td>
-                        <td className="text-right">
-                          <MoneyText value={totals.total} bold />
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
+                            </span>
+                          </div>
+
+                          {/* Quantité : champ simple (maquette achats). */}
+                          <div className="min-w-0 grow basis-[calc(50%-0.375rem)] xl:w-auto xl:grow-0 xl:basis-auto">
+                            <FieldLabel>Qté</FieldLabel>
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              inputMode="decimal"
+                              className="input input-bordered field-rounded h-11 w-full bg-base-100 text-center text-sm tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:h-9"
+                              value={line.quantity}
+                              onChange={(event) =>
+                                setLineField(line.key, 'quantity', event.target.value)
+                              }
+                              aria-label={`Quantité de la ligne ${index + 1}`}
+                            />
+                          </div>
+
+                          {/* Prix d'achat : suffixe « GNF » dans le champ. */}
+                          <div className="min-w-0 grow basis-[calc(50%-0.375rem)] xl:w-auto xl:grow-0 xl:basis-auto">
+                            <FieldLabel>Prix d&apos;achat</FieldLabel>
+                            <SuffixedInput
+                              value={line.unitPrice}
+                              onChange={(value) => setLineField(line.key, 'unitPrice', value)}
+                              suffix={currency}
+                              ariaLabel={`Prix d'achat de la ligne ${index + 1}`}
+                              step={1000}
+                              placeholder="0"
+                            />
+                          </div>
+
+                          {/* Total de ligne, aligné à droite (maquette). */}
+                          <div className="flex min-w-0 grow basis-[calc(50%-0.375rem)] items-end justify-end xl:w-auto xl:grow-0 xl:basis-auto xl:justify-end">
+                            <div className="w-full xl:w-auto xl:text-right">
+                              <FieldLabel>Total</FieldLabel>
+                              <MoneyText value={computed.total} bold className="text-sm" />
+                            </div>
+                          </div>
+
+                          {/* Actions : corbeille rouge (maquette). */}
+                          <div className="flex w-full shrink-0 flex-row items-center justify-end pt-1 xl:w-auto xl:justify-center xl:pt-0">
+                            <IconAction
+                              icon="trash"
+                              tone="danger"
+                              label={
+                                lines.length <= 1
+                                  ? 'Un achat doit conserver au moins une ligne'
+                                  : `Supprimer la ligne ${index + 1}`
+                              }
+                              disabled={lines.length <= 1}
+                              onClick={() => removeLine(line.key)}
+                            />
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-base-200 px-5 py-3.5">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm min-h-11 gap-1 font-medium text-primary sm:min-h-0"
+                    onClick={addLine}
+                  >
+                    <Icon d="M12 4v16m8-8H4" className="h-4 w-4" strokeWidth={2.2} />
+                    Ajouter une autre ligne
+                  </button>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-sm text-base-content/60">Total général</span>
+                    <MoneyText value={totals.total} bold className="text-base" />
+                  </div>
                 </div>
               </Card>
 
-              <div className="rounded-xl border border-success/30 bg-success/10 px-3 py-2.5 text-sm text-success">
-                <p className="font-semibold">Le stock augmentera à l&apos;enregistrement</p>
-                <p className="mt-1 text-xs">
-                  Chaque ligne crée une <strong>entrée</strong> de stock motivée « achat … ». Un
-                  achat n&apos;est jamais refusé pour cause de rupture : il fait entrer la
-                  marchandise. Les frais de fonctionnement (transport, loyer…) sont des{' '}
-                  <strong>dépenses</strong>, pas des achats — ils ne touchent pas le stock.
-                </p>
+              {/* Encadré vert (maquette) : le stock du produit choisi augmente. */}
+              <div className="flex items-start gap-3 rounded-2xl border border-success/30 bg-success/10 px-4 py-3 text-success">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-success/15">
+                  <Icon d={ICONS.stock} className="h-5 w-5" strokeWidth={1.6} />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Stock mis à jour automatiquement</p>
+                  <p className="mt-0.5 text-xs leading-relaxed">
+                    Le stock du produit sélectionné sera automatiquement augmenté après
+                    l&apos;enregistrement de cet achat. Chaque ligne crée une <strong>entrée</strong>{' '}
+                    de stock motivée « achat … » ; un achat n&apos;est jamais refusé pour cause de
+                    rupture. Les frais de fonctionnement (transport, loyer…) sont des{' '}
+                    <strong>dépenses</strong>, pas des achats — ils ne touchent pas le stock.
+                  </p>
+                </div>
               </div>
 
-              <Card>
-                <FormField
-                  label="Notes"
-                  htmlFor="purchase-notes"
-                  hint="Conditions d’achat, mention d’une remise fournisseur négociée, référence de commande…"
-                >
-                  <textarea
-                    id="purchase-notes"
-                    rows={2}
-                    className="textarea textarea-bordered w-full"
-                    value={notes}
-                    onChange={(event) => setNotes(event.target.value)}
-                    placeholder="Note interne facultative"
-                  />
-                </FormField>
+              {/* 2. Notes */}
+              <Card className="min-w-0 space-y-4">
+                <CardTitle
+                  icon={<Icon d={ICONS.notes} />}
+                  tone="accent"
+                  title="Notes"
+                  subtitle="Informations supplémentaires sur la facture ou l’achat"
+                />
+
+                <textarea
+                  id="purchase-notes"
+                  rows={4}
+                  maxLength={500}
+                  className="textarea textarea-bordered field-rounded w-full bg-base-100"
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="Note interne facultative…"
+                  aria-label="Note interne facultative"
+                />
+                <div className="flex justify-end">
+                  <span className="tabular text-xs text-base-content/45">{notes.length}/500</span>
+                </div>
+
+                {/* Puces d'aide sous forme de pilules (maquette). */}
+                <div className="flex flex-wrap gap-2">
+                  {['Bon de commande', 'Référence fournisseur', 'Transporteur', 'Autres notes'].map(
+                    (pill) => (
+                      <span
+                        key={pill}
+                        className="badge-pill border border-base-300 bg-base-200/60 px-3 py-1.5 text-xs font-medium text-base-content/70"
+                      >
+                        {pill}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </Card>
+
+              {/* 3. Récapitulatif — un achat ne porte ni remise ni TVA (§6.3) :
+                  pas de lignes « Frais de transport », « Total HT » ni « TVA »
+                  ici, il n'existe aucun champ correspondant. */}
+              <Card className="min-w-0 space-y-3">
+                <CardTitle
+                  icon={<Icon d={ICONS.summary} />}
+                  tone="success"
+                  title="Récapitulatif"
+                  subtitle="Aperçu de votre achat"
+                />
+
+                <div className="space-y-1.5 pt-1">
+                  <RecapRow label="Sous-total">
+                    <MoneyText value={totals.total} />
+                  </RecapRow>
+                </div>
+
+                {/* Rangée pleine largeur « Total à payer » (maquette). */}
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-success/15 px-4 py-3">
+                  <span className="text-base font-bold text-success">Total à payer</span>
+                  <MoneyText value={totals.total} bold className="text-xl text-success" />
+                </div>
               </Card>
             </div>
 
-            <div className="space-y-4">
-              <Card className="space-y-4">
-                <h2 className="text-sm font-semibold">Fournisseur</h2>
+            {/* ── Colonne latérale ───────────────────────────────────── */}
+            <div className="min-w-0 space-y-5">
+              {/* 4. Fournisseur */}
+              <Card className="min-w-0 space-y-4">
+                <CardTitle
+                  icon={<Icon d={ICONS.supplier} />}
+                  tone="info"
+                  title="Fournisseur"
+                  subtitle="Fournisseur de l’achat"
+                />
 
                 <FormField
                   label="Fournisseur"
                   htmlFor="purchase-supplier"
                   required
-                  hint="Obligatoire : c’est la dette fournisseur qui est suivie (§15)."
+                  hint="Obligatoire : c’est le fournisseur qui est l’auteur de la facture ou du bon de livraison — c’est la dette fournisseur qui est suivie (§15)."
                 >
                   <select
                     id="purchase-supplier"
-                    className="select select-bordered min-h-11 w-full sm:min-h-0"
+                    className="select select-bordered field-rounded min-h-11 w-full bg-base-100 font-medium sm:min-h-0"
                     value={supplierId}
                     onChange={(event) => setSupplierId(event.target.value)}
                   >
@@ -725,17 +1023,21 @@ function AchatsNouvelleContent() {
                 </FormField>
 
                 {selectedSupplier && (
-                  <div className="rounded-xl border border-base-200 bg-base-200/50 px-3 py-2 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-base-content/60">Fournisseur</span>
-                      <span className="min-w-0 truncate font-medium">{selectedSupplier.name}</span>
-                    </div>
-                    {selectedSupplier.phone ? (
-                      <div className="mt-0.5 flex items-center justify-between gap-2">
-                        <span className="text-base-content/60">Téléphone</span>
-                        <span className="tabular font-medium">{selectedSupplier.phone}</span>
+                  /* Fiche « Fournisseur sélectionné » (gabarit ventes). */
+                  <div className="rounded-2xl border border-base-200 bg-base-200/40 p-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                        {selectedSupplier.name.trim().charAt(0).toUpperCase() || '?'}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{selectedSupplier.name}</p>
+                        {selectedSupplier.phone && (
+                          <p className="mt-0.5 text-xs tabular text-base-content/60">
+                            {selectedSupplier.phone}
+                          </p>
+                        )}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
                 )}
 
@@ -747,7 +1049,7 @@ function AchatsNouvelleContent() {
                   <input
                     id="purchase-supplier-reference"
                     type="text"
-                    className="input input-bordered min-h-11 w-full sm:min-h-0"
+                    className="input input-bordered field-rounded min-h-11 w-full bg-base-100 sm:min-h-0"
                     value={supplierReference}
                     onChange={(event) => setSupplierReference(event.target.value)}
                     placeholder="Ex. FA-2026-0142"
@@ -756,31 +1058,45 @@ function AchatsNouvelleContent() {
                 </FormField>
               </Card>
 
-              <Card className="space-y-4">
-                <h2 className="text-sm font-semibold">Règlement</h2>
+              {/* 5. Règlement */}
+              <Card className="min-w-0 space-y-4">
+                <CardTitle
+                  icon={<Icon d={ICONS.payment} />}
+                  tone="info"
+                  title="Règlement"
+                  subtitle="Informations sur le paiement"
+                />
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-1">
+                <div className="space-y-4">
                   <FormField label="Date de l’achat" htmlFor="purchase-date" required>
                     <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
                   </FormField>
 
                   <FormField label="Moyen de paiement" htmlFor="purchase-payment-method" required>
-                    <select
-                      id="purchase-payment-method"
-                      className="select select-bordered min-h-11 w-full sm:min-h-0"
-                      value={paymentMethod}
-                      onChange={(event) => setPaymentMethod(event.target.value)}
-                    >
-                      {paymentMethods.map((method) => (
-                        <option key={method} value={method}>
-                          {method}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <span
+                        className="pointer-events-none absolute left-3 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-base-content/40"
+                        aria-hidden
+                      >
+                        <Icon d={ICONS.payment} className="h-4 w-4" />
+                      </span>
+                      <select
+                        id="purchase-payment-method"
+                        className="select select-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 font-medium sm:min-h-0"
+                        value={paymentMethod}
+                        onChange={(event) => setPaymentMethod(event.target.value)}
+                      >
+                        {paymentMethods.map((method) => (
+                          <option key={method} value={method}>
+                            {method}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </FormField>
 
                   <FormField
-                    label="Montant payé (GNF)"
+                    label={`Montant payé (${currency})`}
                     htmlFor="purchase-amount-paid"
                     hint={
                       isEditing
@@ -788,20 +1104,31 @@ function AchatsNouvelleContent() {
                         : '0 = achat à crédit (dette fournisseur).'
                     }
                   >
-                    <input
-                      id="purchase-amount-paid"
-                      type="number"
-                      min={0}
-                      step={1000}
-                      inputMode="decimal"
-                      className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
-                      value={amountPaid}
-                      onChange={(event) => {
-                        amountTouchedRef.current = true;
-                        setAmountPaid(event.target.value);
-                      }}
-                      placeholder="0"
-                    />
+                    <div className="relative">
+                      <span
+                        className="pointer-events-none absolute left-3 top-1/2 z-10 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-base-content/40"
+                        aria-hidden
+                      >
+                        <Icon d={ICONS.coins} className="h-4 w-4" />
+                      </span>
+                      <input
+                        id="purchase-amount-paid"
+                        type="number"
+                        min={0}
+                        step={1000}
+                        inputMode="decimal"
+                        className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 text-right tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
+                        value={amountPaid}
+                        onChange={(event) => {
+                          amountTouchedRef.current = true;
+                          setAmountPaid(event.target.value);
+                        }}
+                        placeholder="0"
+                      />
+                      <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] font-medium text-base-content/45">
+                        {currency}
+                      </span>
+                    </div>
                   </FormField>
 
                   {totals.paid < totals.total - 0.001 && (
@@ -816,25 +1143,34 @@ function AchatsNouvelleContent() {
                 </div>
 
                 {totals.paid < totals.total - 0.001 && (
-                  <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-                    Il restera <strong>{formatCurrency(totals.remaining, currency)}</strong> à régler :
-                    l&apos;achat alimente la <strong>dette fournisseur</strong>, suivie dans la fiche
-                    du fournisseur et dans la liste des achats.
+                  <div className="flex items-start gap-2.5 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-relaxed text-warning">
+                    <Icon d={ICONS.amount} className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      Il restera <strong>{formatCurrency(totals.remaining, currency)}</strong> à
+                      régler : l&apos;achat alimente la <strong>dette fournisseur</strong>, suivie
+                      dans la fiche du fournisseur et dans la liste des achats.
+                    </span>
                   </div>
                 )}
               </Card>
 
-              <Card className="space-y-2">
+              {/* 6. Totaux */}
+              <Card className="min-w-0 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold">Totaux</h2>
                   <Badge tone={paymentStatus.tone}>{paymentStatus.label}</Badge>
                 </div>
 
-                <div className="rounded-xl border border-primary/30 bg-primary/10 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-primary">Total de l&apos;achat</span>
-                    <MoneyText value={totals.total} bold className="text-primary" />
-                  </div>
+                <div className="space-y-1.5 pt-1">
+                  <RecapRow label="Sous-total">
+                    <MoneyText value={totals.total} />
+                  </RecapRow>
+                </div>
+
+                {/* Rangée pleine largeur « Total à payer » (maquette). */}
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-success/15 px-4 py-3">
+                  <span className="text-base font-bold text-success">Total à payer</span>
+                  <MoneyText value={totals.total} bold className="text-xl text-success" />
                 </div>
 
                 <InfoRow label="Lignes">
@@ -843,35 +1179,43 @@ function AchatsNouvelleContent() {
 
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <MiniStat
-                    label="Payé"
+                    label="PAYÉ"
                     tone={totals.paid > 0 ? 'success' : 'neutral'}
                     value={<MoneyText value={totals.paid} />}
                   />
                   <MiniStat
-                    label="Reste à payer"
+                    label="RESTE À PAYER"
                     tone={totals.remaining > 0.001 ? 'error' : 'success'}
                     value={<MoneyText value={totals.remaining} colored bold />}
                   />
                 </div>
               </Card>
-
-              {formError && (
-                <p
-                  role="alert"
-                  className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error"
-                >
-                  {formError}
-                </p>
-              )}
             </div>
           </div>
 
+          {formError && (
+            <p
+              role="alert"
+              className="rounded-2xl border border-error/30 bg-error/10 px-4 py-2.5 text-sm text-error"
+            >
+              {formError}
+            </p>
+          )}
+
           {/* Pied d'actions collant : « Enregistrer » reste atteignable sur un
-              long formulaire mobile (§5.5 règle 4). */}
-          <div className="sticky bottom-0 z-20 -mx-2 flex flex-wrap items-center justify-between gap-3 border-t border-base-200 bg-base-100/95 px-2 py-3 backdrop-blur-sm">
-            <div className="min-w-0">
-              <p className="text-xs text-base-content/50">Total de l&apos;achat</p>
-              <MoneyText value={totals.total} bold className="text-lg" />
+              long formulaire mobile (§5.5 règle 4). La page n'a jamais eu de
+              bouton « Imprimer le reçu » : on ne l'invente pas. */}
+          <div className="sticky bottom-0 z-20 -mx-2 flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-t border-base-200 bg-base-100/95 px-3 py-3 backdrop-blur-sm sm:-mx-4 sm:px-4">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Icon d={ICONS.coins} className="h-5 w-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] uppercase tracking-wide text-base-content/50">
+                  Total à payer
+                </p>
+                <MoneyText value={totals.total} bold className="text-lg" />
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -882,19 +1226,28 @@ function AchatsNouvelleContent() {
               >
                 Annuler
               </button>
-              <button
-                type="submit"
-                className="btn btn-primary min-h-11 sm:min-h-0"
-                disabled={isSubmitting || (isEditing ? !canUpdate : !canCreate)}
+              <Tooltip
+                label={
+                  isEditing
+                    ? 'L’enregistrement ajuste le stock par différence et met à jour la dette fournisseur.'
+                    : 'L’enregistrement augmente automatiquement le stock des produits achetés.'
+                }
               >
-                {isSubmitting ? (
-                  <span className="loading loading-spinner loading-sm" />
-                ) : isEditing ? (
-                  'Enregistrer les modifications'
-                ) : (
-                  'Enregistrer l’achat'
-                )}
-              </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary min-h-11 rounded-xl px-5 font-semibold sm:min-h-0"
+                  disabled={isSubmitting || (isEditing ? !canUpdate : !canCreate)}
+                >
+                  {isSubmitting ? (
+                    <span className="loading loading-spinner loading-sm" />
+                  ) : (
+                    <>
+                      <Icon d={ICONS.lock} className="h-4 w-4" strokeWidth={2} />
+                      {isEditing ? 'Enregistrer les modifications' : 'Enregistrer l’achat'}
+                    </>
+                  )}
+                </button>
+              </Tooltip>
             </div>
           </div>
         </form>
