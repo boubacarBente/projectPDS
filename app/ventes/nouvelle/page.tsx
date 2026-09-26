@@ -333,9 +333,15 @@ const ICONS = {
  * Grille d'une ligne produit (maquette) : Produit | Qté | Prix unitaire |
  * Remise | Total | Actions. Même gabarit pour la ligne d'en-tête et chaque
  * ligne ; en dessous de XL, les champs se replient deux par deux.
+ *
+ * Largeurs : la colonne **Produit** prend tout le reste (1fr) et les autres
+ * colonnes sont fixes et **serrées** — c'est elle qui porte le nom du produit,
+ * donc la plus large de la rangée. Alignement **en haut** (`items-start`) :
+ * la cellule produit empile champ + badge « En stock », un centrage vertical
+ * ferait monter le champ produit au-dessus des autres.
  */
 const LINE_GRID =
-  'xl:grid xl:grid-cols-[minmax(0,1fr)_104px_112px_88px_112px_48px] xl:items-center xl:gap-3';
+  'xl:grid xl:grid-cols-[minmax(0,1fr)_76px_108px_88px_96px_32px] xl:items-start xl:gap-2';
 
 /* ------------------------------------------------------------------ *
  * Page
