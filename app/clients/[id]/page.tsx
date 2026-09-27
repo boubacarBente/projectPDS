@@ -466,24 +466,22 @@ export default function ClientDetailPage() {
    * récapitulatif) déclenchent le même geste : une seule explication, pour
    * qu'elles ne divergent pas.
    *
-   * Texte réarrangé à partir de la formulation du client, pour trois raisons :
-   *  - le titre dupliquait le bouton et la phrase suivante répétait
-   *    « enregistrer un paiement » — on passe par le verbe « régler » ;
-   *  - le formulaire nomme le champ « Moyen de paiement », pas « mode » :
-   *    l'infobulle doit employer le mot que l'utilisateur cherche à l'écran ;
-   *  - « règlement » désigne déjà, dans l'application, le moyen de paiement
-   *    (`label="Règlement"`) et le décaissement fournisseur : ici, c'est le
-   *    verbe « régler » qui porte l'idée, sans ambiguïté.
+   * Texte **imposé par le client** (recette) : repris mot pour mot. Il emploie
+   * « règlement » et « mode de paiement » là où l'application dit ailleurs
+   * « paiement » et « moyen de paiement » (libellé exact du champ du
+   * formulaire) — c'est un choix assumé, validé tel quel. Ne pas le « corriger »
+   * sans son accord.
    *
-   * La bulle est élargie car le texte fait plusieurs phrases.
+   * La bulle est élargie (`maxWidth`) car le texte fait plusieurs phrases : à
+   * la largeur par défaut il s'étirerait sur sept lignes.
    */
   const paymentTooltip = (
     <>
       <strong>Enregistrer un paiement</strong>
       <span className="mt-1 block">
-        Permet de régler tout ou partie du solde de ce client. Renseignez le montant, le moyen
-        de paiement et, si nécessaire, une note : un reçu numéroté est généré, la caisse mise
-        à jour et le solde restant recalculé.
+        Permet d&apos;enregistrer un règlement partiel ou total du client. Renseignez le
+        montant, le mode de paiement et, si nécessaire, une note. Un reçu numéroté sera
+        automatiquement généré, la caisse mise à jour et le solde restant recalculé.
       </span>
     </>
   );
