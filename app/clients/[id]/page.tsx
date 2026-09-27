@@ -50,6 +50,7 @@ import {
 } from '@/components/design-system';
 import { CustomerMonthlyPurchasesChart, TopProductsChart } from '@/components/dashboard/dashboard-charts';
 import { usePermission } from '@/components/role-gate';
+import { Tooltip } from '@/components/tooltip';
 import { ExportDropdown, shareOnWhatsApp } from '@/components/export-dropdown';
 import {
   PaymentModal,
@@ -887,12 +888,27 @@ export default function ClientDetailPage() {
               )}
 
               <div className="flex flex-wrap gap-2 pt-1">
-                <Link
-                  href={`/clients/${customer.id}/paiements`}
-                  className="btn btn-ghost btn-sm min-h-11 border border-base-300 sm:min-h-0"
+                {/*
+                 * Le libellé « Voir les encaissements » ne dit pas où l'on va :
+                 * l'infobulle lève le doute — c'est **tous les reçus de ce
+                 * client**, du plus récent au plus ancien.
+                 */}
+                <Tooltip
+                  label={
+                    <>
+                      Ouvre l&apos;historique complet des encaissements de{' '}
+                      {customer.name} : chaque règlement enregistré, avec son{' '}
+                      <strong>reçu imprimable</strong>.
+                    </>
+                  }
                 >
-                  Voir les encaissements
-                </Link>
+                  <Link
+                    href={`/clients/${customer.id}/paiements`}
+                    className="btn btn-ghost btn-sm min-h-11 border border-base-300 sm:min-h-0"
+                  >
+                    Voir les encaissements
+                  </Link>
+                </Tooltip>
                 {canPay && hasDebt && (
                   <button
                     type="button"

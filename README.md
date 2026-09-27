@@ -848,6 +848,8 @@ Reprend `/clients` de Gaz (liste + modales CRUD + modale de détail avec statist
 
 Couleur du solde (liste, fiche et relevé exporté) : **rouge dès que le client doit de l'argent, vert quand il n'a plus rien à payer** — `MoneyText due` de `components/design-system.tsx`. `MoneyText colored` ne peut pas exprimer cette règle : un reste dû est un montant positif, que `colored` peint en vert.
 
+Le bouton **« Voir les encaissements »** du récapitulatif porte une **infobulle au survol** qui lève l'ambiguïté du libellé : elle annonce qu'il ouvre **tous les reçus de ce client** (chaque règlement, avec son reçu imprimable). Même composant `Tooltip` que le reste de l'application — portail, survol **et** focus clavier, `aria-describedby` sur la commande.
+
 ### 7.3 Fournisseurs (§3)
 Ajouter, modifier · Contacts et coordonnées · Historique des achats · Suivi des paiements · Montants restant à payer et dettes.
 Structure identique à `/fournisseurs` de Gaz.
