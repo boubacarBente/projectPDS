@@ -10,20 +10,29 @@ import {
   NotFoundError,
 } from '@/lib/api';
 import { deactivateCustomer, getCustomerStats, reactivateCustomer, updateCustomer } from '@/lib/customers';
+import { canViewSalesProfit, withoutSalesProfit } from '@/lib/sales';
 import { writeAudit } from '@/lib/audit';
 
 type Params = { params: Promise<{ id: string }> };
 
-/** GET /api/clients/[id] — fiche + statistiques + dernières factures. */
+/**
+ * GET /api/clients/[id] — fiche + statistiques + dernières factures.
+ *
+ * Le **bénéfice brut** du client (`cost`, `profit`) n'est renvoyé qu'à un
+ * utilisateur détenant `balances.view` : donnée financière sensible, le serveur
+ * reste seul juge (§9).
+ */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('customers.view');
+    const user = await requireAction('customers.view');
     const { id } = await params;
 
     const stats = await getCustomerStats(parseId(id));
     if (!stats) throw new NotFoundError('Client introuvable');
 
-    return ok(stats);
+    if (await canViewSalesProfit(user)) return ok(stats);
+
+    return ok(withoutSalesProfit(stats));
   } catch (error) {
     return fail(error);
   }

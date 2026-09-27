@@ -14,6 +14,7 @@ import { db, rawAll, rawGet } from '@/db';
 import { customers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
+import { roundMoney } from '@/lib/format';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 export type CustomerRow = {
@@ -48,6 +49,17 @@ export type CustomerStats = {
   totalPaid: number;
   balance: number;
   averageBasket: number;
+  /**
+   * Coût des marchandises vendues et **bénéfice brut cumulé** sur les ventes
+   * **validées** de ce client — c'est la somme des bénéfices de ses factures,
+   * exactement comme la colonne « Bénéfice » de la liste des ventes (§10, §15).
+   * Brouillons et annulations exclus.
+   *
+   * Donnée **financière sensible** : `null` quand l'utilisateur n'a pas
+   * `balances.view` (voir `canViewSalesProfit()` de `lib/sales.ts`).
+   */
+  cost: number | null;
+  profit: number | null;
   firstPurchaseDate: string | null;
   lastPurchaseDate: string | null;
   /** Alerte de plafond (Q18 : avertir, pas bloquer, en V1). */
@@ -328,6 +340,29 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
     [id],
   );
 
+  /*
+   * Bénéfice brut du client : chiffre d'affaires **HT** de ses ventes validées
+   * moins le coût des marchandises vendues. Même source de coût que le reste de
+   * l'application (`products.purchase_price`, compromis V1 documenté en Q20),
+   * donc la somme des bénéfices affichés sur ses factures — et non un second
+   * calcul qui pourrait diverger.
+   */
+  const profitRow = await rawGet<{ revenue_ht: number | null; cost: number | null }>(
+    `SELECT
+       (SELECT COALESCE(SUM(total_ht), 0)
+          FROM sales_invoices
+         WHERE customer_id = ? AND status = 'active') AS revenue_ht,
+       (SELECT COALESCE(SUM(i.quantity * COALESCE(p.purchase_price, 0)), 0)
+          FROM sales_invoice_items i
+          JOIN sales_invoices v ON v.id = i.invoice_id
+          LEFT JOIN products p ON p.id = i.product_id
+         WHERE v.customer_id = ? AND v.status = 'active') AS cost`,
+    [id, id],
+  );
+
+  const cost = roundMoney(Number(profitRow?.cost ?? 0));
+  const revenueHt = Number(profitRow?.revenue_ht ?? 0);
+
   return {
     customer,
     invoiceCount: customer.invoiceCount,
@@ -335,6 +370,8 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
     totalPaid: customer.totalPaid,
     balance: customer.balance,
     averageBasket: customer.invoiceCount > 0 ? customer.totalInvoiced / customer.invoiceCount : 0,
+    cost,
+    profit: roundMoney(revenueHt - cost),
     firstPurchaseDate: bounds?.first_date ?? null,
     lastPurchaseDate: bounds?.last_date ?? null,
     creditLimitExceeded: customer.creditLimit > 0 && customer.balance > customer.creditLimit,

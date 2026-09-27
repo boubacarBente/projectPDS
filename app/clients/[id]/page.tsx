@@ -297,6 +297,8 @@ export default function ClientDetailPage() {
   const customerId = Number(params?.id);
 
   const canPay = usePermission('payments.create');
+  /** `balances.view` : seul ce rôle reçoit (et voit) le bénéfice brut du client. */
+  const canViewProfit = usePermission('balances.view');
   const canUpdate = usePermission('customers.update');
   const { settings } = useSettings();
 
@@ -787,7 +789,11 @@ export default function ClientDetailPage() {
       {!isLoading && !error && stats && customer && (
         <>
           {/* ── Cartes de métriques : uniquement des valeurs déjà calculées ── */}
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div
+            className={`grid gap-4 sm:grid-cols-2 ${
+              canViewProfit && stats.profit !== null ? 'xl:grid-cols-5' : 'xl:grid-cols-4'
+            }`}
+          >
             <MetricCard
               label="Solde à payer"
               value={<MoneyText value={stats.balance} due bold />}
@@ -813,6 +819,25 @@ export default function ClientDetailPage() {
               tone="accent"
               icon={<Icon d={ICONS.basket} />}
             />
+            {/*
+              * Bénéfice brut **de ce client** : Σ (total HT de ses ventes
+              * validées) − coût des marchandises vendues. C'est la somme des
+              * bénéfices de ses factures (colonne « Bénéfice » de la liste des
+              * ventes), donc aucun second calcul susceptible de diverger.
+              *
+              * `null` veut dire « pas le droit » (`balances.view`) : le serveur
+              * ne l'envoie pas. Vert si le client rapporte, rouge s'il a été
+              * vendu à perte. Jamais exporté : le relevé part chez le client.
+              */}
+            {canViewProfit && stats.profit !== null && (
+              <MetricCard
+                label="Bénéfice brut"
+                value={<MoneyText value={stats.profit} colored bold />}
+                hint="Ventes HT − coût"
+                tone={stats.profit >= 0 ? 'success' : 'error'}
+                icon={<Icon d={ICONS.chart} />}
+              />
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

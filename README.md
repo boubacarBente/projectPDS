@@ -857,6 +857,13 @@ Ce texte est celui **imposé par le client** (recette) : il est repris mot pour 
 
 > **Vocabulaire (à respecter dans toute l'interface).** Pour l'argent qui **entre** d'un client on dit **paiement** — c'est le mot de la permission `payments.create`, libellée « Encaisser un paiement », et celui des écrans « Historique des paiements », « Payé », « Statut de paiement ». Le mot **règlement** est réservé à deux autres notions : le **moyen** de paiement (`label="Règlement"` → Espèces, Mobile Money, virement) et le **décaissement fournisseur** (« règlement fournisseur », « le règlement d'un achat est une sortie de caisse »). Écrire « encaisser un règlement » mélange donc une entrée de caisse avec le mot de la sortie fournisseur. **Seule exception admise** : l'infobulle des boutons « Enregistrer un paiement » de la fiche client, dont le texte a été imposé par le client et est conservé tel quel (voir ci-dessus) — les nouvelles formulations suivent la règle.
 
+**Bénéfice brut d'un client.** La fiche (`/clients/[id]`) affiche une cinquième carte, **« Bénéfice brut »** : Σ `total_ht` de ses ventes **validées** − coût des marchandises vendues (hint « Ventes HT − coût »). C'est **exactement la somme des bénéfices de ses factures** — la même valeur que la colonne « Bénéfice » de la liste des ventes, cumulée — donc il n'existe pas de second calcul susceptible de diverger (§15). Brouillons et ventes annulées exclus, comme partout.
+
+Deux garde-fous, identiques à ceux de la colonne des ventes :
+
+- **Confidentialité** : la donnée est réservée à `balances.view`. Sans ce droit, `GET /api/clients/[id]` renvoie `cost: null` et `profit: null` (`canViewSalesProfit()`, `withoutSalesProfit()`), et la carte n'apparaît pas. Masquer n'est pas protéger (§9).
+- **Jamais dans un document client** : le relevé exporté (PDF, image, WhatsApp) ne porte ni le bénéfice ni le coût — il repart du gabarit autonome `renderExportDocument`, vérifié sur le fichier réellement téléchargé.
+
 ### 7.3 Fournisseurs (§3)
 Ajouter, modifier · Contacts et coordonnées · Historique des achats · Suivi des paiements · Montants restant à payer et dettes.
 Structure identique à `/fournisseurs` de Gaz.

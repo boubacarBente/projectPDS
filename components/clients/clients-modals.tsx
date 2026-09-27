@@ -60,6 +60,13 @@ export type CustomerStatsRecord = {
   totalPaid: number;
   balance: number;
   averageBasket: number;
+  /**
+   * Coût des marchandises vendues et bénéfice brut cumulé du client.
+   * `null` quand l'utilisateur n'a pas `balances.view` : le serveur ne les
+   * envoie pas (voir `CustomerStats` de `lib/customers.ts`).
+   */
+  cost: number | null;
+  profit: number | null;
   firstPurchaseDate: string | null;
   lastPurchaseDate: string | null;
   creditLimitExceeded: boolean;
