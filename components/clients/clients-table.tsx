@@ -104,7 +104,7 @@ export function ClientsTable({
       key: 'balance',
       label: 'Solde',
       className: 'text-right whitespace-nowrap',
-      render: (customer: CustomerRecord) => <MoneyText value={customer.balance} colored bold />,
+      render: (customer: CustomerRecord) => <MoneyText value={customer.balance} due bold />,
     },
     {
       key: 'lastPurchaseDate',

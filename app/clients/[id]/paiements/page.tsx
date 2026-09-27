@@ -193,6 +193,14 @@ export default function ClientPaymentsPage() {
 
   const paymentColumns = [
     {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (payment: PaymentRecord) => (
+        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+      ),
+    },
+    {
       key: 'receiptNumber',
       label: 'Reçu',
       primary: true,
@@ -205,14 +213,6 @@ export default function ClientPaymentsPage() {
             {payment.receiptNumber}
           </Link>
         </Tooltip>
-      ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (payment: PaymentRecord) => (
-        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
       ),
     },
     {
@@ -263,7 +263,7 @@ export default function ClientPaymentsPage() {
     <div className="mx-auto w-full max-w-7xl space-y-6">
       <PageHeader
         eyebrow="Encaissements"
-        title={customer ? `Paiements — ${customer.name}` : 'Paiements du client'}
+        title={customer ? `Tous les Paiements de ${customer.name}` : 'Paiements du client'}
         description="Historique des règlements encaissés, avec le reçu correspondant."
         actions={
           <>

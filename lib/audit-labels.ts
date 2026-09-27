@@ -15,6 +15,7 @@ export type AuditAction =
   | 'create'
   | 'update'
   | 'delete'
+  | 'validate'
   | 'cancel'
   | 'login'
   | 'logout'
@@ -30,6 +31,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   create: 'Création',
   update: 'Modification',
   delete: 'Suppression',
+  validate: 'Validation',
   cancel: 'Annulation',
   login: 'Connexion',
   logout: 'Déconnexion',

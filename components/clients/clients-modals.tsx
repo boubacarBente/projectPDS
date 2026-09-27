@@ -164,7 +164,10 @@ export async function fetchUnpaidInvoices(
   signal?: AbortSignal,
 ): Promise<UnpaidInvoice[] | string> {
   try {
-    const response = await fetch(`/api/ventes?customerId=${customerId}&limit=200`, {
+    // Seules les ventes **validées** sont encaissables : un brouillon n'a ni
+    // stock ni caisse (§10.6) et le serveur refuserait le paiement. On filtre
+    // donc à la source plutôt que d'afficher un choix voué à l'échec.
+    const response = await fetch(`/api/ventes?customerId=${customerId}&status=active&limit=200`, {
       cache: 'no-store',
       credentials: 'same-origin',
       signal,
@@ -474,8 +477,37 @@ export function CustomerDetailModal({
       title="Détail du client"
       size="xl"
       fullScreenMobile
+      /* Barre d'actions confiée à <Modal> : elle est épinglée en bas du cadre
+         (15 px du bord, réglable via `pb-[15px]` dans components/modal.tsx) et
+         ne défile pas avec le contenu. */
+      footer={
+        <div className="flex justify-end gap-3 border-t border-base-200 pt-4">
+          <button type="button" className="btn btn-ghost min-h-11 sm:min-h-0" onClick={onClose}>
+            Fermer
+          </button>
+          {customer && (
+            <>
+              <Link
+                href={`/clients/${customer.id}`}
+                className="btn btn-outline min-h-11 sm:min-h-0"
+              >
+                Voir plus de détail
+              </Link>
+              {onEdit && (
+                <button
+                  type="button"
+                  className="btn btn-primary min-h-11 sm:min-h-0"
+                  onClick={onEdit}
+                >
+                  Modifier
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      }
     >
-      <div className="space-y-5 pb-2">
+      <div className="space-y-5">
         {isLoading && <SkeletonTable rows={5} cols={4} />}
 
         {!isLoading && error && (
@@ -511,7 +543,7 @@ export function CustomerDetailModal({
               <MiniStat
                 label="Solde"
                 tone={stats.balance > 0.001 ? 'error' : 'success'}
-                value={<MoneyText value={stats.balance} colored bold />}
+                value={<MoneyText value={stats.balance} due bold />}
               />
               <MiniStat label="Total facturé" value={<MoneyText value={stats.totalInvoiced} />} />
               <MiniStat label="Total payé" value={<MoneyText value={stats.totalPaid} />} />
@@ -630,31 +662,6 @@ export function CustomerDetailModal({
             </div>
           </>
         )}
-
-        <div className="sticky bottom-0 flex justify-end gap-3 border-t border-base-200 bg-base-100 pb-1 pt-4">
-          <button type="button" className="btn btn-ghost min-h-11 sm:min-h-0" onClick={onClose}>
-            Fermer
-          </button>
-          {customer && (
-            <>
-              <Link
-                href={`/clients/${customer.id}/paiements`}
-                className="btn btn-outline min-h-11 sm:min-h-0"
-              >
-                Historique des paiements
-              </Link>
-              {onEdit && (
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11 sm:min-h-0"
-                  onClick={onEdit}
-                >
-                  Modifier
-                </button>
-              )}
-            </>
-          )}
-        </div>
       </div>
     </Modal>
   );
@@ -837,7 +844,7 @@ export function PaymentModal({
             <p className="truncate text-sm font-semibold">{customer.name}</p>
             <p className="text-xs text-base-content/60">Solde actuel</p>
           </div>
-          <MoneyText value={customer.balance} colored bold className="text-lg" />
+          <MoneyText value={customer.balance} due bold className="text-lg" />
         </div>
 
         {receipt ? (

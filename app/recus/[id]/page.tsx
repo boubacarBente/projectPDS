@@ -294,6 +294,14 @@ export default function RecuPage() {
     () =>
       [
         {
+          key: 'date',
+          label: 'Date',
+          className: 'whitespace-nowrap',
+          render: (payment: PaymentRow) => (
+            <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+          ),
+        },
+        {
           key: 'receiptNumber',
           label: 'Reçu',
           primary: true,
@@ -304,14 +312,6 @@ export default function RecuPage() {
             >
               {payment.receiptNumber}
             </Link>
-          ),
-        },
-        {
-          key: 'date',
-          label: 'Date',
-          className: 'whitespace-nowrap',
-          render: (payment: PaymentRow) => (
-            <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
           ),
         },
         {
@@ -620,7 +620,7 @@ export default function RecuPage() {
             <MoneyText value={data.total} />
           </InfoRow>
           <InfoRow label="Reste dû">
-            <MoneyText value={data.remainingAmount} colored bold />
+            <MoneyText value={data.remainingAmount} due bold />
           </InfoRow>
         </Card>
       </div>

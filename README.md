@@ -29,8 +29,8 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 >   dette fournisseur, reçu imprimable).
 >
 > **Vérifications passées** : `tsc --noEmit` sans erreur ; `next build` réussi
-> **avec le contrôle des types activé** — 107 entrées de route, soit **34 pages
-> et 71 routes d'API** ; `npm run verify:routes` (107/107, aucune erreur 500) ;
+> **avec le contrôle des types activé** — 109 entrées de route, soit **35 pages
+> et 72 routes d'API** ; `npm run verify:routes` (109/109, aucune erreur 500) ;
 > `npm run verify:purchases` (21/21 : numérotation, total, paiement partiel,
 > dette fournisseur, variation de stock, sortie de caisse, mouvement tracé) ;
 > `npm run verify:export` (image et PDF générés dans un vrai navigateur) ;
@@ -115,7 +115,7 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 | 4 | Produits et stocks | `/produits`, `/stocks` | **1** |
 | 5 | Achats | `/achats` | **1** |
 | 6 | Ventes | `/ventes`, `/ventes/nouvelle` | **1** |
-| 7 | Factures et reçus | `/ventes/[id]`, `/recus/[id]` | **1** |
+| 7 | Factures et reçus | `/ventes/[id]`, `/recus`, `/recus/[id]` | **1** |
 | 8 | Caisse et solde | `/caisse` | **2** |
 | 9 | Dépenses | `/depenses` | **2** |
 | 10 | Soldes, dettes et bénéfices | `/soldes` | **2** |
@@ -340,6 +340,7 @@ projetPDS/
 │   │   ├── achats/                 #   factures d'achat fournisseur
 │   │   ├── ventes/                 #   factures de vente + stats
 │   │   ├── paiements/              #   encaissements (reçus)
+│   │   ├── recus/                  #   registre des reçus (document + tiers)
 │   │   ├── depenses/               #   dépenses + catégories
 │   │   ├── caisse/                 #   mouvements, sessions, résumé
 │   │   ├── chantiers/              #   prestations (lot 3)
@@ -482,7 +483,7 @@ Objectif : l'application doit **ressembler à un logiciel d'entreprise**, pas à
 | Règle | Détail |
 |---|---|
 | Largeur | **288 px (`w-72`) déployée**, **80 px (`w-20`) repliée** en icônes seules avec infobulles. Le repli est une **amélioration par rapport à Gaz** (qui ne l'a pas) et son état est mémorisé dans les réglages **locaux** — donc **pas synchronisés** (§23.9) |
-| Groupes | **6 groupes** avec intitulés en petites majuscules (`text-[11px] uppercase tracking-wider`) : indispensable avec 18 modules, un menu à plat serait illisible |
+| Groupes | **6 groupes** avec intitulés en petites majuscules (`text-[11px] uppercase tracking-wider`) : indispensable avec 19 modules, un menu à plat serait illisible |
 | Élément actif | **Deux indices visuels simultanés** : bord gauche de 3 px dans la couleur primaire **et** fond teinté `color-mix(in srgb, var(--sidebar-text) 20%, transparent)`. Jamais la couleur seule (daltonisme) |
 | Accessibilité | `aria-current="page"` sur l'élément actif, anneau de focus visible, navigation clavier complète, `aria-label` sur chaque bouton-icône, contraste **AA minimum** — y compris quand le client choisit une couleur de sidebar exotique |
 | Filtrage par rôle | Le menu est **filtré par permission** (`lib/permissions.ts`) : un vendeur ne voit ni *Utilisateurs*, ni *Paramètres*, ni *Synchronisation*. Masquer n'est pas protéger : les API vérifient aussi |
@@ -534,7 +535,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 |---|:--:|:--:|:--:|:--:|:--:|
 | `/` Dashboard | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `/ventes` · `/ventes/nouvelle` · `/ventes/[id]` | ☐ | ☐ | ☐ | ☐ | ☐ |
-| `/recus/[id]` | ☐ | ☐ | ☐ | ☐ | ☐ |
+| `/recus` · `/recus/[id]` | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `/clients` · `/clients/[id]` · `/clients/[id]/paiements` | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `/fournisseurs` · `/fournisseurs/[id]/paiements` | ☐ | ☐ | ☐ | ☐ | ☐ |
 | `/produits` · `/produits/categories` | ☐ | ☐ | ☐ | ☐ | ☐ |
@@ -842,8 +843,10 @@ Ventes du jour / semaine / mois · Chiffre d'affaires et **bénéfice estimé** 
 Reprise du composant `MetricCard` + graphiques Chart.js de Gaz, avec filtres de période `aujourd'hui / semaine / mois / année / total` (comme `/rapports`).
 
 ### 7.2 Clients (§2)
-Ajouter, modifier, rechercher · Nom, téléphone, adresse, informations utiles · **Historique complet des achats** · **Montant payé et restant à payer** · **Ventes à crédit** · **Enregistrement des paiements** · **Liste des clients débiteurs**.
+Ajouter, modifier, rechercher · Nom, téléphone, adresse, informations utiles · **Historique complet des achats** · **Montant payé et restant à payer** · **Ventes à crédit** · **Enregistrement des paiements** · **Liste des clients débiteurs** · **Export de la fiche client (PDF, image, WhatsApp)**.
 Reprend `/clients` de Gaz (liste + modales CRUD + modale de détail avec statistiques + `/clients/[id]/paiements`), en ajoutant l'encours et le plafond de crédit.
+
+Couleur du solde (liste, fiche et relevé exporté) : **rouge dès que le client doit de l'argent, vert quand il n'a plus rien à payer** — `MoneyText due` de `components/design-system.tsx`. `MoneyText colored` ne peut pas exprimer cette règle : un reste dû est un montant positif, que `colored` peint en vert.
 
 ### 7.3 Fournisseurs (§3)
 Ajouter, modifier · Contacts et coordonnées · Historique des achats · Suivi des paiements · Montants restant à payer et dettes.
@@ -863,6 +866,8 @@ Vente rapide · **Client ou vente comptant** · Plusieurs produits · **Total et
 
 ### 7.7 Factures et reçus (§7)
 Numéro unique **compatible avec le format actuel de Planète Déco Sarlu** (voir Q1) · Produits, quantités, prix unitaire, montant (GNF) · **Informations client et entreprise avec logo** · **Sous-total, remise, total HT, TVA, total à payer** · Statut payée / partiellement payée / impayée · **Statut de paiement (intégral, acompte, solde) et échéancier en cas de crédit** · **Impression et génération PDF** · **Réimpression des anciennes factures** · **Reçu après chaque paiement**.
+
+**Registre des reçus** (`/recus`, `GET /api/recus`, permission `payments.view`) : **tous** les reçus du poste dans une seule liste paginée — ventes, achats et prestations — avec le document réglé et son tiers. Avant cette page, un reçu n'était atteignable que par la fiche de son client, de son fournisseur ou du document réglé : il n'existait aucun registre global. Filtres : recherche (n° de reçu, note, **n° de document**, nom du tiers), origine, moyen de paiement, période. Chaque ligne ouvre `/recus/[id]`. Le document et le tiers sont résolus **côté serveur** (`listReceipts`) : `payments.reference_id` est polymorphe et sans clé étrangère, la jointure se fait donc par sous-requêtes, une par type.
 
 ### 7.8 Caisse et solde (§8)
 Ouverture avec montant initial · Entrées et sorties · **Calcul du solde** · Gestion **Espèces / Mobile Money** · **Clôture journalière** · Historique des mouvements.
@@ -974,7 +979,7 @@ Caractéristiques : overlay `bg-black/50 backdrop-blur-sm` cliquable pour fermer
 | Fournisseurs | Créer / modifier · Détail + historique · Payer une dette · Supprimer |
 | Produits | Créer / modifier · Ajuster le stock · Catégories · Unités · Supprimer |
 | Achats | Nouvelle facture d'achat · Détail · Payer un reste · Supprimer |
-| Ventes | **Paiement / acompte** · Détail de facture · **Annulation (avec motif)** · Supprimer un brouillon |
+| Ventes | **Paiement / acompte** · Détail de facture · **Validation d'un brouillon** · **Annulation (avec motif)** · Supprimer un brouillon |
 | Caisse | Ouvrir la caisse · Clôturer la caisse · Nouvelle entrée / sortie |
 | Dépenses | Créer / modifier · Catégories |
 | Utilisateurs | Créer / modifier · Désactiver · Supprimer |
@@ -1064,6 +1069,13 @@ Flux repris du projet Gaz, étape par étape, étendu aux remises, à la TVA, au
                                                                     ├─▶ mouvement de stock (sortie)
                                                                     ├─▶ caisse (entrée si encaissement)
                                                                     └─▶ journal d'actions
+
+/ventes  ──[brouillon : Valider]──▶  POST /api/ventes/[id]/valider  ──▶  /ventes (liste)
+                                                    │
+                                                    ├─▶ contrôle de stock (refus si rupture)
+                                                    ├─▶ mouvement de stock (sortie)
+                                                    ├─▶ recalcul du statut de paiement
+                                                    └─▶ journal d'actions (action = validate)
 ```
 
 ### 10.2 Page `/ventes/nouvelle` — état du formulaire
@@ -1129,11 +1141,23 @@ resteÀPayer = 0                → "Payée"
 
 - **Modification** : `updateSalesInvoice()` recalcule les totaux, **reverse** les anciens mouvements de stock et applique les nouveaux (différence par différence, comme Gaz via `areQuantityMapsEqual`).
 - **Annulation** : réservée aux rôles **admin** et **gérant** (`lib/permissions.ts`). La facture passe en `cancelled` avec **motif obligatoire**, les mouvements de stock sont **inversés**, l'entrée de caisse **contre-passée**. Aucun `DELETE`.
-- **Brouillon** (`status = draft`) : une vente préparée mais non validée **ne touche ni le stock ni la caisse**.
+- **Brouillon** (`status = draft`) : une vente préparée mais non validée **ne touche ni le stock ni la caisse**. Elle consomme malgré tout un **numéro de facture** (compteur sans trou) et sa création est **journalisée** (`action = create`, `status = draft`) comme toute écriture.
+- **Validation d'un brouillon** — `POST /api/ventes/[id]/valider` (permission `sales.update`), c'est **le seul** passage `draft` → `active`. Le corps de la requête est ignoré : les lignes et leurs instantanés sont relus **en base**, aucune ressaisie n'est demandée au poste (contrairement à `PUT /api/ventes/[id]`, qui exige le document complet). La chaîne rejouée est celle de §10.5, sans l'encaissement :
+  1. **contrôle de stock avant toute écriture** — le brouillon n'ayant rien sorti, aucune tolérance n'est accordée ; une rupture survenue entre-temps refuse la validation (HTTP 400) et **rien n'est écrit** ;
+  2. passage du statut à `active` (le **numéro de facture ne change pas** : on valide la pièce existante) ;
+  3. un mouvement `exit` par ligne ;
+  4. recalcul de `amount_paid` / `remaining_amount` / `payment_status` depuis les `payments` réels ;
+  5. journal d'actions (`action = validate`).
+  Depuis l'interface, l'action **« Valider la vente »** est proposée sur la ligne de la liste, dans la modale de détail et sur `/ventes/[id]` (bandeau du brouillon) pour tout rôle détenant `sales.update`, après confirmation explicite des conséquences (sortie de stock définitive, entrée dans le chiffre d'affaires).
+- **Un brouillon n'est jamais encaissable** : la règle est appliquée dans `lib/sales.ts` **et** dans `createPayment()` (`lib/payments.ts`), qui refuse tout document dont le statut n'est pas `active` (`sale` et `purchase`). Sans cette seconde garde, `POST /api/paiements` resterait une porte dérobée : l'argent entrerait en caisse pour une facture non validée, et l'annulation d'un brouillon ne contre-passe pas la caisse. Les prestations (`service_job`), qui n'ont pas de brouillon, gardent leur cycle de vie.
+- **Brouillons hérités** (encaissés avant la mise en place de la garde) : `cancelSalesInvoice()` contre-passe désormais la caisse **dès qu'un `amount_paid` réel existe**, brouillon compris — le stock, lui, n'est rendu que par une vente validée. Les montants restent recalculés depuis `payments`, et valider un tel brouillon **conserve** l'encaissement existant.
+- **Synchronisation** : un brouillon reste **strictement local**. `buildSyncPackage()` exclut les `sales_invoices` en `draft` **et leurs lignes de détail** du paquet d'export (§23) — sinon le poste destinataire verrait des factures qui n'existent pas encore, et l'annulation locale d'un brouillon ne lui serait jamais transmise. Une fois validée, la ligne repart normalement en `active` dans le paquet suivant. Les **sauvegardes** (`lib/backup.ts`) ne sont pas concernées : elles restent des copies intégrales de la base.
 
 ### 10.7 Paiements ultérieurs d'une vente à crédit
 
 Depuis `/ventes/[id]` ou `/clients/[id]/paiements` : modale **« Enregistrer un paiement »** → date, montant, moyen, note → `POST /api/paiements` → insertion dans `payments` (`type = 'sale'`, `receipt_number` généré), recalcul de `amount_paid` / `remaining_amount` / `payment_status`, entrée de `cash_movements`, **reçu imprimable**, journal d'actions.
+
+Le paiement n'est possible que sur une vente **validée** (`status = active`) : le bouton « Enregistrer un paiement » est masqué pour un brouillon, une vente annulée ou une facture soldée, et `createPayment()` refuse l'appel direct. Un brouillon se **valide** d'abord (§10.6).
 
 ---
 
@@ -1180,6 +1204,26 @@ dans un **iframe invisible**, puis on capture `iframeDoc.body`.
 | Partage WhatsApp de `element.outerHTML` (classes Tailwind **sans** leur feuille de styles → image non stylée) | Le **même** document HTML pour PDF, image **et** WhatsApp |
 | Image étirée sur une page A4 (facture déformée) | Proportions conservées, **pagination** si le document dépasse une page |
 | `catch { toast.error("L'image n'a pas pu être générée.") }` — cause masquée | `toast.error(error?.message ?? …)` — la cause réelle remonte |
+
+**Deux réglages de la capture, à ne pas « nettoyer »** (constatés en exportant un
+relevé client) :
+
+- **Cadre à hauteur nulle puis mesuré** (`captureHtml`) : l'iframe d'export est
+  créée avec `height: 0`, puis cadrée sur `documentElement.scrollHeight` avant la
+  capture. Avec un cadre de 1400 px, `scrollHeight` valait toujours 1400 : un
+  document court était exporté avec une **large bande blanche**, qui produisait
+  une **seconde page PDF presque vide** (relevé client : 2800 px de haut dont
+  61 % de vide, 2 pages).
+- **`compress: true` sur jsPDF** : sans lui, jsPDF embarque l'image en **pixels
+  bruts**. Le même relevé client pesait **13 Mo** ; il pèse **183 Ko** après
+  compression, pour un rendu identique.
+
+**Documents exportables** : facture (`/ventes/[id]`), reçu (`/recus/[id]`),
+rapport (`/rapports`), bon d'achat (`/achats/[id]`) et **relevé client**
+(`/clients/[id]` — coordonnées, récapitulatif, **solde à payer**, factures
+enregistrées et produits les plus achetés). Sur le relevé client, le solde suit
+la règle de couleur du §7.2 : **rouge dès que le client doit de l'argent, vert
+quand il n'a plus rien à payer** (`MoneyText due`).
 
 **Vérification automatisée** : `npm run verify:export` pilote un vrai navigateur
 via le protocole DevTools, ouvre une facture, déclenche réellement les deux
@@ -1820,6 +1864,7 @@ npm run sync:build       # Construire l'API de synchronisation
 |---|---|---|
 | `/` | Tableau de bord | 1 |
 | `/ventes` · `/ventes/nouvelle` · `/ventes/[id]` | Ventes : liste, création, détail + impression | 1 |
+| `/recus` | **Registre des reçus** : tous les encaissements et décaissements, filtres et pagination | 1 |
 | `/recus/[id]` | Reçu de paiement | 1 |
 | `/clients` · `/clients/[id]` · `/clients/[id]/paiements` | Clients, fiche, historique et soldes | 1 |
 | `/fournisseurs` · `/fournisseurs/[id]` · `/fournisseurs/[id]/paiements` | Fournisseurs, fiche et règlements | 1 |
@@ -1862,8 +1907,8 @@ npm run sync:build       # Construire l'API de synchronisation
 | Ouvriers | `GET|POST /api/workers` · `GET|PUT|DELETE /api/workers/[id]` — **table unique** partagée par les chantiers, la briqueterie et l'atelier |
 | Stocks | `GET /api/stocks` · `GET /api/stocks/mouvements` · `POST /api/stocks/adjust` · `GET /api/stocks/summary` |
 | Achats | `GET|POST /api/achats` · `GET|PUT|DELETE /api/achats/[id]` · `GET /api/achats/stats` (`?supplierId=` pour la fiche fournisseur) |
-| Ventes | `GET|POST /api/ventes` · `GET|PUT|DELETE /api/ventes/[id]` · `POST /api/ventes/[id]/annuler` · `GET /api/ventes/stats` |
-| Paiements | `GET|POST /api/paiements` · `GET /api/paiements/[id]` (reçu) |
+| Ventes | `GET|POST /api/ventes` · `GET|PUT|DELETE /api/ventes/[id]` · `POST /api/ventes/[id]/valider` · `POST /api/ventes/[id]/annuler` · `GET /api/ventes/stats` |
+| Paiements | `GET|POST /api/paiements` · `GET /api/paiements/[id]` (reçu) · `GET /api/recus` (registre des reçus, document + tiers résolus) |
 | Dépenses | `GET|POST /api/depenses` · `GET|PUT|DELETE /api/depenses/[id]` · `GET /api/depenses/stats` |
 | Caisse | `GET|POST /api/caisse` (mouvements + résumé, mouvement manuel) · `GET /api/caisse/sessions` (session ouverte, historique, résumé) · `POST /api/caisse/sessions` (ouverture) · `PUT /api/caisse/sessions` (clôture) |
 | Chantiers | `GET|POST /api/chantiers` · `GET|PUT|DELETE /api/chantiers/[id]` · `PUT /api/chantiers/[id]/devis` · `GET|POST|DELETE /api/chantiers/[id]/materiaux` · `GET|POST|DELETE /api/chantiers/[id]/ouvriers` |
@@ -1905,8 +1950,9 @@ npm run db:studio          # Ouvrir Drizzle Studio
 (`APP_USER` / `APP_PASSWORD` pour changer les identifiants) :
 
 ```bash
-npm run verify:routes      # Découvre et appelle les 34 pages et les 71 routes d'API : aucune erreur 500 tolérée
+npm run verify:routes      # Découvre et appelle les 35 pages et les 72 routes d'API : aucune erreur 500 tolérée
 npm run verify:purchases   # Parcours d'achat de bout en bout (21 contrôles) : stock, caisse, dette, numérotation
+npm run verify:draft       # Politique du brouillon de vente (23 contrôles) : ni stock, ni caisse, ni sync, puis validation
 npm run verify:export      # Export PDF / image / WhatsApp dans un navigateur réel (CDP sur le port 9222)
 ```
 

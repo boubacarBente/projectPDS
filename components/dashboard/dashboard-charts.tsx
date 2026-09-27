@@ -12,7 +12,9 @@ import {
   Tooltip,
   Legend,
   Filler,
+  type Chart,
   type ChartOptions,
+  type Plugin,
 } from 'chart.js';
 import { Bar, Doughnut, Line } from 'react-chartjs-2';
 import { formatCurrencyCompact } from '@/lib/format';
@@ -153,6 +155,91 @@ export function MonthlyEvolutionChart({
   return (
     <div className="h-56 sm:h-64">
       <Bar data={chartData} options={BASE_OPTIONS} />
+    </div>
+  );
+}
+
+/**
+ * Achats d'**un client**, mois par mois (fiche client).
+ *
+ * Même rendu que `MonthlyEvolutionChart` (mêmes options, même palette lue dans
+ * les variables CSS du thème), mais une **seule** série : les totaux mensuels
+ * des factures du client, agrégés côté page à partir des factures déjà
+ * chargées (`GET /api/clients/[id]`). Aucun montant n'est inventé : un mois sans
+ * facture vaut **0** et reste affiché, la période est donc lisible telle quelle.
+ *
+ * Le total de la période est écrit au centre du graphe par un greffon Chart.js
+ * (`afterDatasetsDraw`) — équivalent du montant central de la maquette, sans
+ * toucher aux données ni au rendu des barres.
+ */
+export function CustomerMonthlyPurchasesChart({
+  data,
+  currency = 'GNF',
+}: {
+  data: { month: string; total: number }[];
+  currency?: string;
+}) {
+  const colors = useMemo(() => palette(), []);
+
+  const chartData = useMemo(
+    () => ({
+      labels: data.map((d) => {
+        const label = formatMonthYear(`${d.month}-01`);
+        return label.replace(/^\w/, (c) => c.toUpperCase());
+      }),
+      datasets: [
+        {
+          label: 'Achats du client',
+          data: data.map((d) => d.total),
+          backgroundColor: colors[0],
+          borderRadius: 6,
+          maxBarThickness: 26,
+        },
+      ],
+    }),
+    [data, colors],
+  );
+
+  const total = useMemo(() => data.reduce((sum, d) => sum + d.total, 0), [data]);
+
+  /**
+   * Greffon local : total de la période au centre du graphe. Instancié par
+   * `useMemo` pour que React ne recrée pas le greffon à chaque rendu.
+   */
+  const options: ChartOptions<'bar'> = useMemo(() => {
+    const totalPlugin: Plugin<'bar'> = {
+      id: 'totalAchatsClient',
+      afterDatasetsDraw: (chart: Chart<'bar'>) => {
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+
+        const centerX = (chartArea.left + chartArea.right) / 2;
+        const centerY = (chartArea.top + chartArea.bottom) / 2;
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = cssVar('--color-base-content', 'currentColor');
+        ctx.globalAlpha = 0.35;
+        ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+        ctx.fillText('Total sur 12 mois', centerX, centerY - 14);
+        ctx.globalAlpha = 1;
+        ctx.font = '700 17px ui-sans-serif, system-ui, sans-serif';
+        ctx.fillText(
+          `${Number(total).toLocaleString('fr-FR')} ${currency}`,
+          centerX,
+          centerY + 8,
+        );
+        ctx.restore();
+      },
+    };
+
+    return { ...BASE_OPTIONS, plugins: { ...BASE_OPTIONS.plugins, totalPlugin } };
+  }, [total, currency]);
+
+  return (
+    <div className="h-56 sm:h-64">
+      <Bar data={chartData} options={options} />
     </div>
   );
 }

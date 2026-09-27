@@ -1,7 +1,7 @@
 import type { Action } from '@/lib/permissions';
 
 /**
- * Navigation principale : **6 groupes, 18 modules** (README §5.4).
+ * Navigation principale : **6 groupes, 19 modules** (README §5.4).
  *
  * Un menu à plat serait illisible avec 18 modules — d'où les groupes. Chaque
  * entrée porte la **permission** qui la rend visible : le menu est filtré par
@@ -34,6 +34,7 @@ export type IconKey =
   | 'bricks'
   | 'workshop'
   | 'cash'
+  | 'receipts'
   | 'expenses'
   | 'users'
   | 'settings'
@@ -76,6 +77,7 @@ export const NAVIGATION: NavGroup[] = [
     title: 'Finances',
     items: [
       { href: '/caisse', label: 'Caisse', iconKey: 'cash', action: 'cash.view' },
+      { href: '/recus', label: 'Reçus', iconKey: 'receipts', action: 'payments.view' },
       { href: '/depenses', label: 'Dépenses', iconKey: 'expenses', action: 'expenses.view' },
     ],
   },

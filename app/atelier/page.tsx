@@ -282,6 +282,16 @@ export default function AtelierPage() {
   const columns = useMemo<Column<FurnitureOrderRow>[]>(
     () => [
       {
+        key: 'promisedDate',
+        label: 'Promis',
+        className: 'whitespace-nowrap',
+        render: (order) => (
+          <span className="tabular text-sm text-base-content/70">
+            {formatDateShort(order.promisedDate)}
+          </span>
+        ),
+      },
+      {
         key: 'orderNumber',
         label: 'N° commande',
         primary: true,
@@ -343,16 +353,6 @@ export default function AtelierPage() {
         hideOnMobile: true,
         render: (order) => (
           <span className="text-sm text-base-content/70">{order.dimensions || '—'}</span>
-        ),
-      },
-      {
-        key: 'promisedDate',
-        label: 'Promis',
-        className: 'whitespace-nowrap',
-        render: (order) => (
-          <span className="tabular text-sm text-base-content/70">
-            {formatDateShort(order.promisedDate)}
-          </span>
         ),
       },
       {

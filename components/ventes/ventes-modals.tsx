@@ -39,7 +39,7 @@ import {
 import { useSettings } from '@/app/parametres/page';
 import { usePermission } from '@/components/role-gate';
 import { formatDateShort } from '@/lib/date-format';
-import { formatNumber, today } from '@/lib/format';
+import { formatCurrency, formatNumber, today } from '@/lib/format';
 import type {
   PaymentSchedule as LibPaymentSchedule,
   SalesInvoiceItemRow as LibSalesInvoiceItemRow,
@@ -394,14 +394,20 @@ export function InvoiceDetailModal({
   invoice,
   detail,
   onOpenPayment,
+  onOpenValidate,
+  canValidate = false,
   showPrintLink = true,
 }: {
   isOpen: boolean;
   onClose: () => void;
   invoice: SalesInvoiceRow | null;
   detail: DetailLazyState;
-  /** Ouvre la modale d'encaissement (facture encore due). */
+  /** Ouvre la modale d'encaissement (facture validée encore due). */
   onOpenPayment?: () => void;
+  /** Ouvre la confirmation de validation (brouillon uniquement). */
+  onOpenValidate?: () => void;
+  /** `sales.update` — l'appelant seul connaît les permissions de l'utilisateur. */
+  canValidate?: boolean;
   /** Le lien « Voir la facture » n'a pas de sens depuis la page facture elle-même. */
   showPrintLink?: boolean;
 }) {
@@ -457,6 +463,14 @@ export function InvoiceDetailModal({
 
   const paymentColumns = [
     {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (payment: PaymentRow) => (
+        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+      ),
+    },
+    {
       key: 'receiptNumber',
       label: 'Reçu',
       primary: true,
@@ -468,14 +482,6 @@ export function InvoiceDetailModal({
         >
           {payment.receiptNumber}
         </Link>
-      ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (payment: PaymentRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
       ),
     },
     {
@@ -649,7 +655,16 @@ export function InvoiceDetailModal({
               Voir la facture
             </Link>
           )}
-          {invoice && canPay && remaining > 0.001 && !isCancelled && onOpenPayment && (
+          {invoice && canValidate && invoice.status === 'draft' && onOpenValidate && (
+            <button
+              type="button"
+              className="btn btn-success min-h-11 sm:min-h-0"
+              onClick={onOpenValidate}
+            >
+              Valider la vente
+            </button>
+          )}
+          {invoice && canPay && invoice.status === 'active' && remaining > 0.001 && onOpenPayment && (
             <button
               type="button"
               className="btn btn-primary min-h-11 sm:min-h-0"
@@ -996,5 +1011,67 @@ export function CancelSaleDialog({
         />
       </FormField>
     </ConfirmDialog>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. Validation d'un brouillon (§10.6)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Confirmation du passage `draft` → `active`.
+ *
+ * La validation est **le** moment où la vente devient réelle : le stock sort
+ * définitivement et la facture entre dans le chiffre d'affaires. La modale
+ * énonce ces conséquences avant l'action — un brouillon ne se valide pas par
+ * inadvertance.
+ */
+export function ValidateSaleDialog({
+  isOpen,
+  onClose,
+  onConfirm,
+  invoice,
+  isSubmitting,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void | Promise<void>;
+  invoice: SalesInvoiceRow | null;
+  isSubmitting: boolean;
+}) {
+  return (
+    <ConfirmDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      onConfirm={onConfirm}
+      title="Valider la vente"
+      tone="success"
+      confirmLabel="Valider la vente"
+      isSubmitting={isSubmitting}
+      message={
+        <>
+          Le brouillon <strong className="tabular">{invoice?.invoiceNumber ?? '—'}</strong> de{' '}
+          <strong>{invoice?.customerName || 'Client comptoir'}</strong> deviendra une{' '}
+          <strong>facture validée</strong>. Le numéro de facture ne change pas.
+          <span className="mt-2 block rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-warning">
+            Le stock sort <strong>définitivement</strong> (une ligne par produit) et la vente entre
+            dans le chiffre d&apos;affaires. Si le stock est devenu insuffisant depuis
+            l&apos;enregistrement du brouillon, la validation est refusée et rien n&apos;est écrit.
+          </span>
+          <span className="mt-2 block text-xs text-base-content/60">
+            Aucun encaissement n&apos;est créé : un brouillon ne porte pas d&apos;argent. Le paiement
+            s&apos;enregistre ensuite, normalement. Une fois validée, la vente ne peut plus être
+            supprimée — seulement annulée avec motif (stock inversé, caisse contre-passée).
+          </span>
+          {invoice && invoice.amountPaid > 0.001 && (
+            <span className="mt-2 block rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-warning">
+              Ce brouillon porte déjà un encaissement de{' '}
+              <strong>{formatCurrency(invoice.amountPaid)}</strong> (enregistré avant la garde) : il
+              est <strong>conservé</strong> à la validation.
+            </span>
+          )}
+        </>
+      }
+    />
   );
 }

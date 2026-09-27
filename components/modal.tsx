@@ -10,6 +10,15 @@ interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   /** Force full-screen on mobile (bottom sheet style). Default false. */
   fullScreenMobile?: boolean;
+  /**
+   * Pied d'actions **épinglé en bas du cadre** : il ne fait pas partie de la
+   * zone de défilement (le titre reste visible, seul le contenu défile) et se
+   * place à 15 px du bord inférieur de la modale (`pb-[15px]` ci-dessous).
+   *
+   * Sans ce paramètre, rien ne change pour les autres modales : le contenu
+   * entier défile dans la boîte, avec son rembourrage habituel.
+   */
+  footer?: React.ReactNode;
 }
 
 const sizeClasses = {
@@ -19,7 +28,8 @@ const sizeClasses = {
   xl: 'max-w-4xl',
 };
 
-export function Modal({ isOpen, onClose, title, children, size = 'md', fullScreenMobile = false }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, size = 'md', fullScreenMobile = false, footer }: ModalProps) {
+  const hasFooter = footer !== undefined && footer !== null;
   return (
     <AnimatePresence>
       {isOpen && (
@@ -41,18 +51,30 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', fullScree
             exit={{ opacity: 0, y: fullScreenMobile ? 100 : -50, scale: 0.97 }}
             transition={{ type: 'spring', duration: 0.5, bounce: fullScreenMobile ? 0 : 0.2 }}
             className={`modal-box ${sizeClasses[size]} relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto
+              ${hasFooter ? 'flex flex-col pb-[15px]' : ''}
               ${fullScreenMobile
                 ? 'w-full rounded-b-none rounded-t-2xl sm:rounded-2xl sm:my-8 sm:mx-auto'
                 : 'w-[calc(100%-1rem)] sm:w-full mx-auto my-2 sm:my-8'
               }`}
           >
             {title && (
-              <div className="flex items-center justify-between border-b border-base-200 pb-3 sm:pb-4">
+              <div
+                className={`flex items-center justify-between border-b border-base-200 pb-3 sm:pb-4 ${
+                  hasFooter ? 'shrink-0' : ''
+                }`}
+              >
                 <h3 className="text-base sm:text-lg font-bold">{title}</h3>
                 <button onClick={onClose} className="btn btn-sm btn-circle btn-ghost hover:bg-base-300 shrink-0" aria-label="Fermer">✕</button>
               </div>
             )}
-            <div className={title ? 'py-3 sm:py-4' : ''}>{children}</div>
+            <div
+              className={`${title ? 'py-3 sm:py-4' : ''} ${
+                hasFooter ? 'min-h-0 flex-1 overflow-y-auto' : ''
+              }`}
+            >
+              {children}
+            </div>
+            {hasFooter && <div className="shrink-0">{footer}</div>}
           </motion.div>
         </div>
       )}

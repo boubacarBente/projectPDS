@@ -40,6 +40,7 @@ import {
   CancelSaleDialog,
   InvoiceDetailModal,
   SalePaymentModal,
+  ValidateSaleDialog,
   companyFromSettings,
   normalizeInvoiceRow,
   normalizeItemRow,
@@ -93,7 +94,9 @@ export default function VenteDetailPage() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showValidateModal, setShowValidateModal] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -401,6 +404,42 @@ export default function VenteDetailPage() {
   };
 
   /* ------------------------------------------------------------------
+   * Validation d'un brouillon (§10.6)
+   * ------------------------------------------------------------------ */
+
+  /**
+   * `POST /api/ventes/[id]/valider` — corps vide : le serveur relit les lignes
+   * figées en base, contrôle le stock à cet instant puis écrit les sorties.
+   * Aucune ressaisie, donc aucune divergence possible avec le brouillon affiché.
+   */
+  const handleValidate = async () => {
+    if (!data) return;
+    setIsValidating(true);
+
+    try {
+      const response = await fetch(`/api/ventes/${data.invoice.id}/valider`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "La vente n'a pas pu être validée."));
+      }
+
+      toast.success(`Vente ${data.invoice.invoiceNumber} validée : le stock est à jour.`);
+      setShowValidateModal(false);
+      refresh();
+    } catch (caught) {
+      toast.error(
+        caught instanceof Error ? caught.message : "La vente n'a pas pu être validée.",
+        { autoClose: 8000 },
+      );
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  /* ------------------------------------------------------------------
    * Rendu
    * ------------------------------------------------------------------ */
 
@@ -448,9 +487,19 @@ export default function VenteDetailPage() {
 
   const { invoice, items, payments, schedule } = data;
   const isCancelled = invoice.status === 'cancelled';
-  const canCollect = canPay && !isCancelled && schedule.remaining > 0.001;
+  const isDraft = invoice.status === 'draft';
+  /* Un brouillon n'est jamais encaissable : il n'a ni stock ni caisse. */
+  const canCollect = canPay && invoice.status === 'active' && schedule.remaining > 0.001;
 
   const paymentColumns = [
+    {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (payment: PaymentRow) => (
+        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+      ),
+    },
     {
       key: 'receiptNumber',
       label: 'Reçu',
@@ -463,14 +512,6 @@ export default function VenteDetailPage() {
         >
           {payment.receiptNumber}
         </Link>
-      ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (payment: PaymentRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
       ),
     },
     {
@@ -535,14 +576,25 @@ export default function VenteDetailPage() {
                   Enregistrer un paiement
                 </button>
               )}
+              {canUpdate && isDraft && (
+                <Tooltip label="Valider ce brouillon : le stock sort définitivement et la vente entre dans le chiffre d’affaires">
+                  <button
+                    type="button"
+                    className="btn btn-success min-h-11 sm:min-h-0"
+                    onClick={() => setShowValidateModal(true)}
+                  >
+                    Valider la vente
+                  </button>
+                </Tooltip>
+              )}
               {canUpdate && !isCancelled && (
-                <Tooltip label="Corriger cette vente : ouvrir le formulaire de création prérempli">
+                <Tooltip label="Ouvrir le formulaire de vente. Il s’ouvre vierge : aucune ligne de cette facture n’est reprise.">
                   <button
                     type="button"
                     className="btn btn-outline min-h-11 sm:min-h-0"
                     onClick={() => router.push('/ventes/nouvelle')}
                   >
-                    Corriger
+                    Nouvelle vente
                   </button>
                 </Tooltip>
               )}
@@ -558,6 +610,37 @@ export default function VenteDetailPage() {
             </>
           }
         />
+
+        {/* Bandeau brouillon : l'état du document ne doit jamais être ambigu. */}
+        {isDraft && !isCancelled && (
+          <div className="rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold">Brouillon — vente non validée</span>
+              <StatusBadge status="draft" kind="invoice" />
+            </div>
+            <p className="mt-1.5 break-words text-base-content/80">
+              Aucun mouvement de stock, aucune entrée dans le chiffre d&apos;affaires : cette vente
+              n&apos;existe pas encore comptablement. Elle ne peut pas être encaissée en l&apos;état.
+            </p>
+            {invoice.amountPaid > 0.001 && (
+              <p className="mt-1.5 rounded-lg border border-warning/50 bg-base-100 px-2.5 py-1.5 text-warning">
+                Un encaissement de <strong>{formatCurrency(invoice.amountPaid)}</strong> existe déjà
+                sur ce brouillon (enregistré avant la mise en place de la garde). Il sera{' '}
+                <strong>conservé</strong> si vous validez la vente, et <strong>contre-passé en
+                caisse</strong> si vous l&apos;annulez.
+              </p>
+            )}
+            {canUpdate && (
+              <button
+                type="button"
+                className="btn btn-success btn-sm mt-2.5 min-h-11 sm:min-h-0"
+                onClick={() => setShowValidateModal(true)}
+              >
+                Valider la vente
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Bandeau d'annulation : aucun doute sur l'état de la facture. */}
         {isCancelled && (
@@ -747,6 +830,11 @@ export default function VenteDetailPage() {
         onClose={() => setShowDetailModal(false)}
         invoice={invoice}
         detail={pageDetail}
+        canValidate={canUpdate}
+        onOpenValidate={() => {
+          setShowDetailModal(false);
+          setShowValidateModal(true);
+        }}
         onOpenPayment={canCollect ? () => setShowPaymentModal(true) : undefined}
         showPrintLink={false}
       />
@@ -772,6 +860,16 @@ export default function VenteDetailPage() {
         onConfirm={handleCancel}
         invoice={invoice}
         isSubmitting={isCancelling}
+      />
+
+      <ValidateSaleDialog
+        isOpen={showValidateModal}
+        onClose={() => {
+          if (!isValidating) setShowValidateModal(false);
+        }}
+        onConfirm={handleValidate}
+        invoice={invoice}
+        isSubmitting={isValidating}
       />
     </div>
   );

@@ -390,6 +390,14 @@ export default function AchatDetailPage() {
 
   const paymentColumns = [
     {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (payment: PaymentRow) => (
+        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+      ),
+    },
+    {
       key: 'receiptNumber',
       label: 'Reçu',
       primary: true,
@@ -401,14 +409,6 @@ export default function AchatDetailPage() {
         >
           {payment.receiptNumber}
         </Link>
-      ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (payment: PaymentRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
       ),
     },
     {

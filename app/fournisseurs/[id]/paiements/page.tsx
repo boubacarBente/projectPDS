@@ -173,15 +173,15 @@ export default function FournisseurPaiementsPage() {
 
   const columns: Column<SupplierPaymentRecord>[] = [
     {
+      key: 'date',
+      label: 'Date',
+      render: (payment) => formatDateShort(payment.date),
+    },
+    {
       key: 'receiptNumber',
       label: 'Reçu',
       primary: true,
       render: (payment) => <span className="font-medium">{payment.receiptNumber}</span>,
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      render: (payment) => formatDateShort(payment.date),
     },
     {
       key: 'amount',

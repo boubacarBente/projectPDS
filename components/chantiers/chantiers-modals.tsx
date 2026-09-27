@@ -331,6 +331,14 @@ export function useJobSelectOptions(enabled: boolean) {
 
 export const jobColumns: Column<ServiceJobRow>[] = [
   {
+    key: 'startDate',
+    label: 'Début',
+    className: 'whitespace-nowrap',
+    render: (job) => (
+      <span className="tabular text-base-content/70">{formatDateShort(job.startDate)}</span>
+    ),
+  },
+  {
     key: 'reference',
     label: 'Référence',
     primary: true,
@@ -363,14 +371,6 @@ export const jobColumns: Column<ServiceJobRow>[] = [
     hideOnMobile: true,
     className: 'max-w-[14rem] truncate',
     render: (job) => <span title={job.siteAddress ?? ''}>{job.siteAddress || '—'}</span>,
-  },
-  {
-    key: 'startDate',
-    label: 'Début',
-    className: 'whitespace-nowrap',
-    render: (job) => (
-      <span className="tabular text-base-content/70">{formatDateShort(job.startDate)}</span>
-    ),
   },
   {
     key: 'status',
@@ -481,6 +481,14 @@ export const jobWorkerColumns: Column<ServiceJobWorkerRow>[] = [
 
 export const jobPaymentColumns: Column<PaymentRow>[] = [
   {
+    key: 'date',
+    label: 'Date',
+    className: 'whitespace-nowrap',
+    render: (payment) => (
+      <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+    ),
+  },
+  {
     key: 'receiptNumber',
     label: 'Reçu',
     primary: true,
@@ -488,14 +496,6 @@ export const jobPaymentColumns: Column<PaymentRow>[] = [
       <Link href={`/recus/${payment.id}`} className="font-semibold text-primary hover:underline">
         {payment.receiptNumber}
       </Link>
-    ),
-  },
-  {
-    key: 'date',
-    label: 'Date',
-    className: 'whitespace-nowrap',
-    render: (payment) => (
-      <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
     ),
   },
   {

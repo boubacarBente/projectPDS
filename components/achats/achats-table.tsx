@@ -55,6 +55,14 @@ export function AchatsTable({
 
   const columns = [
     {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (invoice: PurchaseInvoiceRow) => (
+        <span className="tabular text-base-content/70">{formatDateShort(invoice.date)}</span>
+      ),
+    },
+    {
       key: 'reference',
       label: 'Référence',
       primary: true,
@@ -82,14 +90,6 @@ export function AchatsTable({
         ) : (
           <span className="text-base-content/40">—</span>
         ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (invoice: PurchaseInvoiceRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(invoice.date)}</span>
-      ),
     },
     {
       key: 'dueDate',

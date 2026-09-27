@@ -13,6 +13,10 @@
  * Il n'existe **aucune suppression** de vente : l'action « Annuler » ouvre une
  * modale à motif obligatoire (§10.6), le serveur inverse les mouvements de stock
  * et contre-passe l'encaissement.
+ *
+ * Un **brouillon** n'a ni stock ni caisse : il se valide définitivement
+ * (`POST /api/ventes/[id]/valider`) ou s'annule sans contrepartie. Il n'est
+ * jamais encaissable tant qu'il n'est pas validé.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -35,6 +39,7 @@ import {
   CancelSaleDialog,
   InvoiceDetailModal,
   SalePaymentModal,
+  ValidateSaleDialog,
   normalizeInvoiceRow,
   readApiError,
   useInvoiceDetailLazy,
@@ -84,6 +89,8 @@ export default function VentesPage() {
   const canCreate = usePermission('sales.create');
   const canPay = usePermission('payments.create');
   const canCancel = usePermission('sales.cancel');
+  /** `sales.update` : valider un brouillon sort le stock définitivement. */
+  const canValidate = usePermission('sales.update');
 
   /* ------------------------------- État liste ------------------------------ */
   const [invoices, setInvoices] = useState<SalesInvoiceRow[]>([]);
@@ -114,9 +121,11 @@ export default function VentesPage() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showValidateModal, setShowValidateModal] = useState(false);
 
   const [activeInvoice, setActiveInvoice] = useState<SalesInvoiceRow | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
 
   const detail = useInvoiceDetailLazy(activeInvoice, showDetailModal, refreshToken);
 
@@ -321,6 +330,47 @@ export default function VentesPage() {
     setShowCancelModal(true);
   };
 
+  const openValidateModal = (invoice: SalesInvoiceRow) => {
+    setActiveInvoice(invoice);
+    setShowDetailModal(false);
+    setShowValidateModal(true);
+  };
+
+  /**
+   * Validation d'un brouillon : `POST /api/ventes/[id]/valider` (§10.6).
+   *
+   * Le corps est vide : le serveur relit les lignes figées en base et contrôle
+   * le stock au moment de la validation. Aucune ressaisie, donc, et aucun risque
+   * qu'un brouillon validé diffère de ce qui avait été enregistré.
+   */
+  const handleValidate = async () => {
+    if (!activeInvoice) return;
+    setIsValidating(true);
+
+    try {
+      const response = await fetch(`/api/ventes/${activeInvoice.id}/valider`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, "La vente n'a pas pu être validée."));
+      }
+
+      toast.success(`Vente ${activeInvoice.invoiceNumber} validée : le stock est à jour.`);
+      setShowValidateModal(false);
+      setActiveInvoice(null);
+      refresh();
+    } catch (caught) {
+      toast.error(
+        caught instanceof Error ? caught.message : "La vente n'a pas pu être validée.",
+        { autoClose: 8000 },
+      );
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
   /**
    * Annulation : `DELETE /api/ventes/[id]` (repli sur `POST …/annuler` si la
    * route imbriquée est la seule exposée) — **jamais** de suppression physique.
@@ -422,7 +472,14 @@ export default function VentesPage() {
           setSearch(value);
           setPage(1);
         }}
-        searchPlaceholder="Rechercher un numéro de facture ou un client…"
+        /*
+         * « n° » et non « numéro » : la chaîne « numéro » fait classer ce champ
+         * en CREDIT_CARD_NUMBER par la saisie automatique de Chrome, qui voit
+         * alors un formulaire de carte bancaire dans la barre de filtres (et
+         * affiche un avertissement sur une connexion non HTTPS). Vérifié dans
+         * `chrome://autofill-internals`. Ne pas rétablir « numéro ».
+         */
+        searchPlaceholder="Rechercher un n° de facture ou un client…"
         filters={
           <div className="w-full sm:w-52">
             <FilterSelect
@@ -530,10 +587,12 @@ export default function VentesPage() {
           isLoading={isLoading}
           canPay={canPay}
           canCancel={canCancel}
+          canValidate={canValidate}
           onOpenDetail={openDetailModal}
           onOpenInvoice={openInvoicePage}
           onOpenPayment={openPaymentModal}
           onOpenCancel={openCancelModal}
+          onOpenValidate={openValidateModal}
           emptyState={
             <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
               <EmptyState
@@ -576,6 +635,8 @@ export default function VentesPage() {
         onClose={() => setShowDetailModal(false)}
         invoice={activeInvoice}
         detail={detail}
+        canValidate={canValidate}
+        onOpenValidate={activeInvoice ? () => openValidateModal(activeInvoice) : undefined}
         onOpenPayment={
           activeInvoice ? () => openPaymentModal(activeInvoice) : undefined
         }
@@ -604,6 +665,16 @@ export default function VentesPage() {
         onConfirm={handleCancel}
         invoice={activeInvoice}
         isSubmitting={isCancelling}
+      />
+
+      <ValidateSaleDialog
+        isOpen={showValidateModal}
+        onClose={() => {
+          if (!isValidating) setShowValidateModal(false);
+        }}
+        onConfirm={handleValidate}
+        invoice={activeInvoice}
+        isSubmitting={isValidating}
       />
     </div>
   );

@@ -104,7 +104,12 @@ export type ExportBlock =
   | {
       kind: 'totals';
       title?: string;
-      rows: { label: string; value: string; tone?: 'normal' | 'strong' | 'success' | 'warning' }[];
+      rows: {
+        label: string;
+        value: string;
+        /** `danger` = rouge (somme due), `success` = vert (soldé ou encaissé). */
+        tone?: 'normal' | 'strong' | 'success' | 'warning' | 'danger';
+      }[];
     }
   /** Paragraphe libre. */
   | { kind: 'paragraph'; title?: string; text: string };
@@ -147,6 +152,8 @@ function toneColor(tone: string | undefined): string {
       return COLORS.success;
     case 'warning':
       return COLORS.warning;
+    case 'danger':
+      return COLORS.danger;
     case 'strong':
       return COLORS.ink;
     default:
@@ -431,7 +438,14 @@ export function renderExportDocument(input: ExportDocumentInput): string {
 async function captureHtml(html: string, width = 794): Promise<HTMLCanvasElement> {
   const iframe = document.createElement('iframe');
   iframe.setAttribute('aria-hidden', 'true');
-  iframe.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:1400px;border:none;background:${COLORS.surface};`;
+  /*
+   * Hauteur initiale **nulle** : le cadre ne doit pas dicter la hauteur du
+   * document. Avec un cadre de 1400 px, `scrollHeight` valait toujours 1400 —
+   * un document court (relevé client d'une page) était donc capturé avec une
+   * large bande blanche, qui produisait une **seconde page PDF presque vide**.
+   * On mesure la hauteur réelle du contenu juste après, puis on cadre dessus.
+   */
+  iframe.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:0;border:none;background:${COLORS.surface};`;
   document.body.appendChild(iframe);
 
   try {
@@ -455,7 +469,16 @@ async function captureHtml(html: string, width = 794): Promise<HTMLCanvasElement
       ),
     );
 
-    // Une passe de rendu avant la capture, pour que la mise en page soit figée.
+    // Hauteur réelle du contenu, une fois la mise en page figée.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    const contentHeight = Math.max(
+      200,
+      Math.ceil(frameDocument.documentElement.scrollHeight || frameDocument.body.scrollHeight || 0),
+    );
+    iframe.style.height = `${contentHeight}px`;
+
+    // Seconde passe : le cadre vient de changer de hauteur.
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
     return await html2canvas(frameDocument.body, {
@@ -465,7 +488,9 @@ async function captureHtml(html: string, width = 794): Promise<HTMLCanvasElement
       backgroundColor: COLORS.surface,
       logging: false,
       width,
+      height: contentHeight,
       windowWidth: width,
+      windowHeight: contentHeight,
     });
   } finally {
     iframe.remove();
@@ -481,7 +506,13 @@ export async function exportDocumentAsPDF(html: string, fileName: string): Promi
   const canvas = await captureHtml(html);
   const dataUrl = canvas.toDataURL('image/png');
 
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  /*
+   * `compress: true` n'est pas cosmétique : sans lui, jsPDF embarque l'image en
+   * pixels bruts (un relevé client de 1588 × 3000 px produisait **13 Mo** de
+   * PDF). La compression ramène le fichier à la taille du PNG, pour un rendu
+   * strictement identique.
+   */
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const margin = 8;

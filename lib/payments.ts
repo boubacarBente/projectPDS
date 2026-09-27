@@ -130,6 +130,27 @@ export async function createPayment(input: {
     throw new PaymentError('Impossible d’encaisser un document annulé');
   }
 
+  /*
+   * Un **brouillon** de vente (ou un achat non validé) n'a ni sortie de stock ni
+   * valeur comptable : l'encaisser ferait entrer de l'argent en caisse pour une
+   * pièce qui n'existe pas encore, et l'annulation du brouillon ne
+   * contre-passerait pas ce mouvement (`cancelSalesInvoice` ne contre-passe que
+   * les ventes **actives**). La règle est donc appliquée **ici**, côté serveur,
+   * et pas seulement dans le formulaire de vente (`lib/sales.ts`) : sans cela,
+   * `POST /api/paiements` resterait une porte dérobée.
+   *
+   * Les prestations (`service_job`) n'ont pas de statut « brouillon » : leur
+   * cycle de vie (`quote` → `pending` → `in_progress` → `completed`) reste
+   * inchangé, seul `cancelled` est refusé plus haut.
+   */
+  if (input.type !== 'service_job' && document.status !== 'active') {
+    throw new PaymentError(
+      input.type === 'sale'
+        ? `Impossible d’encaisser la facture ${document.invoiceNumber ?? ''} : c’est un brouillon. Validez la vente avant d’enregistrer un encaissement.`
+        : 'Impossible de régler une facture d’achat qui n’est pas validée',
+    );
+  }
+
   const existing = await rawGet<{ total: number | null }>(
     `SELECT SUM(amount) AS total FROM payments WHERE type = ? AND reference_id = ?`,
     [input.type, input.referenceId],
@@ -304,7 +325,8 @@ async function supplierNameOf(id: number | null): Promise<string> {
   return row?.name ?? 'Fournisseur';
 }
 
-export async function listPayments(options: {
+/** Filtres communs aux deux listes de paiements. */
+type PaymentFilters = {
   type?: PaymentType;
   referenceId?: number;
   customerId?: number;
@@ -312,14 +334,21 @@ export async function listPayments(options: {
   paymentMethod?: string;
   from?: string;
   to?: string;
-  search?: string;
-  page?: number;
-  limit?: number;
-} = {}): Promise<{ data: PaymentRow[]; total: number; page: number; limit: number; totalPages: number }> {
-  const page = Math.max(1, options.page ?? 1);
-  const limit = Math.max(1, Math.min(500, options.limit ?? 20));
-  const offset = (page - 1) * limit;
+};
 
+/**
+ * Construit la clause `WHERE` des filtres de `payments`.
+ *
+ * Extrait de `listPayments` pour être partagé avec `listReceipts` (registre des
+ * reçus) : les deux listes doivent filtrer **exactement** de la même façon, sans
+ * quoi un même reçu apparaîtrait ici et pas là. La recherche textuelle, elle,
+ * reste propre à chaque fonction (le registre cherche aussi dans le document et
+ * le tiers, ce que la liste d'un client n'a pas à faire).
+ */
+function buildPaymentFilterSql(options: PaymentFilters): {
+  conditions: string[];
+  args: (string | number)[];
+} {
   const conditions: string[] = [];
   const args: (string | number)[] = [];
 
@@ -355,6 +384,21 @@ export async function listPayments(options: {
     );
     args.push(options.supplierId);
   }
+
+  return { conditions, args };
+}
+
+export async function listPayments(options: PaymentFilters & {
+  search?: string;
+  page?: number;
+  limit?: number;
+} = {}): Promise<{ data: PaymentRow[]; total: number; page: number; limit: number; totalPages: number }> {
+  const page = Math.max(1, options.page ?? 1);
+  const limit = Math.max(1, Math.min(500, options.limit ?? 20));
+  const offset = (page - 1) * limit;
+
+  const { conditions, args } = buildPaymentFilterSql(options);
+
   if (options.search) {
     conditions.push('(p.receipt_number LIKE ? OR p.notes LIKE ?)');
     const like = `%${options.search}%`;
@@ -381,6 +425,107 @@ export async function listPayments(options: {
 
   return {
     data: rows.map(mapPaymentRow),
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit) || 1,
+  };
+}
+
+/** Un reçu du registre : le paiement, **plus** le document réglé et son tiers. */
+export type ReceiptRow = PaymentRow & {
+  /** Numéro du document réglé (`FAC-…`, `ACH-…`, référence de chantier). */
+  documentNumber: string | null;
+  /** Client (vente, prestation) ou fournisseur (achat). */
+  partyName: string | null;
+};
+
+/**
+ * Registre des reçus — **tous** les paiements, toutes origines confondues.
+ *
+ * `payments.reference_id` est **polymorphe** (vente, achat ou prestation) et
+ * volontairement sans clé étrangère : le document et le tiers sont donc résolus
+ * par sous-requêtes, une par type. Le `CASE` garantit qu'un paiement de vente ne
+ * va pas chercher un achat portant le même identifiant.
+ *
+ * La recherche couvre le numéro de reçu, la note, le **numéro de document** et
+ * le **nom du tiers** — c'est ce qu'un utilisateur tape pour retrouver un reçu.
+ */
+export async function listReceipts(options: PaymentFilters & {
+  search?: string;
+  page?: number;
+  limit?: number;
+} = {}): Promise<{ data: ReceiptRow[]; total: number; page: number; limit: number; totalPages: number }> {
+  const page = Math.max(1, options.page ?? 1);
+  const limit = Math.max(1, Math.min(500, options.limit ?? 20));
+  const offset = (page - 1) * limit;
+
+  const { conditions, args } = buildPaymentFilterSql(options);
+
+  if (options.search) {
+    const like = `%${options.search}%`;
+    conditions.push(`(
+      p.receipt_number LIKE ?
+      OR p.notes LIKE ?
+      OR (p.type = 'sale' AND p.reference_id IN (
+            SELECT id FROM sales_invoices WHERE invoice_number LIKE ? OR customer_name LIKE ?))
+      OR (p.type = 'purchase' AND p.reference_id IN (
+            SELECT a.id FROM purchase_invoices a
+            LEFT JOIN suppliers s ON s.id = a.supplier_id
+            WHERE a.reference LIKE ? OR s.name LIKE ?))
+      OR (p.type = 'service_job' AND p.reference_id IN (
+            SELECT j.id FROM service_jobs j
+            LEFT JOIN customers c ON c.id = j.customer_id
+            WHERE j.reference LIKE ? OR c.name LIKE ?))
+    )`);
+    args.push(like, like, like, like, like, like, like, like);
+  }
+
+  const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const documentNumberSql = `
+    CASE p.type
+      WHEN 'sale'     THEN (SELECT v.invoice_number FROM sales_invoices v WHERE v.id = p.reference_id)
+      WHEN 'purchase' THEN (SELECT a.reference      FROM purchase_invoices a WHERE a.id = p.reference_id)
+      ELSE                 (SELECT j.reference      FROM service_jobs j WHERE j.id = p.reference_id)
+    END`;
+
+  const partyNameSql = `
+    CASE p.type
+      WHEN 'sale'     THEN (SELECT v.customer_name FROM sales_invoices v WHERE v.id = p.reference_id)
+      WHEN 'purchase' THEN (SELECT s.name FROM purchase_invoices a
+                              LEFT JOIN suppliers s ON s.id = a.supplier_id
+                              WHERE a.id = p.reference_id)
+      ELSE                 (SELECT c.name FROM service_jobs j
+                              LEFT JOIN customers c ON c.id = j.customer_id
+                              WHERE j.id = p.reference_id)
+    END`;
+
+  const rows = await rawAll<any>(
+    `SELECT p.*, u.name AS user_name,
+            ${documentNumberSql} AS document_number,
+            ${partyNameSql} AS party_name
+     FROM payments p
+     LEFT JOIN users u ON u.id = p.user_id
+     ${whereSql}
+     ORDER BY p.date DESC, p.id DESC
+     LIMIT ? OFFSET ?`,
+    [...args, limit, offset],
+  );
+
+  const countRow = await rawGet<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM payments p ${whereSql}`,
+    args,
+  );
+
+  const total = Number(countRow?.total ?? 0);
+
+  return {
+    data: rows.map((row) => ({
+      ...mapPaymentRow(row),
+      documentNumber: (row.document_number ?? null) as string | null,
+      partyName: (row.party_name ?? null) as string | null,
+    })),
     total,
     page,
     limit,

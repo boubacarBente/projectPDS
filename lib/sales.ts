@@ -912,23 +912,26 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
         userId: input.userId ?? null,
       });
     }
-
-    // 7. Journal d'actions (seule une vente validée est journalisée).
-    await writeAudit({
-      user: await auditUser(input.userId),
-      action: 'create',
-      entity: 'sales_invoice',
-      entityId: invoiceId,
-      details: {
-        invoiceNumber,
-        customerName: customer.customerName,
-        total: totals.total,
-        amountPaid,
-        paymentStatus: amountPaid > 0 ? (amountPaid >= totals.total - 0.01 ? 'paid' : 'partial') : 'unpaid',
-        lines: items.length,
-      },
-    });
   }
+
+  // 7. Journal d'actions — **les deux** statuts sont tracés. Un brouillon
+  // consomme un numéro de facture et engage son auteur : le rendre invisible au
+  // journal rendrait l'historique menteur (§12).
+  await writeAudit({
+    user: await auditUser(input.userId),
+    action: 'create',
+    entity: 'sales_invoice',
+    entityId: invoiceId,
+    details: {
+      invoiceNumber,
+      customerName: customer.customerName,
+      total: totals.total,
+      amountPaid,
+      paymentStatus: amountPaid > 0 ? (amountPaid >= totals.total - 0.01 ? 'paid' : 'partial') : 'unpaid',
+      status,
+      lines: items.length,
+    },
+  });
 
   const created = await getSalesInvoice(invoiceId);
   if (!created) throw new Error('Facture créée mais introuvable');
@@ -1095,6 +1098,117 @@ export async function updateSalesInvoice(
 }
 
 /* ------------------------------------------------------------------ *
+ * Validation d'un brouillon (§10.6)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Valide un brouillon : c'est **le** passage `draft` → `active`.
+ *
+ * Le brouillon a déjà tout ce qu'il faut en base (en-tête, lignes et
+ * **instantanés** figés) : la validation ne redemande donc **aucune ressaisie**
+ * au poste — elle rejoue la fin de la chaîne d'enregistrement de §10.5 :
+ *
+ *   1. contrôle de stock **avant toute écriture** (le brouillon n'a rien sorti,
+ *      il n'y a donc aucune tolérance à accorder) ;
+ *   2. passage du statut à `active` ;
+ *   3. un mouvement `exit` par ligne ;
+ *   4. recalcul de `amount_paid` / `remaining_amount` / `payment_status` depuis
+ *      les `payments` réels (un brouillon ne peut pas en porter, mais le
+ *      recalcul garantit qu'aucun montant hérité ne subsiste) ;
+ *   5. journal d'actions (`action = validate`).
+ *
+ * Aucun encaissement n'est créé ici : le brouillon est validé « à crédit »
+ * (statut de paiement recalculé), et l'encaissement se fait ensuite par
+ * `POST /api/paiements` — désormais refusé tant que la vente est un brouillon.
+ *
+ * Le numéro de facture ne change pas : on valide la pièce existante.
+ */
+export async function validateSalesInvoice(
+  id: number,
+  user: SalesUserRef = null,
+): Promise<SalesInvoiceRow> {
+  const existing = await getInvoiceRecord(id);
+  if (!existing) throw new NotFoundError('Facture introuvable');
+  if (existing.status === 'cancelled') {
+    throw new ValidationError('Une facture annulée ne peut pas être validée');
+  }
+  if (existing.status === 'active') {
+    throw new ValidationError('Cette vente est déjà validée');
+  }
+
+  const previousItems = await getItemRecords(id);
+  if (previousItems.length === 0) {
+    throw new ValidationError(
+      'Ce brouillon ne contient aucune ligne : il ne peut pas être validé',
+    );
+  }
+
+  const missingProduct = previousItems.find((row) => Number(row.product_id) <= 0);
+  if (missingProduct) {
+    throw new ValidationError(
+      'Ce brouillon contient une ligne sans produit : corrigez la vente avant de la valider',
+    );
+  }
+
+  // Les lignes sont relues depuis les instantanés figés : aucune confiance
+  // accordée à un corps de requête, et aucune ressaisie au poste.
+  const lines: SalesLineInput[] = previousItems.map((row) => ({
+    productId: Number(row.product_id),
+    quantity: Number(row.quantity ?? 0),
+    unitPrice: Number(row.unit_price ?? 0),
+    discount: Number(row.discount ?? 0),
+  }));
+
+  // 1. Contrôle de stock AVANT toute écriture (mêmes règles et même message
+  // agrégé que la création). Une rupture entre-temps refuse la validation :
+  // c'est précisément à cet instant que la marchandise sort réellement.
+  const items = await buildSalesItems(lines);
+
+  // 2. Statut : le brouillon devient définitif.
+  await db
+    .update(salesInvoices)
+    .set({ status: 'active', updatedAt: new Date() })
+    .where(eq(salesInvoices.id, id));
+
+  await enqueueSyncWrite('sales_invoices', existing.syncId, 'update', {
+    invoice_number: existing.invoiceNumber,
+    status: 'active',
+  });
+
+  // 3. Sorties de stock : le brouillon n'en avait aucune.
+  for (const item of items) {
+    await addStockMovement(item.productId, 'exit', item.quantity, {
+      referenceType: 'sale',
+      referenceId: id,
+      motif: `vente ${existing.invoiceNumber}`,
+      userId: user?.id ?? null,
+    });
+  }
+
+  // 4. Les montants encaissés font toujours foi depuis `payments`.
+  await recomputeDocumentPayments('sale', id);
+
+  const validated = await getSalesInvoice(id);
+  if (!validated) throw new Error('Facture introuvable après validation');
+
+  await writeAudit({
+    user: user ? { id: user.id, name: user.name ?? 'Système' } : null,
+    action: 'validate',
+    entity: 'sales_invoice',
+    entityId: id,
+    details: {
+      invoiceNumber: existing.invoiceNumber,
+      customerName: existing.customerName,
+      total: validated.invoice.total,
+      lines: items.length,
+      previousStatus: 'draft',
+    },
+  });
+
+  return validated.invoice;
+}
+
+/* ------------------------------------------------------------------ *
  * Annulation (§10.6) — jamais de suppression physique
  * ------------------------------------------------------------------ */
 
@@ -1146,7 +1260,8 @@ export async function cancelSalesInvoice(
   let reversedStock = false;
   let refundedAmount = 0;
 
-  // Seule une vente validée a bougé le stock et la caisse.
+  // Le stock n'est rendu que par une vente **validée** : un brouillon n'a jamais
+  // rien sorti.
   if (wasActive) {
     for (const item of items) {
       const productId = item.product_id == null ? null : Number(item.product_id);
@@ -1161,19 +1276,26 @@ export async function cancelSalesInvoice(
       });
       reversedStock = true;
     }
+  }
 
-    refundedAmount = roundMoney(Number(existing.amountPaid ?? 0));
-    if (refundedAmount > 0) {
-      await addCashMovement({
-        type: 'expense',
-        amount: refundedAmount,
-        paymentMethod: existing.paymentMethod,
-        motif: `Contre-passation annulation vente ${existing.invoiceNumber}`,
-        referenceType: 'sale',
-        referenceId: id,
-        userId: user?.id ?? null,
-      });
-    }
+  /*
+   * La caisse, elle, est contre-passée dès qu'un encaissement **existe
+   * réellement** — y compris sur un brouillon. Un brouillon ne devrait jamais
+   * porter d'argent (`createPayment` le refuse, §10.6), mais des brouillons
+   * encaissés avant la mise en place de cette garde subsistent : sans cette
+   * contre-passation, l'argent resterait en caisse pour une facture annulée.
+   */
+  refundedAmount = roundMoney(Number(existing.amountPaid ?? 0));
+  if (refundedAmount > 0) {
+    await addCashMovement({
+      type: 'expense',
+      amount: refundedAmount,
+      paymentMethod: existing.paymentMethod,
+      motif: `Contre-passation annulation vente ${existing.invoiceNumber}`,
+      referenceType: 'sale',
+      referenceId: id,
+      userId: user?.id ?? null,
+    });
   }
 
   await writeAudit({

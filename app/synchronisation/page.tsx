@@ -537,6 +537,17 @@ export default function SynchronisationPage() {
   const conflictColumns = useMemo<Column<ConflictRow>[]>(
     () => [
       {
+        key: 'createdAt',
+        label: 'Détecté le',
+        hideOnMobile: true,
+        className: 'whitespace-nowrap',
+        render: (row) => (
+          <span className="tabular text-xs text-base-content/70">
+            {row.createdAt ? formatDateTime(row.createdAt as string) : '—'}
+          </span>
+        ),
+      },
+      {
         key: 'tableName',
         label: 'Table',
         primary: true,
@@ -558,17 +569,6 @@ export default function SynchronisationPage() {
           ) : (
             <Badge tone="info">Distant appliqué</Badge>
           ),
-      },
-      {
-        key: 'createdAt',
-        label: 'Détecté le',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.createdAt ? formatDateTime(row.createdAt as string) : '—'}
-          </span>
-        ),
       },
       {
         key: 'resolvedAt',

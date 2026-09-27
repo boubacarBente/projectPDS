@@ -16,12 +16,11 @@ import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { IconAction, RowActions } from '@/components/row-actions';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
-import { formatNumber } from '@/lib/format';
 import type { SalesInvoiceRow } from '@/components/ventes/ventes-modals';
 
-/** Une facture reste-t-elle encaissable ? (annulée ou soldée ⇒ non) */
+/** Une facture reste-t-elle encaissable ? (brouillon, annulée ou soldée ⇒ non) */
 export function canCollect(invoice: SalesInvoiceRow, canPay: boolean): boolean {
-  return canPay && invoice.status !== 'cancelled' && invoice.remainingAmount > 0.001;
+  return canPay && invoice.status === 'active' && invoice.remainingAmount > 0.001;
 }
 
 export function VentesTable({
@@ -29,10 +28,12 @@ export function VentesTable({
   isLoading,
   canPay,
   canCancel,
+  canValidate,
   onOpenDetail,
   onOpenInvoice,
   onOpenPayment,
   onOpenCancel,
+  onOpenValidate,
   emptyState,
 }: {
   data: SalesInvoiceRow[];
@@ -40,16 +41,27 @@ export function VentesTable({
   isLoading: boolean;
   canPay: boolean;
   canCancel: boolean;
+  /** `sales.update` : détenu par les rôles qui peuvent rendre un brouillon définitif. */
+  canValidate: boolean;
   onOpenDetail: (invoice: SalesInvoiceRow) => void;
   /** Ouvre la page facture complète (`/ventes/[id]`) : impression et exports. */
   onOpenInvoice: (invoice: SalesInvoiceRow) => void;
   onOpenPayment: (invoice: SalesInvoiceRow) => void;
   onOpenCancel: (invoice: SalesInvoiceRow) => void;
+  onOpenValidate: (invoice: SalesInvoiceRow) => void;
   emptyState: ReactNode;
 }) {
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
   const columns = [
+    {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (invoice: SalesInvoiceRow) => (
+        <span className="tabular text-base-content/70">{formatDateShort(invoice.date)}</span>
+      ),
+    },
     {
       key: 'invoiceNumber',
       label: 'Numéro',
@@ -61,14 +73,6 @@ export function VentesTable({
             <StatusBadge status={invoice.status} kind="invoice" />
           )}
         </span>
-      ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (invoice: SalesInvoiceRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(invoice.date)}</span>
       ),
     },
     {
@@ -109,15 +113,6 @@ export function VentesTable({
         <StatusBadge status={invoice.paymentStatus} kind="payment" />
       ),
     },
-    {
-      key: 'itemCount',
-      label: 'Lignes',
-      hideOnMobile: true,
-      className: 'text-right whitespace-nowrap',
-      render: (invoice: SalesInvoiceRow) => (
-        <span className="tabular text-base-content/60">{formatNumber(invoice.itemCount)}</span>
-      ),
-    },
   ] satisfies Column<SalesInvoiceRow>[];
 
   return (
@@ -141,6 +136,14 @@ export function VentesTable({
               tone="primary"
               label="Enregistrer un paiement"
               onClick={() => onOpenPayment(invoice)}
+            />
+          )}
+          {canValidate && invoice.status === 'draft' && (
+            <IconAction
+              icon="activate"
+              tone="success"
+              label="Valider le brouillon (sortie de stock définitive)"
+              onClick={() => onOpenValidate(invoice)}
             />
           )}
           {canCancel && invoice.status !== 'cancelled' && (

@@ -21,6 +21,7 @@ export function MoneyText({
   currency,
   className = '',
   colored = false,
+  due = false,
   bold = false,
 }: {
   value: number | null | undefined;
@@ -28,10 +29,29 @@ export function MoneyText({
   className?: string;
   /** Colore en rouge si négatif, en vert si positif (utile pour un solde). */
   colored?: boolean;
+  /**
+   * Montant **restant dû** : rouge dès qu'il reste quelque chose à payer, vert
+   * quand c'est soldé.
+   *
+   * `colored` ne peut pas exprimer cette règle : un reste dû est un montant
+   * **positif**, que `colored` peint en vert. Les soldes clients (fiche, liste,
+   * export) passent donc par `due`, conformément au README §7.2.
+   */
+  due?: boolean;
   bold?: boolean;
 }) {
   const amount = typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  const tone = colored ? (amount < 0 ? 'text-error' : amount > 0 ? 'text-success' : '') : '';
+  const tone = due
+    ? amount > 0.001
+      ? 'text-error'
+      : 'text-success'
+    : colored
+      ? amount < 0
+        ? 'text-error'
+        : amount > 0
+          ? 'text-success'
+          : ''
+      : '';
 
   return (
     <span className={`money tabular ${tone} ${bold ? 'font-semibold' : ''} ${className}`.trim()}>

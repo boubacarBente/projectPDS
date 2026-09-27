@@ -330,6 +330,14 @@ export function useBrickSelectOptions(enabled: boolean) {
 
 export const brickProductionColumns: Column<BrickProductionRow>[] = [
   {
+    key: 'startDate',
+    label: 'Début',
+    className: 'whitespace-nowrap',
+    render: (production) => (
+      <span className="tabular text-base-content/70">{formatDateShort(production.startDate)}</span>
+    ),
+  },
+  {
     key: 'batchNumber',
     label: 'Lot',
     primary: true,
@@ -350,14 +358,6 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
     label: 'Dimensions',
     hideOnMobile: true,
     render: (production) => <span className="text-sm">{production.dimensions || '—'}</span>,
-  },
-  {
-    key: 'startDate',
-    label: 'Début',
-    className: 'whitespace-nowrap',
-    render: (production) => (
-      <span className="tabular text-base-content/70">{formatDateShort(production.startDate)}</span>
-    ),
   },
   {
     key: 'stage',

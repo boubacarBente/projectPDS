@@ -533,7 +533,11 @@ export default function BriqueteriePage() {
           setSearch(value);
           setPage(1);
         }}
-        searchPlaceholder="Rechercher un numéro de lot, un type, une note…"
+        /*
+         * « n° » et non « numéro » : voir `app/ventes/page.tsx` — la chaîne
+         * « numéro » fait classer le champ en CREDIT_CARD_NUMBER par Chrome.
+         */
+        searchPlaceholder="Rechercher un n° de lot, un type, une note…"
         filters={
           <>
             <FilterSelect

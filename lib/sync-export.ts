@@ -301,6 +301,23 @@ export async function buildSyncPackage(options: { deviceName?: string } = {}): P
     return map;
   };
 
+  /*
+   * Les brouillons de vente restent **strictement locaux** : on ne transporte
+   * que des pièces comptables. `selectTableRows` renvoie toutes les colonnes
+   * sauf `id`, d'où cette lecture préalable des identifiants locaux — elle sert
+   * à écarter aussi les lignes de détail de ces factures, sans quoi elles
+   * arriveraient en quarantaine (parent manquant) sur le poste destinataire.
+   */
+  const draftInvoiceIds = new Set<number>();
+  try {
+    const drafts = await rawAll<{ id: number }>(
+      `SELECT id FROM sales_invoices WHERE status = 'draft'`,
+    );
+    for (const row of drafts) draftInvoiceIds.add(Number(row.id));
+  } catch {
+    /* table absente sur ce poste : il n'y a rien à exclure */
+  }
+
   for (const table of SYNC_ORDER) {
     const spec = SYNC_TABLES[table];
 
@@ -316,6 +333,14 @@ export async function buildSyncPackage(options: { deviceName?: string } = {}): P
     const tableRows: SyncRow[] = [];
 
     for (const raw of rawRows) {
+      // Un brouillon de vente — et ses lignes — ne quitte jamais son poste :
+      // ce n'est pas une pièce comptable (ni stock, ni caisse, ni reçu), il peut
+      // encore être « supprimé » localement, et une annulation de brouillon
+      // n'est jamais transmise. Le jour où il est validé, la ligne repart
+      // normalement en `active` dans le paquet suivant.
+      if (table === 'sales_invoices' && raw.status === 'draft') continue;
+      if (table === 'sales_invoice_items' && draftInvoiceIds.has(Number(raw.invoice_id))) continue;
+
       const row = buildRow(table, spec, raw);
       if (!row) continue;
 

@@ -533,6 +533,14 @@ export function PurchaseDetailModal({
 
   const paymentColumns = [
     {
+      key: 'date',
+      label: 'Date',
+      className: 'whitespace-nowrap',
+      render: (payment: PaymentRow) => (
+        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
+      ),
+    },
+    {
       key: 'receiptNumber',
       label: 'Reçu',
       primary: true,
@@ -544,14 +552,6 @@ export function PurchaseDetailModal({
         >
           {payment.receiptNumber}
         </Link>
-      ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (payment: PaymentRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
       ),
     },
     {

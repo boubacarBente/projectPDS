@@ -339,17 +339,17 @@ export function SupplierDetailModal({
 
   const purchaseColumns: Column<SupplierPurchaseEntry>[] = [
     {
+      key: 'date',
+      label: 'Date',
+      render: (purchase) => formatDateShort(purchase.date),
+    },
+    {
       key: 'reference',
       label: 'N° facture',
       primary: true,
       render: (purchase) => (
         <span className="font-medium">{purchase.reference}</span>
       ),
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      render: (purchase) => formatDateShort(purchase.date),
     },
     {
       key: 'total',

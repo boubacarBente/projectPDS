@@ -148,6 +148,11 @@ export default function FournisseurDetailPage() {
 
   const purchaseColumns: Column<SupplierPurchaseEntry>[] = [
     {
+      key: 'date',
+      label: 'Date',
+      render: (purchase) => formatDateShort(purchase.date),
+    },
+    {
       key: 'reference',
       label: 'N° facture',
       primary: true,
@@ -163,11 +168,6 @@ export default function FournisseurDetailPage() {
       label: 'Réf. fournisseur',
       hideOnMobile: true,
       render: (purchase) => purchase.supplierReference || '—',
-    },
-    {
-      key: 'date',
-      label: 'Date',
-      render: (purchase) => formatDateShort(purchase.date),
     },
     {
       key: 'dueDate',
