@@ -188,17 +188,32 @@ function MetricCard({
   hint,
   tone,
   icon,
+  iconTooltip,
 }: {
   label: string;
   value: React.ReactNode;
   hint?: React.ReactNode;
   tone: PastilleTone;
   icon: React.ReactNode;
+  /**
+   * Explication de la métrique, affichée au survol (et au focus) de l'**icône**.
+   * Sert à lever un doute de lecture : montants TTC ici, bénéfice HT ailleurs.
+   */
+  iconTooltip?: React.ReactNode;
 }) {
   return (
     <div className="surface-card min-w-0 border border-base-200 bg-base-100 p-4 shadow-sm sm:p-5">
       <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${PASTILLE_TONES[tone]}`}>
-        {icon}
+        {iconTooltip ? (
+          <Tooltip label={iconTooltip}>
+            {/* `tabIndex` : la bulle s'ouvre aussi au clavier, comme partout ailleurs. */}
+            <span className="flex items-center justify-center" tabIndex={0}>
+              {icon}
+            </span>
+          </Tooltip>
+        ) : (
+          icon
+        )}
       </span>
       <p className="mt-3 truncate text-sm text-base-content/60">{label}</p>
       <p className="mt-1 truncate text-xl font-bold tabular sm:text-2xl">{value}</p>
@@ -827,30 +842,40 @@ export default function ClientDetailPage() {
               canViewProfit && stats.profit !== null ? 'xl:grid-cols-5' : 'xl:grid-cols-4'
             }`}
           >
+            {/*
+              * Chaque icône explique **sa** métrique au survol (et au clavier) :
+              * c'est là qu'on se demande « TTC ou HT ? », « brouillons compris ? ».
+              * Les montants de facturation sont TTC ; le bénéfice, lui, est HT —
+              * le dire évite une lecture fausse.
+              */}
             <MetricCard
               label="Solde à payer"
               value={<MoneyText value={stats.balance} due bold />}
               hint={hasDebt ? 'Reste dû par ce client' : 'Aucun encours'}
               tone={hasDebt ? 'error' : 'success'}
               icon={<Icon d={ICONS.money} />}
+              iconTooltip="Ce que le client doit encore : le total de ses restes à payer, taxes comprises. Rouge tant qu'il reste quelque chose, vert quand tout est réglé."
             />
             <MetricCard
               label="Total facturé"
               value={<MoneyText value={stats.totalInvoiced} bold />}
               tone="info"
               icon={<Icon d={ICONS.receipt} />}
+              iconTooltip="Tout ce qui a été facturé à ce client, taxes comprises : la somme de ses factures validées. Les brouillons et les ventes annulées ne comptent pas."
             />
             <MetricCard
               label="Total payé"
               value={<MoneyText value={stats.totalPaid} bold />}
               tone="success"
               icon={<Icon d={ICONS.wallet} />}
+              iconTooltip="Ce qui a déjà été encaissé sur ses factures, taxes comprises. Chaque paiement a son reçu numéroté, réimprimable depuis l'historique des paiements."
             />
             <MetricCard
               label="Panier moyen"
               value={<MoneyText value={stats.averageBasket} bold />}
               tone="accent"
               icon={<Icon d={ICONS.basket} />}
+              iconTooltip="Total facturé divisé par le nombre de factures validées : ce que ce client dépense en moyenne à chaque achat."
             />
             {/*
               * Bénéfice brut **de ce client** : Σ (total HT de ses ventes
@@ -869,6 +894,7 @@ export default function ClientDetailPage() {
                 hint="Ventes HT − coût"
                 tone={stats.profit >= 0 ? 'success' : 'error'}
                 icon={<Icon d={ICONS.chart} />}
+                iconTooltip="Ce que ce client rapporte : ses ventes hors taxes moins le coût des marchandises vendues (prix d'achat du catalogue). Les brouillons et les ventes annulées ne comptent pas."
               />
             )}
           </div>
@@ -935,7 +961,7 @@ export default function ClientDetailPage() {
                     onClick={() => setShowEditModal(true)}
                   >
                     <Icon d={ICONS.edit} className="h-4 w-4" />
-                    Modifier la fiche
+                    Modifier
                   </button>
                 </div>
               )}

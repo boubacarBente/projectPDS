@@ -861,6 +861,8 @@ Ce texte est celui **imposé par le client** (recette) : il est repris mot pour 
 
 **Bénéfice brut d'un client.** La fiche (`/clients/[id]`) affiche une cinquième carte, **« Bénéfice brut »** : Σ `total_ht` de ses ventes **validées** − coût des marchandises vendues (hint « Ventes HT − coût »). C'est **exactement la somme des bénéfices de ses factures** — la même valeur que la colonne « Bénéfice » de la liste des ventes, cumulée — donc il n'existe pas de second calcul susceptible de diverger (§15). Brouillons et ventes annulées exclus, comme partout.
 
+Chaque **icône** de ces cartes de métriques porte une **infobulle** (au survol et au clavier) qui explique sa métrique. Elles lèvent une ambiguïté de lecture réelle : les montants de facturation (**solde**, **total facturé**, **total payé**, **panier moyen**) sont **TTC**, alors que le **bénéfice brut** est calculé **HT**. Chaque message précise aussi ce qui est exclu (brouillons, ventes annulées) — un chiffre qu'on ne sait pas interpréter est un chiffre inutile.
+
 Deux garde-fous, identiques à ceux de la colonne des ventes :
 
 - **Confidentialité** : la donnée est réservée à `balances.view`. Sans ce droit, `GET /api/clients/[id]` renvoie `cost: null` et `profit: null` (`canViewSalesProfit()`, `withoutSalesProfit()`), et la carte n'apparaît pas. Masquer n'est pas protéger (§9).
