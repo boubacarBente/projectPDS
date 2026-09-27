@@ -495,18 +495,15 @@ export default function ClientDetailPage() {
       key: 'remainingAmount',
       label: 'Reste',
       className: 'text-right whitespace-nowrap',
-      render: (invoice: InvoiceRow) =>
-        /*
-         * Même règle de couleur que le solde (§7.2) : rouge tant qu'il reste
-         * quelque chose à encaisser, vert quand la facture est soldée. Les
-         * factures annulées ou en brouillon restent **neutres** : leur « reste »
-         * n'est pas encaissable, l'afficher en rouge serait un faux signal.
-         */
-        invoice.status === 'active' ? (
-          <MoneyText value={invoice.remainingAmount} due bold={invoice.remainingAmount > 0.001} />
-        ) : (
-          <MoneyText value={invoice.remainingAmount} />
-        ),
+      /*
+       * **Rouge dès qu'il reste à encaisser, neutre sinon** (`remaining`, la
+       * règle de toutes les colonnes « Reste »). Les factures annulées ou en
+       * brouillon restent neutres : leur reste n'est pas encaissable, le rouge
+       * serait un faux signal.
+       */
+      render: (invoice: InvoiceRow) => (
+        <MoneyText value={invoice.remainingAmount} remaining={invoice.status === 'active'} bold />
+      ),
     },
     {
       key: 'paymentStatus',

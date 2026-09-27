@@ -304,7 +304,11 @@ export default function FournisseursPage() {
     {
       key: 'balance',
       label: 'Dette',
-      render: (supplier) => <MoneyText value={supplier.balance} colored bold />,
+      // Rouge dès qu'il reste quelque chose à payer, neutre sinon : `colored`
+      // peignait en vert une dette (montant positif).
+      render: (supplier) => (
+        <MoneyText value={supplier.balance} remaining={supplier.balance > 0.001} bold />
+      ),
     },
     {
       key: 'lastPurchaseDate',

@@ -694,7 +694,14 @@ export default function VenteDetailPage() {
           <MiniStat
             label="Reste"
             tone={schedule.remaining > 0.001 ? 'error' : 'success'}
-            value={<MoneyText value={schedule.remaining} colored bold />}
+            /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
+            value={
+              <MoneyText
+                value={schedule.remaining}
+                remaining={invoice.status === 'active'}
+                bold
+              />
+            }
           />
           {canViewProfit && invoice.profit !== null && (
             <MiniStat
@@ -742,7 +749,12 @@ export default function VenteDetailPage() {
             <MoneyText value={schedule.paid} />
           </InfoRow>
           <InfoRow label="Restant dû">
-            <MoneyText value={schedule.remaining} colored bold />
+            {/* Rouge dès qu'il reste à encaisser, neutre à zéro. */}
+            <MoneyText
+              value={schedule.remaining}
+              remaining={invoice.status === 'active'}
+              bold
+            />
           </InfoRow>
           <InfoRow label="Date de la facture">
             <span className="tabular">{formatDateShort(schedule.documentDate ?? invoice.date)}</span>

@@ -416,7 +416,8 @@ export default function RecuPage() {
           <MiniStat
             label="Reste dû"
             tone={data.remainingAmount > 0.001 ? 'error' : 'success'}
-            value={<MoneyText value={data.remainingAmount} colored bold />}
+            /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
+            value={<MoneyText value={data.remainingAmount} remaining bold />}
           />
         </div>
       </div>

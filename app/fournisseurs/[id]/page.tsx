@@ -188,7 +188,15 @@ export default function FournisseurDetailPage() {
     {
       key: 'remainingAmount',
       label: 'Reste',
-      render: (purchase) => <MoneyText value={purchase.remainingAmount} colored bold />,
+      // Rouge dès qu'il reste à payer, neutre sinon (et neutre si l'achat est
+      // annulé : son reste n'est pas payable).
+      render: (purchase) => (
+        <MoneyText
+          value={purchase.remainingAmount}
+          remaining={purchase.status !== 'cancelled'}
+          bold
+        />
+      ),
     },
     {
       key: 'paymentStatus',

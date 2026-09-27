@@ -282,7 +282,9 @@ export default function FournisseurPaiementsPage() {
           />
           <StatCardDelta
             label="Dette restante"
-            value={<MoneyText value={balance} />}
+            /* Rouge dès qu'il reste à payer, vert quand c'est soldé (même règle
+               que la carte, qui porte déjà la teinte). */
+            value={<MoneyText value={balance} due />}
             hint={hasDebt ? 'Reste à régler aux fournisseurs' : 'Aucune dette en cours'}
             tone={hasDebt ? 'error' : 'success'}
           />

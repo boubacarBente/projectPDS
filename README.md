@@ -846,7 +846,12 @@ Reprise du composant `MetricCard` + graphiques Chart.js de Gaz, avec filtres de 
 Ajouter, modifier, rechercher · Nom, téléphone, adresse, informations utiles · **Historique complet des achats** · **Montant payé et restant à payer** · **Ventes à crédit** · **Enregistrement des paiements** · **Liste des clients débiteurs** · **Export de la fiche client (PDF, image, WhatsApp)**.
 Reprend `/clients` de Gaz (liste + modales CRUD + modale de détail avec statistiques + `/clients/[id]/paiements`), en ajoutant l'encours et le plafond de crédit.
 
-Couleur du solde (liste, fiche et relevé exporté) : **rouge dès que le client doit de l'argent, vert quand il n'a plus rien à payer** — `MoneyText due` de `components/design-system.tsx`. `MoneyText colored` ne peut pas exprimer cette règle : un reste dû est un montant positif, que `colored` peint en vert.
+Deux règles distinctes, encodées dans `components/design-system.tsx` :
+
+- **Solde** (ce qu'un client ou un fournisseur doit au total) → `MoneyText due` : **rouge dès qu'il reste de l'argent en jeu, vert quand c'est soldé**. `colored` ne peut pas exprimer cette règle : un reste dû est un montant positif, que `colored` peint en vert.
+- **Reste** (colonne « Reste », « Reste dû », « Dette », et la même valeur en carte sur une fiche) → `MoneyText remaining` : **rouge dès qu'il reste quelque chose à payer, neutre à zéro** — un « 0 GNF » n'a pas à être vert, c'est le silence qui convient. On lui passe l'expression « ce reste est-il payable ? » (`remaining={invoice.status === 'active'}`, `remaining={job.status !== 'cancelled'}`) : un document **annulé ou en brouillon reste neutre** même avec un reste non nul, son reste n'était pas payable.
+
+Balayage de contrôle effectué sur **/achats, /ventes, /clients, /fournisseurs, /soldes, /rapports et la fiche client**, ligne par ligne : tout montant positif est rouge, tout zéro n'est jamais rouge, et les lignes annulées restent neutres. Les **documents exportés** (facture, reçu, relevé, rapport) gardent leur propre palette d'impression : ce ne sont pas des listes.
 
 Les **deux** liens vers `/clients/[id]/paiements` — « Historique des paiements » (en-tête) et « Voir les encaissements » (récapitulatif) — portent la **même** infobulle, définie une seule fois : *« Ouvre l'historique des paiements de ‹client› : chaque encaissement enregistré, avec son reçu imprimable. »* Deux textes différents pour un même écran finiraient par se contredire. Les **deux** boutons « Enregistrer un paiement » de la fiche (en-tête et récapitulatif) partagent eux aussi la même infobulle, plus détaillée :
 

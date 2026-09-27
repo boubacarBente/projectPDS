@@ -755,7 +755,9 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         {customer.overdue && <Badge tone="error">En retard</Badge>}
-                        <MoneyText value={customer.balance} className="text-sm" bold />
+                        {/* Solde dû par le client : rouge dès qu'il reste quelque
+                            chose à encaisser. */}
+                        <MoneyText value={customer.balance} className="text-sm" due bold />
                       </div>
                     </Link>
                   </li>

@@ -443,7 +443,14 @@ export default function ChantierDetailPage() {
           <MiniStat
             label="Reste à payer"
             tone={job.remainingAmount > 0.001 ? 'error' : 'success'}
-            value={<MoneyText value={job.remainingAmount} colored bold />}
+            /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
+            value={
+              <MoneyText
+                value={job.remainingAmount}
+                remaining={job.status !== 'cancelled'}
+                bold
+              />
+            }
           />
           <p className="text-xs text-base-content/50">
             Document facturable autonome : ses encaissements lui appartiennent et ne génèrent aucune

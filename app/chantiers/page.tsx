@@ -305,7 +305,8 @@ export default function ChantiersPage() {
           <StatCardDelta
             label="Reste à encaisser"
             tone={(summary?.outstanding ?? 0) > 0 ? 'error' : 'success'}
-            value={<MoneyText value={summary?.outstanding ?? 0} />}
+            /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
+            value={<MoneyText value={summary?.outstanding ?? 0} remaining bold />}
             hint="Créances sur chantiers"
           />
         </div>

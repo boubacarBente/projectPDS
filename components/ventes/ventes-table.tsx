@@ -110,8 +110,14 @@ export function VentesTable({
       key: 'remainingAmount',
       label: 'Reste',
       className: 'text-right whitespace-nowrap',
+      /*
+       * **Rouge dès qu'il reste à encaisser, neutre sinon** (règle de
+       * `remaining`). `colored` était faux : un reste dû est un montant positif,
+       * il apparaissait donc **vert**. Brouillon ou vente annulée : neutre, leur
+       * reste n'est pas encaissable.
+       */
       render: (invoice: SalesInvoiceRow) => (
-        <MoneyText value={invoice.remainingAmount} colored bold />
+        <MoneyText value={invoice.remainingAmount} remaining={invoice.status === 'active'} bold />
       ),
     },
     /*

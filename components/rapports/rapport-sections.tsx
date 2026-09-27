@@ -396,7 +396,8 @@ export function TopCustomersTable({
         key: 'outstanding',
         label: 'Reste dû',
         className: 'text-right',
-        render: (row) => <MoneyText value={row.outstanding} currency={currency} colored />,
+        // Reste dû : rouge dès qu'il reste à encaisser, neutre sinon.
+        render: (row) => <MoneyText value={row.outstanding} currency={currency} remaining />,
       },
     ],
     [currency],
@@ -464,7 +465,9 @@ export function ReceivablesTable({
         key: 'balance',
         label: 'Solde dû',
         className: 'text-right',
-        render: (row) => <MoneyText value={row.balance} currency={currency} bold />,
+        // Solde dû (clients débiteurs / dettes fournisseurs) : rouge dès qu'il
+        // reste de l'argent en jeu, vert quand c'est soldé.
+        render: (row) => <MoneyText value={row.balance} currency={currency} due bold />,
       },
     ],
     [currency],
@@ -552,7 +555,9 @@ export function PayablesTable({
         key: 'balance',
         label: 'Solde dû',
         className: 'text-right',
-        render: (row) => <MoneyText value={row.balance} currency={currency} bold />,
+        // Solde dû (clients débiteurs / dettes fournisseurs) : rouge dès qu'il
+        // reste de l'argent en jeu, vert quand c'est soldé.
+        render: (row) => <MoneyText value={row.balance} currency={currency} due bold />,
       },
     ],
     [currency],

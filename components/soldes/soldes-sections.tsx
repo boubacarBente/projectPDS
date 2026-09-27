@@ -89,9 +89,9 @@ export function ReceivablesSection({
         key: 'balance',
         label: 'Solde dû',
         className: 'text-right',
-        render: (client) => (
-          <MoneyText value={client.balance} currency={currency} colored bold />
-        ),
+        // Solde dû : rouge dès qu'il reste de l'argent à encaisser (`colored`
+        // peignait en vert un montant positif, donc une dette).
+        render: (client) => <MoneyText value={client.balance} currency={currency} due bold />,
       },
       {
         key: 'oldestDueDate',
@@ -183,8 +183,10 @@ export function PayablesSection({
         key: 'balance',
         label: 'Reste à payer',
         className: 'text-right',
+        // Reste dû à un fournisseur : rouge dès qu'il reste quelque chose à
+        // payer, neutre sinon (c'est un « reste », pas un solde à verdir).
         render: (supplier) => (
-          <MoneyText value={supplier.balance} currency={currency} colored bold />
+          <MoneyText value={supplier.balance} currency={currency} remaining bold />
         ),
       },
       {

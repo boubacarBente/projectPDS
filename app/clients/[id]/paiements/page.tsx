@@ -301,7 +301,8 @@ export default function ClientPaymentsPage() {
           <MiniStat
             label="Solde restant"
             tone={hasDebt ? 'error' : 'success'}
-            value={<MoneyText value={balance} colored bold />}
+            /* Même règle que la carte : rouge tant qu'il reste à encaisser. */
+            value={<MoneyText value={balance} due bold />}
           />
         </div>
       )}

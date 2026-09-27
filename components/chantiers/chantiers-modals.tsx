@@ -409,7 +409,11 @@ export const jobColumns: Column<ServiceJobRow>[] = [
     key: 'remaining',
     label: 'Reste',
     className: 'text-right whitespace-nowrap',
-    render: (job) => <MoneyText value={job.remainingAmount} colored bold />,
+    // Rouge dès qu'il reste à encaisser, neutre sinon (et neutre pour un
+    // chantier annulé : son reste n'est pas encaissable).
+    render: (job) => (
+      <MoneyText value={job.remainingAmount} remaining={job.status !== 'cancelled'} bold />
+    ),
   },
 ];
 
@@ -1622,7 +1626,13 @@ export function JobPaymentModal({
             </p>
             <p className="text-xs text-base-content/60">Reste à payer</p>
           </div>
-          <MoneyText value={remainingAmount} colored bold className="text-lg" />
+          {/* Rouge dès qu'il reste à encaisser : `colored` verdissait ce reste. */}
+          <MoneyText
+            value={remainingAmount}
+            remaining={job?.status !== 'cancelled'}
+            bold
+            className="text-lg"
+          />
         </div>
 
         {receipt ? (

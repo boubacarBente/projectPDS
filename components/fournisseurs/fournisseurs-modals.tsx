@@ -365,8 +365,14 @@ export function SupplierDetailModal({
     {
       key: 'remainingAmount',
       label: 'Reste',
+      // Rouge dès qu'il reste à payer, neutre sinon (et neutre si l'achat est
+      // annulé : son reste n'est pas payable).
       render: (purchase) => (
-        <MoneyText value={purchase.remainingAmount} colored bold />
+        <MoneyText
+          value={purchase.remainingAmount}
+          remaining={purchase.status !== 'cancelled'}
+          bold
+        />
       ),
     },
     {
@@ -474,7 +480,8 @@ export function SupplierDetailModal({
             <div className="rounded-xl border border-base-200 bg-base-200/40 px-3 py-2">
               <div className="text-[11px] uppercase tracking-wide text-base-content/60">Dette</div>
               <div className="text-sm font-semibold">
-                <MoneyText value={stats.balance} colored bold />
+                {/* Rouge dès qu'il reste à payer : `colored` verdissait la dette. */}
+                <MoneyText value={stats.balance} remaining bold />
               </div>
             </div>
           </div>

@@ -582,7 +582,14 @@ export default function AchatDetailPage() {
           <MiniStat
             label="Reste"
             tone={schedule.remaining > 0.001 ? 'error' : 'success'}
-            value={<MoneyText value={schedule.remaining} colored bold />}
+            /* Rouge dès qu'il reste à payer, neutre à zéro. */
+            value={
+              <MoneyText
+                value={schedule.remaining}
+                remaining={invoice.status === 'active'}
+                bold
+              />
+            }
           />
           <MiniStat
             label={invoice.dueDate ? 'Échéance' : 'Règlement'}
@@ -618,7 +625,12 @@ export default function AchatDetailPage() {
             <MoneyText value={schedule.paid} />
           </InfoRow>
           <InfoRow label="Restant dû">
-            <MoneyText value={schedule.remaining} colored bold />
+            {/* Rouge dès qu'il reste à payer, neutre à zéro. */}
+            <MoneyText
+              value={schedule.remaining}
+              remaining={invoice.status === 'active'}
+              bold
+            />
           </InfoRow>
           <InfoRow label="Date de l'achat">
             <span className="tabular">

@@ -99,8 +99,17 @@ export function AchatsTable({
       key: 'remainingAmount',
       label: 'Reste',
       className: 'text-right whitespace-nowrap',
+      /*
+       * **Rouge dès qu'il reste à payer, neutre sinon** (règle de `remaining`).
+       * `colored` était faux ici : il peignait en **vert** un montant encore dû.
+       * Un achat annulé reste neutre : son reste n'est pas payable.
+       */
       render: (invoice: PurchaseInvoiceRow) => (
-        <MoneyText value={invoice.remainingAmount} colored bold />
+        <MoneyText
+          value={invoice.remainingAmount}
+          remaining={invoice.status === 'active'}
+          bold
+        />
       ),
     },
     {

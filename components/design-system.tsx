@@ -22,6 +22,7 @@ export function MoneyText({
   className = '',
   colored = false,
   due = false,
+  remaining = false,
   bold = false,
 }: {
   value: number | null | undefined;
@@ -38,20 +39,37 @@ export function MoneyText({
    * export) passent donc par `due`, conformément au README §7.2.
    */
   due?: boolean;
+  /**
+   * Colonne **« Reste » d'une liste** : rouge dès qu'il reste quelque chose à
+   * payer, **neutre** à zéro — un « 0 GNF » n'a pas à être vert, c'est le
+   * silence qui convient.
+   *
+   * Passer l'expression « ce reste est-il payable ? » (`invoice.status ===
+   * 'active'`, `job.status !== 'cancelled'`…) : un document annulé ou en
+   * brouillon garde ainsi un reste **neutre**, même non nul — son reste n'est
+   * pas payable, le rouge serait un faux signal.
+   *
+   * Prioritaire sur `colored` et `due`.
+   */
+  remaining?: boolean;
   bold?: boolean;
 }) {
   const amount = typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  const tone = due
+  const tone = remaining
     ? amount > 0.001
       ? 'text-error'
-      : 'text-success'
-    : colored
-      ? amount < 0
+      : ''
+    : due
+      ? amount > 0.001
         ? 'text-error'
-        : amount > 0
-          ? 'text-success'
-          : ''
-      : '';
+        : 'text-success'
+      : colored
+        ? amount < 0
+          ? 'text-error'
+          : amount > 0
+            ? 'text-success'
+            : ''
+        : '';
 
   return (
     <span className={`money tabular ${tone} ${bold ? 'font-semibold' : ''} ${className}`.trim()}>

@@ -67,9 +67,18 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
    Les dates *dérivées* (« Dernier achat », « Dernière connexion », « Échéance la plus
    ancienne ») restent à leur place. Sur mobile, l'identifiant reste le titre de la carte.
 9. **Code couleur des dus.** `MoneyText due` : **rouge dès qu'il reste quelque chose à
-   payer, vert quand c'est soldé** — c'est la règle des soldes clients (§7.2).
-   `MoneyText colored` (négatif rouge / positif vert) **ne convient pas** à un dû : un
-   reste dû est un montant positif, il apparaîtrait vert.
+   payer, vert quand c'est soldé** — c'est la règle des **soldes** clients et fournisseurs
+   (§7.2). `MoneyText colored` (négatif rouge / positif vert) **ne convient pas** à un dû :
+   un reste dû est un montant positif, il apparaîtrait vert.
+   Pour un **reste** (colonne « Reste », « Dette », « Reste dû », ou la même valeur en
+   carte sur une fiche), utiliser **`MoneyText remaining`** : **rouge dès qu'il reste
+   quelque chose, neutre à zéro** — un « 0 GNF » n'a pas à être vert. Lui passer
+   l'expression « ce reste est-il payable ? » (`remaining={invoice.status === 'active'}`,
+   `remaining={job.status !== 'cancelled'}`) : un document **annulé ou en brouillon**
+   reste neutre même avec un reste non nul, sinon le rouge est un faux signal.
+   Ne jamais remettre `colored` sur un montant dû : c'est le défaut corrigé partout
+   (listes achats, ventes, clients, fournisseurs, chantiers, soldes, rapports, reçus,
+   fiches et modales).
 10. **Champs de saisie : ne jamais écrire « numéro » ni `jj/mm/aaaa` dans un placeholder
     ou un libellé de champ.** Chrome classe alors le champ en `CREDIT_CARD_NUMBER` /
     `CREDIT_CARD_EXP_*` (vérifié dans `chrome://autofill-internals`) et affiche

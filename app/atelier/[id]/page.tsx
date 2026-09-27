@@ -455,7 +455,8 @@ export default function AtelierOrderPage() {
                   <MoneyText value={order.amountPaid} />
                 </InfoRow>
                 <InfoRow label="Reste à encaisser">
-                  <MoneyText value={detail.costs.remainingAmount} colored bold />
+                  {/* Rouge dès qu'il reste à encaisser, neutre à zéro. */}
+                  <MoneyText value={detail.costs.remainingAmount} remaining bold />
                 </InfoRow>
                 <InfoRow label="Marge">
                   <span className="inline-flex items-center gap-2">

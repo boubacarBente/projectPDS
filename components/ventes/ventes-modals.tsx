@@ -556,7 +556,8 @@ export function InvoiceDetailModal({
               <MiniStat
                 label="Reste"
                 tone={remaining > 0.001 ? 'error' : 'success'}
-                value={<MoneyText value={remaining} colored bold />}
+                /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
+                value={<MoneyText value={remaining} remaining={invoice.status === 'active'} bold />}
               />
               <MiniStat
                 label="Règlement"
@@ -847,7 +848,8 @@ export function SalePaymentModal({
             </p>
             <p className="text-xs text-base-content/60">Reste à payer</p>
           </div>
-          <MoneyText value={remainingAmount} colored bold className="text-lg" />
+          {/* Rouge dès qu'il reste à encaisser : `colored` verdissait ce reste. */}
+          <MoneyText value={remainingAmount} remaining bold className="text-lg" />
         </div>
 
         {receipt ? (
