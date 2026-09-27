@@ -461,6 +461,19 @@ export default function ClientDetailPage() {
 
   const hasDebt = (stats?.balance ?? 0) > 0.001;
 
+  /*
+   * Les deux boutons « Enregistrer un paiement » de la page (en-tête et
+   * récapitulatif) déclenchent le même geste : une seule explication, pour
+   * qu'elles ne divergent pas.
+   */
+  const paymentTooltip = (
+    <>
+      Encaisser un règlement sur le solde de {customer?.name ?? 'ce client'} : montant, moyen
+      et note. Un <strong>reçu numéroté</strong> est émis, la caisse est mise à jour et le
+      solde recalculé.
+    </>
+  );
+
   /* ------------------------------------------------------------------
    * Export et partage — PDF, image, WhatsApp
    *
@@ -695,14 +708,16 @@ export default function ClientDetailPage() {
               </Link>
             )}
             {canPay && customer && stats && hasDebt && (
-              <button
-                type="button"
-                className="btn btn-success btn-sm min-h-11 gap-1.5 text-success-content sm:min-h-0"
-                onClick={() => setShowPaymentModal(true)}
-              >
-                <Icon d={ICONS.money} className="h-4 w-4" />
-                Enregistrer un paiement
-              </button>
+              <Tooltip label={paymentTooltip}>
+                <button
+                  type="button"
+                  className="btn btn-success btn-sm min-h-11 gap-1.5 text-success-content sm:min-h-0"
+                  onClick={() => setShowPaymentModal(true)}
+                >
+                  <Icon d={ICONS.money} className="h-4 w-4" />
+                  Enregistrer un paiement
+                </button>
+              </Tooltip>
             )}
             {customer && stats && (
               <ExportDropdown
@@ -910,14 +925,16 @@ export default function ClientDetailPage() {
                   </Link>
                 </Tooltip>
                 {canPay && hasDebt && (
-                  <button
-                    type="button"
-                    className="btn btn-success btn-sm min-h-11 gap-1.5 text-success-content sm:min-h-0"
-                    onClick={() => setShowPaymentModal(true)}
-                  >
-                    <Icon d={ICONS.money} className="h-4 w-4" />
-                    Enregistrer un paiement
-                  </button>
+                  <Tooltip label={paymentTooltip}>
+                    <button
+                      type="button"
+                      className="btn btn-success btn-sm min-h-11 gap-1.5 text-success-content sm:min-h-0"
+                      onClick={() => setShowPaymentModal(true)}
+                    >
+                      <Icon d={ICONS.money} className="h-4 w-4" />
+                      Enregistrer un paiement
+                    </button>
+                  </Tooltip>
                 )}
               </div>
             </Card>
