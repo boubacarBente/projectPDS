@@ -850,6 +850,8 @@ Couleur du solde (liste, fiche et relevé exporté) : **rouge dès que le client
 
 Le bouton **« Voir les encaissements »** du récapitulatif porte une **infobulle au survol** qui lève l'ambiguïté du libellé : elle annonce qu'il ouvre **tous les reçus de ce client** (chaque règlement, avec son reçu imprimable). Les **deux** boutons « Enregistrer un paiement » de la fiche (en-tête et récapitulatif) en portent une aussi, avec le même texte — le geste est identique : montant, moyen et note, puis reçu numéroté, mouvement de caisse et solde recalculé. Même composant `Tooltip` que le reste de l'application — portail, survol **et** focus clavier, `aria-describedby` sur la commande.
 
+> **Vocabulaire (à respecter dans toute l'interface).** Pour l'argent qui **entre** d'un client on dit **paiement** — c'est le mot de la permission `payments.create`, libellée « Encaisser un paiement », et celui des écrans « Historique des paiements », « Payé », « Statut de paiement ». Le mot **règlement** est réservé à deux autres notions : le **moyen** de paiement (`label="Règlement"` → Espèces, Mobile Money, virement) et le **décaissement fournisseur** (« règlement fournisseur », « le règlement d'un achat est une sortie de caisse »). Écrire « encaisser un règlement » mélange donc une entrée de caisse avec le mot de la sortie fournisseur.
+
 ### 7.3 Fournisseurs (§3)
 Ajouter, modifier · Contacts et coordonnées · Historique des achats · Suivi des paiements · Montants restant à payer et dettes.
 Structure identique à `/fournisseurs` de Gaz.

@@ -465,12 +465,19 @@ export default function ClientDetailPage() {
    * Les deux boutons « Enregistrer un paiement » de la page (en-tête et
    * récapitulatif) déclenchent le même geste : une seule explication, pour
    * qu'elles ne divergent pas.
+   *
+   * Vocabulaire : on dit **paiement**, jamais « règlement ». Dans cette
+   * application, « règlement » désigne déjà deux autres choses — le **moyen**
+   * de paiement (`label="Règlement"` → Espèces, Mobile Money) et le
+   * **décaissement fournisseur** (« règlement fournisseur », sortie de caisse).
+   * « Encaisser un paiement » est d'ailleurs le libellé exact de la permission
+   * `payments.create` (lib/permissions.ts) : c'est le mot de la maison.
    */
   const paymentTooltip = (
     <>
-      Encaisser un règlement sur le solde de {customer?.name ?? 'ce client'} : montant, moyen
-      et note. Un <strong>reçu numéroté</strong> est émis, la caisse est mise à jour et le
-      solde recalculé.
+      Encaisser un paiement, partiel ou total, sur le solde de {customer?.name ?? 'ce client'} :
+      montant, moyen et note. Un <strong>reçu numéroté</strong> est émis, la caisse est mise à
+      jour et le solde recalculé.
     </>
   );
 
