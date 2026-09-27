@@ -53,6 +53,7 @@ import { usePermission } from '@/components/role-gate';
 import { Tooltip } from '@/components/tooltip';
 import { ExportDropdown, shareOnWhatsApp } from '@/components/export-dropdown';
 import {
+  CustomerFormModal,
   PaymentModal,
   readApiError,
   type CustomerStatsRecord,
@@ -310,6 +311,8 @@ export default function ClientDetailPage() {
 
   /* Un état booléen par modale (§8.3 règle 1). */
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  /** Modification de la fiche, ouverte depuis la fiche elle-même. */
+  const [showEditModal, setShowEditModal] = useState(false);
 
   /** Verrou d'export : deux captures simultanées se marcheraient dessus. */
   const [isExporting, setIsExporting] = useState(false);
@@ -359,6 +362,16 @@ export default function ClientDetailPage() {
   }, [load, reloadToken]);
 
   const closePaymentModal = useCallback(() => setShowPaymentModal(false), []);
+
+  /**
+   * Après enregistrement de la fiche : on **recharge depuis l'API** au lieu de
+   * recopier les champs reçus — le serveur fait foi, et un renommage doit se voir
+   * partout (titre de la page, infobulle des reçus, relevé exporté).
+   */
+  const handleCustomerSaved = useCallback(() => {
+    setShowEditModal(false);
+    setReloadToken((token) => token + 1);
+  }, []);
 
   /**
    * Série mensuelle « Évolution des achats » — **calcul côté client**.
@@ -910,13 +923,20 @@ export default function ClientDetailPage() {
 
               {canUpdate && (
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-base-200 pt-4">
-                  <Link
-                    href="/clients"
+                  {/*
+                   * Ouvre la **modale d'édition** (celle de la liste des clients),
+                   * pré-remplie avec cette fiche. Avant, ce bouton était un lien
+                   * vers `/clients` : il n'annonçait pas ce qu'il faisait et
+                   * obligeait à rouvrir la fiche pour la modifier.
+                   */}
+                  <button
+                    type="button"
                     className="btn btn-ghost btn-sm min-h-11 gap-1.5 border border-base-300 sm:min-h-0"
+                    onClick={() => setShowEditModal(true)}
                   >
                     <Icon d={ICONS.edit} className="h-4 w-4" />
                     Modifier la fiche
-                  </Link>
+                  </button>
                 </div>
               )}
             </Card>
@@ -1086,6 +1106,22 @@ export default function ClientDetailPage() {
       )}
 
       {/* Aucun pied de page : demande explicite du client (résidu des pages de saisie). */}
+
+      {/*
+        * Modification de la fiche **depuis la fiche elle-même** : on réutilise la
+        * modale de la liste des clients (`CustomerFormModal`) en mode édition.
+        * Elle enregistre elle-même (`PUT /api/clients/[id]`) : c'est son
+        * `onSaved` qui ferme et déclenche le rechargement.
+        */}
+      {customer && (
+        <CustomerFormModal
+          isOpen={showEditModal}
+          onClose={() => setShowEditModal(false)}
+          onSaved={handleCustomerSaved}
+          customer={customer}
+          idPrefix="detail-edit"
+        />
+      )}
 
       {customer && (
         <PaymentModal
