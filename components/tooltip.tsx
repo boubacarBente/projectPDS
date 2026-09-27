@@ -71,9 +71,23 @@ interface TooltipProps {
    * annoncé deux fois.
    */
   ariaDescribedBy?: boolean;
+  /**
+   * Largeur maximale de la bulle. La valeur par défaut (20 rem) convient à une
+   * explication courte ; un texte de plusieurs phrases (infobulle d'action)
+   * gagne à être élargi, sinon il s'étire en hauteur. Toujours bornée par la
+   * largeur de la fenêtre.
+   */
+  maxWidth?: string;
 }
 
-export function Tooltip({ label, children, side = 'top', gap = 8, ariaDescribedBy = true }: TooltipProps) {
+export function Tooltip({
+  label,
+  children,
+  side = 'top',
+  gap = 8,
+  ariaDescribedBy = true,
+  maxWidth = 'min(20rem, calc(100vw - 1rem))',
+}: TooltipProps) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [placed, setPlaced] = useState<{ top: number; left: number; below: boolean; arrow: number } | null>(null);
@@ -201,7 +215,7 @@ export function Tooltip({ label, children, side = 'top', gap = 8, ariaDescribedB
         position: 'fixed',
         top: placed?.top ?? 0,
         left: placed?.left ?? 0,
-        maxWidth: 'min(20rem, calc(100vw - 1rem))',
+        maxWidth,
         // Opacité (et non `display`/`visibility`) : la bulle reste annoncée aux
         // lecteurs d'écran via `aria-describedby`, et n'intercepte jamais la souris.
         opacity: open && placed ? 1 : 0,

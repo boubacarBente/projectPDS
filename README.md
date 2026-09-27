@@ -848,7 +848,12 @@ Reprend `/clients` de Gaz (liste + modales CRUD + modale de détail avec statist
 
 Couleur du solde (liste, fiche et relevé exporté) : **rouge dès que le client doit de l'argent, vert quand il n'a plus rien à payer** — `MoneyText due` de `components/design-system.tsx`. `MoneyText colored` ne peut pas exprimer cette règle : un reste dû est un montant positif, que `colored` peint en vert.
 
-Le bouton **« Voir les encaissements »** du récapitulatif porte une **infobulle au survol** qui lève l'ambiguïté du libellé : elle annonce qu'il ouvre **tous les reçus de ce client** (chaque règlement, avec son reçu imprimable). Les **deux** boutons « Enregistrer un paiement » de la fiche (en-tête et récapitulatif) en portent une aussi, avec le même texte — le geste est identique : montant, moyen et note, puis reçu numéroté, mouvement de caisse et solde recalculé. Même composant `Tooltip` que le reste de l'application — portail, survol **et** focus clavier, `aria-describedby` sur la commande.
+Le bouton **« Voir les encaissements »** du récapitulatif porte une **infobulle au survol** qui lève l'ambiguïté du libellé : elle annonce qu'il ouvre **tous les reçus de ce client** (chaque règlement, avec son reçu imprimable). Les **deux** boutons « Enregistrer un paiement » de la fiche (en-tête et récapitulatif) partagent la même infobulle, plus détaillée :
+
+> **Enregistrer un paiement**
+> Permet de régler tout ou partie du solde de ce client. Renseignez le montant, le moyen de paiement et, si nécessaire, une note : un reçu numéroté est généré, la caisse mise à jour et le solde restant recalculé.
+
+Elle emploie « moyen de paiement », le libellé exact du champ du formulaire, et le verbe « régler » plutôt que le nom « règlement » (voir la règle de vocabulaire ci-dessous). Texte long : la bulle passe par la prop `maxWidth` du composant `Tooltip` (20 rem par défaut, 26 rem ici) — sans elle, le texte s'étirerait sur sept lignes. Même composant `Tooltip` que le reste de l'application — portail, survol **et** focus clavier, `aria-describedby` sur la commande.
 
 > **Vocabulaire (à respecter dans toute l'interface).** Pour l'argent qui **entre** d'un client on dit **paiement** — c'est le mot de la permission `payments.create`, libellée « Encaisser un paiement », et celui des écrans « Historique des paiements », « Payé », « Statut de paiement ». Le mot **règlement** est réservé à deux autres notions : le **moyen** de paiement (`label="Règlement"` → Espèces, Mobile Money, virement) et le **décaissement fournisseur** (« règlement fournisseur », « le règlement d'un achat est une sortie de caisse »). Écrire « encaisser un règlement » mélange donc une entrée de caisse avec le mot de la sortie fournisseur.
 

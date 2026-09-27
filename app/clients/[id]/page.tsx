@@ -466,18 +466,25 @@ export default function ClientDetailPage() {
    * récapitulatif) déclenchent le même geste : une seule explication, pour
    * qu'elles ne divergent pas.
    *
-   * Vocabulaire : on dit **paiement**, jamais « règlement ». Dans cette
-   * application, « règlement » désigne déjà deux autres choses — le **moyen**
-   * de paiement (`label="Règlement"` → Espèces, Mobile Money) et le
-   * **décaissement fournisseur** (« règlement fournisseur », sortie de caisse).
-   * « Encaisser un paiement » est d'ailleurs le libellé exact de la permission
-   * `payments.create` (lib/permissions.ts) : c'est le mot de la maison.
+   * Texte réarrangé à partir de la formulation du client, pour trois raisons :
+   *  - le titre dupliquait le bouton et la phrase suivante répétait
+   *    « enregistrer un paiement » — on passe par le verbe « régler » ;
+   *  - le formulaire nomme le champ « Moyen de paiement », pas « mode » :
+   *    l'infobulle doit employer le mot que l'utilisateur cherche à l'écran ;
+   *  - « règlement » désigne déjà, dans l'application, le moyen de paiement
+   *    (`label="Règlement"`) et le décaissement fournisseur : ici, c'est le
+   *    verbe « régler » qui porte l'idée, sans ambiguïté.
+   *
+   * La bulle est élargie car le texte fait plusieurs phrases.
    */
   const paymentTooltip = (
     <>
-      Encaisser un paiement, partiel ou total, sur le solde de {customer?.name ?? 'ce client'} :
-      montant, moyen et note. Un <strong>reçu numéroté</strong> est émis, la caisse est mise à
-      jour et le solde recalculé.
+      <strong>Enregistrer un paiement</strong>
+      <span className="mt-1 block">
+        Permet de régler tout ou partie du solde de ce client. Renseignez le montant, le moyen
+        de paiement et, si nécessaire, une note : un reçu numéroté est généré, la caisse mise
+        à jour et le solde restant recalculé.
+      </span>
     </>
   );
 
@@ -715,7 +722,7 @@ export default function ClientDetailPage() {
               </Link>
             )}
             {canPay && customer && stats && hasDebt && (
-              <Tooltip label={paymentTooltip}>
+              <Tooltip label={paymentTooltip} maxWidth="min(26rem, calc(100vw - 1rem))">
                 <button
                   type="button"
                   className="btn btn-success btn-sm min-h-11 gap-1.5 text-success-content sm:min-h-0"
@@ -932,7 +939,7 @@ export default function ClientDetailPage() {
                   </Link>
                 </Tooltip>
                 {canPay && hasDebt && (
-                  <Tooltip label={paymentTooltip}>
+                  <Tooltip label={paymentTooltip} maxWidth="min(26rem, calc(100vw - 1rem))">
                     <button
                       type="button"
                       className="btn btn-success btn-sm min-h-11 gap-1.5 text-success-content sm:min-h-0"
