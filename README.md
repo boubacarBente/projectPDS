@@ -861,7 +861,9 @@ Ce texte est celui **imposé par le client** (recette) : il est repris mot pour 
 
 **Bénéfice brut d'un client.** La fiche (`/clients/[id]`) affiche une cinquième carte, **« Bénéfice brut »** : Σ `total_ht` de ses ventes **validées** − coût des marchandises vendues (hint « Ventes HT − coût »). C'est **exactement la somme des bénéfices de ses factures** — la même valeur que la colonne « Bénéfice » de la liste des ventes, cumulée — donc il n'existe pas de second calcul susceptible de diverger (§15). Brouillons et ventes annulées exclus, comme partout.
 
-Chaque **icône** de ces cartes de métriques porte une **infobulle** (au survol et au clavier) qui explique sa métrique. Elles lèvent une ambiguïté de lecture réelle : les montants de facturation (**solde**, **total facturé**, **total payé**, **panier moyen**) sont **TTC**, alors que le **bénéfice brut** est calculé **HT**. Chaque message précise aussi ce qui est exclu (brouillons, ventes annulées) — un chiffre qu'on ne sait pas interpréter est un chiffre inutile.
+Chaque **icône** de ces cartes de métriques porte une **infobulle** (au survol et au clavier) qui explique sa métrique. Les textes sont regroupés dans la constante `METRIC_TOOLTIPS` en tête de `app/clients/[id]/page.tsx`, clés = libellés des cartes, pour qu'on les relise tous d'un coup d'œil. Ils lèvent une ambiguïté de lecture réelle : les montants de facturation (**solde**, **total facturé**, **total payé**, **panier moyen**) sont **TTC**, alors que le **bénéfice brut** est calculé **HT**. Chaque message précise aussi ce qui est exclu (factures en brouillon, annulées).
+
+> ⚠️ **Écart connu à surveiller.** Le texte du bénéfice dit « selon les prix enregistrés à la date de vente » : c'est l'évolution **prévue** (Q20), pas l'état actuel du code. Aujourd'hui le coût est lu sur le prix d'achat **actuel** du catalogue, donc modifier ce prix déplace la marge des ventes passées. Le commentaire de `METRIC_TOOLTIPS` le signale ; la phrase deviendra exacte le jour où le coût sera figé sur la ligne de vente (`sales_invoice_items.unit_cost`).
 
 Deux garde-fous, identiques à ceux de la colonne des ventes :
 

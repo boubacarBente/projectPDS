@@ -141,6 +141,39 @@ const PASTILLE_TONES = {
 type PastilleTone = keyof typeof PASTILLE_TONES;
 
 /**
+ * Explications affichées au survol (et au clavier) de l'**icône** de chaque carte
+ * de métriques de la fiche client.
+ *
+ * Regroupées ici à la demande du client : un seul endroit à relire pour vérifier
+ * ce que l'application affirme sur ses propres chiffres. Les clés sont les
+ * libellés exacts des cartes.
+ *
+ * ⚠️ Ces phrases doivent rester **vraies** :
+ *  - les quatre premiers montants sont **TTC** (`SUM(total)`, `SUM(amount_paid)`,
+ *    `SUM(remaining_amount)`) ; le bénéfice brut est **HT** ;
+ *  - la phrase du bénéfice dit « selon les prix enregistrés à la date de vente » :
+ *    c'est l'évolution **prévue** (README Q20). Aujourd'hui le coût est lu sur le
+ *    prix d'achat **actuel** du catalogue, donc modifier ce prix déplace la marge
+ *    des ventes passées. À corriger ici le jour où le coût sera figé sur la ligne.
+ */
+const METRIC_TOOLTIPS = {
+  'Solde à payer':
+    'Montant restant à régler par le client sur l’ensemble de ses factures validées, toutes taxes comprises (TTC). Le solde s’affiche en rouge si un montant reste dû et en vert si tout est réglé.',
+
+  'Total facturé':
+    'Montant cumulé de toutes les factures validées émises au nom de ce client, toutes taxes comprises (TTC). Les factures en brouillon et annulées ne sont pas prises en compte.',
+
+  'Total payé':
+    'Montant total des paiements effectivement reçus de ce client. Chaque règlement est enregistré et associé à un reçu consultable dans l’historique des paiements.',
+
+  'Panier moyen':
+    'Montant moyen dépensé par commande. Il est calculé en divisant le total des factures validées par le nombre de factures correspondantes.',
+
+  'Bénéfice brut':
+    'Bénéfice brut généré par les ventes réalisées auprès de ce client. Il correspond au montant des ventes hors taxes, déduction faite du coût d’achat des marchandises, selon les prix enregistrés à la date de vente. Les factures en brouillon et annulées sont exclues.',
+} as const;
+
+/**
  * En-tête de carte : pastille d'icône carrée arrondie (~40 px) + titre gras +
  * sous-titre discret, actions éventuelles à droite (maquette).
  */
@@ -844,9 +877,8 @@ export default function ClientDetailPage() {
           >
             {/*
               * Chaque icône explique **sa** métrique au survol (et au clavier) :
-              * c'est là qu'on se demande « TTC ou HT ? », « brouillons compris ? ».
-              * Les montants de facturation sont TTC ; le bénéfice, lui, est HT —
-              * le dire évite une lecture fausse.
+              * les textes sont regroupés dans `METRIC_TOOLTIPS` en tête de
+              * fichier, pour qu'on les relise tous d'un coup d'œil.
               */}
             <MetricCard
               label="Solde à payer"
@@ -854,28 +886,28 @@ export default function ClientDetailPage() {
               hint={hasDebt ? 'Reste dû par ce client' : 'Aucun encours'}
               tone={hasDebt ? 'error' : 'success'}
               icon={<Icon d={ICONS.money} />}
-              iconTooltip="Ce que le client doit encore : le total de ses restes à payer, taxes comprises. Rouge tant qu'il reste quelque chose, vert quand tout est réglé."
+              iconTooltip={METRIC_TOOLTIPS['Solde à payer']}
             />
             <MetricCard
               label="Total facturé"
               value={<MoneyText value={stats.totalInvoiced} bold />}
               tone="info"
               icon={<Icon d={ICONS.receipt} />}
-              iconTooltip="Tout ce qui a été facturé à ce client, taxes comprises : la somme de ses factures validées. Les brouillons et les ventes annulées ne comptent pas."
+              iconTooltip={METRIC_TOOLTIPS['Total facturé']}
             />
             <MetricCard
               label="Total payé"
               value={<MoneyText value={stats.totalPaid} bold />}
               tone="success"
               icon={<Icon d={ICONS.wallet} />}
-              iconTooltip="Ce qui a déjà été encaissé sur ses factures, taxes comprises. Chaque paiement a son reçu numéroté, réimprimable depuis l'historique des paiements."
+              iconTooltip={METRIC_TOOLTIPS['Total payé']}
             />
             <MetricCard
               label="Panier moyen"
               value={<MoneyText value={stats.averageBasket} bold />}
               tone="accent"
               icon={<Icon d={ICONS.basket} />}
-              iconTooltip="Total facturé divisé par le nombre de factures validées : ce que ce client dépense en moyenne à chaque achat."
+              iconTooltip={METRIC_TOOLTIPS['Panier moyen']}
             />
             {/*
               * Bénéfice brut **de ce client** : Σ (total HT de ses ventes
@@ -894,7 +926,7 @@ export default function ClientDetailPage() {
                 hint="Ventes HT − coût"
                 tone={stats.profit >= 0 ? 'success' : 'error'}
                 icon={<Icon d={ICONS.chart} />}
-                iconTooltip="Ce que ce client rapporte : ses ventes hors taxes moins le coût des marchandises vendues (prix d'achat du catalogue). Les brouillons et les ventes annulées ne comptent pas."
+                iconTooltip={METRIC_TOOLTIPS['Bénéfice brut']}
               />
             )}
           </div>
