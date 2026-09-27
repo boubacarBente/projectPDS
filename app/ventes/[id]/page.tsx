@@ -806,6 +806,13 @@ export default function VenteDetailPage() {
                 data={payments}
                 getRowKey={(payment) => payment.id}
                 tableClassName="table-sm"
+                /*
+                 * Ligne entièrement cliquable → le reçu du paiement.
+                 * `ResponsiveTable` ajoute `cursor-pointer` (et le survol) dès
+                 * qu'un `onRowClick` est fourni : le curseur « main » annonce
+                 * donc une action réelle, pas seulement un décor.
+                 */
+                onRowClick={(payment) => router.push(`/recus/${payment.id}`)}
                 emptyMessage="Aucun encaissement pour cette facture."
               />
             </div>

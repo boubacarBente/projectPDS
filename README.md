@@ -1163,6 +1163,8 @@ Depuis `/ventes/[id]` ou `/clients/[id]/paiements` : modale **« Enregistrer un 
 
 Le paiement n'est possible que sur une vente **validée** (`status = active`) : le bouton « Enregistrer un paiement » est masqué pour un brouillon, une vente annulée ou une facture soldée, et `createPayment()` refuse l'appel direct. Un brouillon se **valide** d'abord (§10.6).
 
+Dans la carte **« Historique des paiements »** de `/ventes/[id]`, chaque **ligne est cliquable** et ouvre le reçu du paiement (`/recus/[id]`) : curseur « main » et survol, portés par `ResponsiveTable` dès qu'un `onRowClick` est fourni — le curseur annonce donc une action réelle, pas un décor.
+
 ---
 
 ## 11. Factures, reçus, impressions et exports
