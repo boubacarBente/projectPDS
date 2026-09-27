@@ -53,12 +53,14 @@ export function AchatsTable({
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
   /*
-   * Colonnes **« Réf. fournisseur »** et **« Lignes »** retirées à la demande du
-   * client : à 1366 px (écran du poste), elles poussaient le tableau au-delà de
-   * la largeur disponible et obligeaient à faire défiler horizontalement.
-   * L'information n'est pas perdue : la référence du fournisseur est dans le
-   * détail de l'achat et sur le bon d'achat, le nombre de lignes dans la modale
-   * de détail.
+   * Colonnes retirées à la demande du client, pour supprimer le défilement
+   * horizontal à 1366 px (écran du poste) :
+   *  - **« Réf. fournisseur »** et **« Lignes »** : ~170 px ;
+   *  - **« Payé »** : déductible à la lecture (Total − Reste) ;
+   *  - **« Échéance »** : elle reste dans le détail de l'achat et sur le bon
+   *    d'achat, et « Comptant » se lit au reste dû.
+   * Aucune information n'est perdue — mais ne pas les remettre sans mesurer :
+   * c'est ce qui faisait apparaître la barre de défilement.
    */
   const columns = [
     {
@@ -88,29 +90,10 @@ export function AchatsTable({
       ),
     },
     {
-      key: 'dueDate',
-      label: 'Échéance',
-      hideOnMobile: true,
-      className: 'whitespace-nowrap',
-      render: (invoice: PurchaseInvoiceRow) =>
-        invoice.dueDate ? (
-          <span className="tabular text-base-content/70">{formatDateShort(invoice.dueDate)}</span>
-        ) : (
-          <span className="text-base-content/40">Comptant</span>
-        ),
-    },
-    {
       key: 'total',
       label: 'Total',
       className: 'text-right whitespace-nowrap',
       render: (invoice: PurchaseInvoiceRow) => <MoneyText value={invoice.total} bold />,
-    },
-    {
-      key: 'amountPaid',
-      label: 'Payé',
-      hideOnMobile: true,
-      className: 'text-right whitespace-nowrap',
-      render: (invoice: PurchaseInvoiceRow) => <MoneyText value={invoice.amountPaid} />,
     },
     {
       key: 'remainingAmount',
