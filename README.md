@@ -848,7 +848,7 @@ Reprend `/clients` de Gaz (liste + modales CRUD + modale de détail avec statist
 
 Couleur du solde (liste, fiche et relevé exporté) : **rouge dès que le client doit de l'argent, vert quand il n'a plus rien à payer** — `MoneyText due` de `components/design-system.tsx`. `MoneyText colored` ne peut pas exprimer cette règle : un reste dû est un montant positif, que `colored` peint en vert.
 
-Le bouton **« Voir les encaissements »** du récapitulatif porte une **infobulle au survol** qui lève l'ambiguïté du libellé : elle annonce qu'il ouvre **tous les reçus de ce client** (chaque règlement, avec son reçu imprimable). Les **deux** boutons « Enregistrer un paiement » de la fiche (en-tête et récapitulatif) partagent la même infobulle, plus détaillée :
+Les **deux** liens vers `/clients/[id]/paiements` — « Historique des paiements » (en-tête) et « Voir les encaissements » (récapitulatif) — portent la **même** infobulle, définie une seule fois : *« Ouvre l'historique des paiements de ‹client› : chaque encaissement enregistré, avec son reçu imprimable. »* Deux textes différents pour un même écran finiraient par se contredire. Les **deux** boutons « Enregistrer un paiement » de la fiche (en-tête et récapitulatif) partagent eux aussi la même infobulle, plus détaillée :
 
 > **Enregistrer un paiement**
 > Permet d'enregistrer un règlement partiel ou total du client. Renseignez le montant, le mode de paiement et, si nécessaire, une note. Un reçu numéroté sera automatiquement généré, la caisse mise à jour et le solde restant recalculé.

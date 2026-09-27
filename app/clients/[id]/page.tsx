@@ -488,6 +488,24 @@ export default function ClientDetailPage() {
     </>
   );
 
+  /*
+   * Les **deux** liens qui mènent à `/clients/[id]/paiements` — « Historique des
+   * paiements » dans l'en-tête et « Voir les encaissements » dans le
+   * récapitulatif — partagent la même explication, définie une seule fois : deux
+   * textes différents pour un même écran finiraient par se contredire.
+   *
+   * Vocabulaire d'ici : l'argent qui **entre** d'un client se dit « paiement »
+   * ou « encaissement » (§7.2) — « règlement » y désigne le moyen de paiement ou
+   * la sortie fournisseur.
+   */
+  const receiptsTooltip = (
+    <>
+      Ouvre l&apos;<strong>historique des paiements</strong> de{' '}
+      {customer?.name ?? 'ce client'} : chaque encaissement enregistré, avec son{' '}
+      <strong>reçu imprimable</strong>.
+    </>
+  );
+
   /* ------------------------------------------------------------------
    * Export et partage — PDF, image, WhatsApp
    *
@@ -713,13 +731,15 @@ export default function ClientDetailPage() {
               Retour à la liste
             </Link>
             {customer && (
-              <Link
-                href={`/clients/${customer.id}/paiements`}
-                className="btn btn-outline btn-sm min-h-11 gap-1.5 sm:min-h-0"
-              >
-                <Icon d={ICONS.wallet} className="h-4 w-4" />
-                Historique des paiements
-              </Link>
+              <Tooltip label={receiptsTooltip}>
+                <Link
+                  href={`/clients/${customer.id}/paiements`}
+                  className="btn btn-outline btn-sm min-h-11 gap-1.5 sm:min-h-0"
+                >
+                  <Icon d={ICONS.wallet} className="h-4 w-4" />
+                  Historique des paiements
+                </Link>
+              </Tooltip>
             )}
             {canPay && customer && stats && hasDebt && (
               <Tooltip label={paymentTooltip} maxWidth="min(26rem, calc(100vw - 1rem))">
@@ -940,20 +960,9 @@ export default function ClientDetailPage() {
               )}
 
               <div className="flex flex-wrap gap-2 pt-1">
-                {/*
-                 * Le libellé « Voir les encaissements » ne dit pas où l'on va :
-                 * l'infobulle lève le doute — c'est **tous les reçus de ce
-                 * client**, du plus récent au plus ancien.
-                 */}
-                <Tooltip
-                  label={
-                    <>
-                      Ouvre l&apos;historique complet des encaissements de{' '}
-                      {customer.name} : chaque règlement enregistré, avec son{' '}
-                      <strong>reçu imprimable</strong>.
-                    </>
-                  }
-                >
+                {/* Même explication que le lien « Historique des paiements » de
+                    l'en-tête : `receiptsTooltip` est défini une seule fois. */}
+                <Tooltip label={receiptsTooltip}>
                   <Link
                     href={`/clients/${customer.id}/paiements`}
                     className="btn btn-ghost btn-sm min-h-11 border border-base-300 sm:min-h-0"
