@@ -240,7 +240,7 @@ function MetricCard({
         {iconTooltip ? (
           <Tooltip label={iconTooltip}>
             {/* `tabIndex` : la bulle s'ouvre aussi au clavier, comme partout ailleurs. */}
-            <span className="flex items-center justify-center" tabIndex={0}>
+            <span className="flex cursor-pointer items-center justify-center" tabIndex={0}>
               {icon}
             </span>
           </Tooltip>

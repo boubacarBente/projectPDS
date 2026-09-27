@@ -16,7 +16,6 @@ import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { IconAction, RowActions } from '@/components/row-actions';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
-import { formatNumber } from '@/lib/format';
 import type { PurchaseInvoiceRow } from '@/components/achats/achats-modals';
 
 /** Un achat reste-t-il réglable ? (annulé ou soldé ⇒ non) */
@@ -53,6 +52,14 @@ export function AchatsTable({
 }) {
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
+  /*
+   * Colonnes **« Réf. fournisseur »** et **« Lignes »** retirées à la demande du
+   * client : à 1366 px (écran du poste), elles poussaient le tableau au-delà de
+   * la largeur disponible et obligeaient à faire défiler horizontalement.
+   * L'information n'est pas perdue : la référence du fournisseur est dans le
+   * détail de l'achat et sur le bon d'achat, le nombre de lignes dans la modale
+   * de détail.
+   */
   const columns = [
     {
       key: 'date',
@@ -79,17 +86,6 @@ export function AchatsTable({
       render: (invoice: PurchaseInvoiceRow) => (
         <span className="block min-w-0 truncate">{invoice.supplierName || '—'}</span>
       ),
-    },
-    {
-      key: 'supplierReference',
-      label: 'Réf. fournisseur',
-      hideOnMobile: true,
-      render: (invoice: PurchaseInvoiceRow) =>
-        invoice.supplierReference ? (
-          <span className="tabular break-all">{invoice.supplierReference}</span>
-        ) : (
-          <span className="text-base-content/40">—</span>
-        ),
     },
     {
       key: 'dueDate',
@@ -130,15 +126,6 @@ export function AchatsTable({
       className: 'whitespace-nowrap',
       render: (invoice: PurchaseInvoiceRow) => (
         <StatusBadge status={invoice.paymentStatus} kind="payment" />
-      ),
-    },
-    {
-      key: 'itemCount',
-      label: 'Lignes',
-      hideOnMobile: true,
-      className: 'text-right whitespace-nowrap',
-      render: (invoice: PurchaseInvoiceRow) => (
-        <span className="tabular text-base-content/60">{formatNumber(invoice.itemCount)}</span>
       ),
     },
   ] satisfies Column<PurchaseInvoiceRow>[];
