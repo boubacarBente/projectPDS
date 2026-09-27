@@ -158,7 +158,7 @@ type PastilleTone = keyof typeof PASTILLE_TONES;
  */
 const METRIC_TOOLTIPS = {
   'Solde à payer':
-    'Montant restant à régler par le client sur l’ensemble de ses factures validées, toutes taxes comprises (TTC). Le solde s’affiche en rouge si un montant reste dû et en vert si tout est réglé.',
+    'Montant restant à régler par le client sur l’ensemble de ses factures validées, toutes taxes comprises (TTC).',
 
   'Total facturé':
     'Montant cumulé de toutes les factures validées émises au nom de ce client, toutes taxes comprises (TTC). Les factures en brouillon et annulées ne sont pas prises en compte.',
@@ -734,8 +734,30 @@ export default function ClientDetailPage() {
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
       {/* ── En-tête (maquette : fil d'Ariane, avatar, statut, actions, logo) ── */}
-      <header className="rounded-3xl border border-base-200 bg-linear-to-r from-primary/10 to-base-100 p-5 shadow-sm sm:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <header className="relative overflow-hidden rounded-3xl border border-base-200 bg-linear-to-r from-primary/10 to-base-100 p-5 shadow-sm sm:p-6">
+        {/*
+          * Logo de la société en **filigrane** : image de fond, à droite, très
+          * estompée.
+          *
+          * - `aria-hidden` : purement décoratif — le nom de la société figure déjà
+          *   dans la barre latérale, il n'a rien à annoncer une seconde fois ;
+          * - `pointer-events-none` : il ne doit jamais intercepter un clic sur les
+          *   boutons d'action ;
+          * - `mix-blend-multiply` : le logo livré est un **JPG à fond blanc**, qui
+          *   apparaîtrait sinon comme un rectangle blanc translucide sur le
+          *   dégradé. En multipliant, le blanc devient le fond lui-même et seuls
+          *   les traits du logo restent visibles.
+          *
+          * L'ordre compte : ce filigrane est placé **avant** le contenu, qui est en
+          * `relative` — à z-index égal, le dernier élément du DOM passe devant,
+          * donc les boutons restent au-dessus du logo.
+          */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-4 w-40 bg-contain bg-right bg-no-repeat opacity-10 mix-blend-multiply sm:right-6 sm:w-56"
+          style={{ backgroundImage: `url(${companyLogo})` }}
+        />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-base-content/60">
               <Icon d={ICONS.home} className="h-3.5 w-3.5" />
@@ -822,12 +844,6 @@ export default function ClientDetailPage() {
                 label="Exporter"
               />
             )}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={companyLogo}
-              alt={`Logo ${companyName}`}
-              className="h-11 w-11 shrink-0 rounded-xl object-contain sm:h-14 sm:w-14"
-            />
           </div>
         </div>
       </header>

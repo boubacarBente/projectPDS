@@ -865,6 +865,18 @@ Chaque **icône** de ces cartes de métriques porte une **infobulle** (au survol
 
 > ⚠️ **Écart connu à surveiller.** Le texte du bénéfice dit « selon les prix enregistrés à la date de vente » : c'est l'évolution **prévue** (Q20), pas l'état actuel du code. Aujourd'hui le coût est lu sur le prix d'achat **actuel** du catalogue, donc modifier ce prix déplace la marge des ventes passées. Le commentaire de `METRIC_TOOLTIPS` le signale ; la phrase deviendra exacte le jour où le coût sera figé sur la ligne de vente (`sales_invoice_items.unit_cost`).
 
+**Logo en filigrane (fiche client).** L'en-tête de `/clients/[id]` affiche le logo de la société en **image de fond** plaquée à droite (`bg-contain bg-right`), à **10 % d'opacité**, au lieu d'une vignette dans la rangée d'actions. Trois points techniques :
+
+- **`mix-blend-multiply` est nécessaire** : le logo livré par défaut est un **JPG à fond blanc** (`/logo.jpg`) — une simple opacité ferait apparaître un rectangle blanc translucide sur le dégradé de l'en-tête. En multipliant, le blanc devient le fond lui-même et seuls les traits du logo restent visibles.
+- **`aria-hidden` + `pointer-events-none`** : purement décoratif (le nom de la société figure déjà dans la barre latérale), il ne doit ni être annoncé deux fois, ni intercepter un clic sur les boutons d'action — vérifié en navigateur par `elementFromPoint` au centre du bouton.
+- **Ordre du DOM** : le filigrane est placé **avant** le contenu, qui est en `relative` ; à z-index égal, le dernier élément passe devant, donc les boutons restent au-dessus du logo.
+
+Réglages : `opacity-10` et `w-40 sm:w-56` (largeur de la bande de fond) dans `app/clients/[id]/page.tsx`. Le tableau de bord (`app/page.tsx`) garde, lui, le logo en vignette.
+
+Chaque **icône** de ces cartes de métriques porte une **infobulle** (au survol et au clavier) qui explique sa métrique. Les textes sont regroupés dans la constante `METRIC_TOOLTIPS` en tête de `app/clients/[id]/page.tsx`, clés = libellés des cartes, pour qu'on les relise tous d'un coup d'œil. Ils lèvent une ambiguïté de lecture réelle : les montants de facturation (**solde**, **total facturé**, **total payé**, **panier moyen**) sont **TTC**, alors que le **bénéfice brut** est calculé **HT**. Chaque message précise aussi ce qui est exclu (factures en brouillon, annulées).
+
+> ⚠️ **Écart connu à surveiller.** Le texte du bénéfice dit « selon les prix enregistrés à la date de vente » : c'est l'évolution **prévue** (Q20), pas l'état actuel du code. Aujourd'hui le coût est lu sur le prix d'achat **actuel** du catalogue, donc modifier ce prix déplace la marge des ventes passées. Le commentaire de `METRIC_TOOLTIPS` le signale ; la phrase deviendra exacte le jour où le coût sera figé sur la ligne de vente (`sales_invoice_items.unit_cost`).
+
 Deux garde-fous, identiques à ceux de la colonne des ventes :
 
 - **Confidentialité** : la donnée est réservée à `balances.view`. Sans ce droit, `GET /api/clients/[id]` renvoie `cost: null` et `profit: null` (`canViewSalesProfit()`, `withoutSalesProfit()`), et la carte n'apparaît pas. Masquer n'est pas protéger (§9).
