@@ -899,7 +899,15 @@ Reprise du moteur `lib/stock.ts` de Gaz (`addStockMovement`, `updateProductStock
 Marchandises achetées · Choix du fournisseur · Produits, quantités, prix d'achat · **Calcul automatique du total** · Paiement **comptant, partiel ou à crédit** · **Mise à jour automatique du stock** · **Suivi des dettes fournisseurs**.
 Reprise de `createPurchaseInvoice()` + page `/factures-usine` de Gaz, renommée `/achats`.
 
-**Liste des achats : sept colonnes** (Date · Référence · Fournisseur · Total · Reste · Statut · Actions). « Réf. fournisseur », « Lignes », « Payé » et « Échéance » ont été **retirées à la demande du client** pour supprimer le **défilement horizontal** : l'écran du poste fait 1366 px, la zone du tableau 999 px, et les quatre colonnes la faisaient déborder de ~305 px. Mesuré après retrait : **0 px de débordement à 1366 px et 1440 px** (4 px à 1280 px, sous la résolution du poste). Aucune information n'est perdue — la référence fournisseur, l'échéance et le nombre de lignes sont dans le détail de l'achat et sur le bon d'achat, et `Payé = Total − Reste` se déduit. Ne pas les remettre sans mesurer : c'est exactement ce qui faisait apparaître la barre de défilement.
+**Liste des achats : huit colonnes** (Date · Référence · Fournisseur · Total · Payé · Reste · Statut · Actions), **sans défilement horizontal** à 1366 px (écran du poste) comme à 1440 px.
+
+Pour y arriver, l'espace a été gagné en trois temps, chacun mesuré :
+
+1. « Réf. fournisseur » et « Lignes » retirées (−170 px) : l'information reste dans le détail de l'achat et sur le bon d'achat ;
+2. « Échéance » retirée (−111 px) : elle reste dans le détail et sur le bon d'achat ;
+3. colonne **Référence plafonnée** (`w-28` + `truncate`) et colonne **Fournisseur qui passe à la ligne** (`w-40` + `break-words`, largeur non extensible) : c'est ce qui a permis de **remettre « Payé »** (demande du client) tout en gardant zéro défilement — le nom long (« Alucobond Afrique de l'Ouest ») s'affiche sur deux lignes au lieu d'élargir le tableau. La référence n'est tronquée qu'en cas de manque de place ; elle reste entière dans le détail, sur le document et dans la vue carte (mobile).
+
+Mesuré après ces réglages : **0 px de débordement à 1366 px et 1440 px** (26 px à 1280 px, sous la résolution du poste). La colonne Actions ne peut pas se resserrer : 5 icônes = 200 px, c'est son contenu qui la dimensionne.
 
 ### 7.6 Ventes (§6)
 Vente rapide · **Client ou vente comptant** · Plusieurs produits · **Total et remises automatiques** · Comptant / partiel / crédit · Espèces, Mobile Money, virement, autres · **Déduction automatique du stock** · Historique, correction et **annulation selon autorisation** · **Colonne « Bénéfice » par vente** · **Brouillon** (ni stock ni caisse) validable en un clic.

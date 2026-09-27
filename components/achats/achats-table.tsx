@@ -75,9 +75,15 @@ export function AchatsTable({
       key: 'reference',
       label: 'Référence',
       primary: true,
+      /*
+       * Largeur **plafonnée** : la référence se tronque (ellipse) plutôt que
+       * d'élargir la colonne. Elle reste lisible en entier dans le détail de
+       * l'achat, sur le bon d'achat et dans la vue carte (mobile).
+       */
+      className: 'w-28',
       render: (invoice: PurchaseInvoiceRow) => (
         <span className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="tabular truncate font-semibold">{invoice.reference}</span>
+          <span className="tabular block truncate font-semibold">{invoice.reference}</span>
           {invoice.status !== 'active' && <StatusBadge status={invoice.status} kind="invoice" />}
         </span>
       ),
@@ -85,8 +91,14 @@ export function AchatsTable({
     {
       key: 'supplierName',
       label: 'Fournisseur',
+      /*
+       * Le nom **passe à la ligne** au lieu d'élargir la colonne : les
+       * fournisseurs ont des raisons sociales longues (« Alucobond Afrique de
+       * l'Ouest »), et c'est ce qui faisait déborder le tableau.
+       */
+      className: 'w-40 whitespace-normal',
       render: (invoice: PurchaseInvoiceRow) => (
-        <span className="block min-w-0 truncate">{invoice.supplierName || '—'}</span>
+        <span className="block min-w-0 break-words">{invoice.supplierName || '—'}</span>
       ),
     },
     {
@@ -94,6 +106,13 @@ export function AchatsTable({
       label: 'Total',
       className: 'text-right whitespace-nowrap',
       render: (invoice: PurchaseInvoiceRow) => <MoneyText value={invoice.total} bold />,
+    },
+    {
+      key: 'amountPaid',
+      label: 'Payé',
+      className: 'text-right whitespace-nowrap',
+      // Montant réellement décaissé : aucune couleur, c'est un fait, pas un dû.
+      render: (invoice: PurchaseInvoiceRow) => <MoneyText value={invoice.amountPaid} />,
     },
     {
       key: 'remainingAmount',
