@@ -1,16 +1,26 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, parsePagination, readJson, requireAction, toInt } from '@/lib/api';
-import { createSalesInvoice, listSalesInvoices, parseSalesInput } from '@/lib/sales';
+import {
+  canViewSalesProfit,
+  createSalesInvoice,
+  listSalesInvoices,
+  parseSalesInput,
+  withoutSalesProfit,
+} from '@/lib/sales';
 
 /**
  * GET /api/ventes — liste paginée, filtrable (§27.2).
  *
  * Filtres : `search` (numéro de facture **ou** nom du client), `customerId`,
  * `from`, `to`, `paymentStatus`, `status`.
+ *
+ * Le **bénéfice** (`cost`, `profit`) n'est renvoyé qu'à un utilisateur détenant
+ * `balances.view` : c'est une donnée financière sensible, et le serveur reste
+ * seul juge (§9) — masquer la colonne côté interface n'est pas protéger.
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('sales.view');
+    const user = await requireAction('sales.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -28,7 +38,9 @@ export async function GET(request: NextRequest) {
       limit,
     });
 
-    return ok(result);
+    if (await canViewSalesProfit(user)) return ok(result);
+
+    return ok({ ...result, data: result.data.map(withoutSalesProfit) });
   } catch (error) {
     return fail(error);
   }

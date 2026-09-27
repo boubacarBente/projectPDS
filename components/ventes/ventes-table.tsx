@@ -7,6 +7,10 @@
  * au-dessus. La colonne **Reste** est la colonne clé du module : `MoneyText
  * colored` (rouge tant qu'il reste quelque chose à encaisser).
  *
+ * La colonne **Bénéfice** n'apparaît que pour un utilisateur qui détient
+ * `balances.view` — et le serveur ne lui envoie `cost`/`profit` que dans ce cas
+ * (`canViewSalesProfit`) : masquer n'est pas protéger (§9).
+ *
  * Les actions sont conditionnées par les permissions : on masque ce que le rôle
  * n'a pas le droit de faire — mais le serveur reste seul juge (§9).
  */
@@ -14,8 +18,10 @@
 import type { ReactNode } from 'react';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { IconAction, RowActions } from '@/components/row-actions';
+import { Tooltip } from '@/components/tooltip';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
+import { formatCurrency, formatPercent } from '@/lib/format';
 import type { SalesInvoiceRow } from '@/components/ventes/ventes-modals';
 
 /** Une facture reste-t-elle encaissable ? (brouillon, annulée ou soldée ⇒ non) */
@@ -29,6 +35,7 @@ export function VentesTable({
   canPay,
   canCancel,
   canValidate,
+  canViewProfit,
   onOpenDetail,
   onOpenInvoice,
   onOpenPayment,
@@ -43,6 +50,8 @@ export function VentesTable({
   canCancel: boolean;
   /** `sales.update` : détenu par les rôles qui peuvent rendre un brouillon définitif. */
   canValidate: boolean;
+  /** `balances.view` : seul ce rôle reçoit (et voit) le bénéfice d'une vente. */
+  canViewProfit: boolean;
   onOpenDetail: (invoice: SalesInvoiceRow) => void;
   /** Ouvre la page facture complète (`/ventes/[id]`) : impression et exports. */
   onOpenInvoice: (invoice: SalesInvoiceRow) => void;
@@ -105,6 +114,44 @@ export function VentesTable({
         <MoneyText value={invoice.remainingAmount} colored bold />
       ),
     },
+    /*
+     * Bénéfice — colonne réservée à `balances.view` (le serveur ne renvoie
+     * `profit` que dans ce cas, donc `null` ici veut dire « pas le droit »).
+     * `MoneyText colored` est le bon code couleur pour un résultat : vert si la
+     * vente rapporte, **rouge si elle est vendue à perte**.
+     */
+    ...(canViewProfit
+      ? [
+          {
+            key: 'profit',
+            label: 'Bénéfice',
+            className: 'text-right whitespace-nowrap',
+            render: (invoice: SalesInvoiceRow) => {
+              // Brouillon ou vente annulée : aucun bénéfice à montrer.
+              if (invoice.profit === null) {
+                return <span className="text-base-content/40">—</span>;
+              }
+
+              const marginPercent =
+                invoice.totalHt > 0.001
+                  ? Math.round((invoice.profit / invoice.totalHt) * 1000) / 10
+                  : 0;
+
+              return (
+                <Tooltip
+                  label={`Coût ${formatCurrency(invoice.cost ?? 0)} · marge ${formatPercent(
+                    marginPercent,
+                  )}`}
+                >
+                  <span>
+                    <MoneyText value={invoice.profit} colored bold />
+                  </span>
+                </Tooltip>
+              );
+            },
+          },
+        ]
+      : []),
     {
       key: 'paymentStatus',
       label: 'Statut',

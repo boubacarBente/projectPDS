@@ -63,7 +63,7 @@ import {
 } from '@/lib/export-document';
 import { shareOnWhatsApp } from '@/components/export-dropdown';
 import { formatDateShort, formatDateTime } from '@/lib/date-format';
-import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format';
+import { formatCurrency, formatNumber, formatPercent, formatQuantity } from '@/lib/format';
 const DOCUMENT_ID = 'vente-invoice-document';
 
 type LoadedInvoice = {
@@ -82,6 +82,8 @@ export default function VenteDetailPage() {
   const canPay = usePermission('payments.create');
   const canCancel = usePermission('sales.cancel');
   const canUpdate = usePermission('sales.update');
+  /** `balances.view` : seul ce rôle reçoit et voit le coût et le bénéfice. */
+  const canViewProfit = usePermission('balances.view');
 
   const [data, setData] = useState<LoadedInvoice | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -820,6 +822,29 @@ export default function VenteDetailPage() {
             <InfoRow label="Statut du document">
               <StatusBadge status={invoice.status} kind="invoice" />
             </InfoRow>
+            {/*
+              * Bénéfice de la vente — réservé à `balances.view`, et **absent à
+              * l'impression** : cette carte est en `no-print`, et un document
+              * client ne doit jamais porter une marge.
+              */}
+            {canViewProfit && invoice.profit !== null && (
+              <>
+                <InfoRow label="Coût des marchandises">
+                  <MoneyText value={invoice.cost ?? 0} />
+                </InfoRow>
+                <InfoRow label="Bénéfice">
+                  <span className="flex items-center justify-end gap-2">
+                    {/* Vert si la vente rapporte, rouge si elle est vendue à perte. */}
+                    <MoneyText value={invoice.profit} colored bold />
+                    <Badge tone={invoice.profit >= 0 ? 'success' : 'error'}>
+                      {formatPercent(
+                        invoice.totalHt > 0.001 ? (invoice.profit / invoice.totalHt) * 100 : 0,
+                      )}
+                    </Badge>
+                  </span>
+                </InfoRow>
+              </>
+            )}
           </div>
         </Card>
       </div>

@@ -39,7 +39,7 @@ import {
 import { useSettings } from '@/app/parametres/page';
 import { usePermission } from '@/components/role-gate';
 import { formatDateShort } from '@/lib/date-format';
-import { formatCurrency, formatNumber, today } from '@/lib/format';
+import { formatCurrency, formatNumber, formatPercent, today } from '@/lib/format';
 import type {
   PaymentSchedule as LibPaymentSchedule,
   SalesInvoiceItemRow as LibSalesInvoiceItemRow,
@@ -153,6 +153,13 @@ export function normalizeInvoiceRow(raw: unknown): SalesInvoiceRow {
     cancelReason: (row.cancelReason ?? row.cancel_reason ?? null) as string | null,
     notes: (row.notes ?? null) as string | null,
     itemCount: num(row.itemCount ?? row.item_count),
+    /*
+     * Coût et bénéfice : `null` quand l'utilisateur n'a pas `balances.view`
+     * (le serveur ne les envoie pas) ou quand la vente n'est pas validée.
+     * On conserve `null` — surtout pas 0, qui afficherait « marge nulle ».
+     */
+    cost: row.cost == null ? null : num(row.cost),
+    profit: row.profit == null ? null : num(row.profit),
     // `Date` côté `lib/`, chaîne après sérialisation JSON : les deux passent.
     createdAt: (row.createdAt ?? row.created_at ?? null) as Date | string | null,
   };
@@ -412,6 +419,8 @@ export function InvoiceDetailModal({
   showPrintLink?: boolean;
 }) {
   const canPay = usePermission('payments.create');
+  /** `balances.view` : seul ce rôle reçoit (et voit) le coût et le bénéfice. */
+  const canViewProfit = usePermission('balances.view');
 
   const items = detail.items ?? [];
   const payments = detail.payments ?? [];
@@ -533,7 +542,11 @@ export function InvoiceDetailModal({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div
+              className={`grid grid-cols-2 gap-3 ${
+                canViewProfit && invoice.profit !== null ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
+              }`}
+            >
               <MiniStat label="Total" value={<MoneyText value={invoice.total} />} />
               <MiniStat
                 label="Payé"
@@ -549,6 +562,28 @@ export function InvoiceDetailModal({
                 label="Règlement"
                 value={<span className="text-sm">{invoice.paymentMethod || '—'}</span>}
               />
+              {/*
+                * Bénéfice de la vente : réservé à `balances.view` — le serveur
+                * ne renvoie `profit` que dans ce cas, donc `null` ici signifie
+                * « pas le droit » ou « vente non validée ». Vert si la vente
+                * rapporte, rouge si elle est vendue à perte.
+                */}
+              {canViewProfit && invoice.profit !== null && (
+                <MiniStat
+                  label="Bénéfice"
+                  tone={invoice.profit >= 0 ? 'success' : 'error'}
+                  value={
+                    <span className="flex items-baseline gap-1.5">
+                      <MoneyText value={invoice.profit} colored bold />
+                      <span className="whitespace-nowrap text-xs font-normal text-base-content/60">
+                        {formatPercent(
+                          invoice.totalHt > 0.001 ? (invoice.profit / invoice.totalHt) * 100 : 0,
+                        )}
+                      </span>
+                    </span>
+                  }
+                />
+              )}
             </div>
 
             <Card padded={false} className="overflow-hidden">

@@ -79,6 +79,17 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
     DaisyUI (`text-success`, `bg-error/10`…), sinon le thème choisi par le client est ignoré.
 12. **Accessibilité.** Cible tactile ≥ 44 px sur mobile, `aria-label` sur chaque
     bouton-icône, et **jamais la couleur seule** pour porter une information.
+13. **Une donnée financière sensible se garde côté serveur.** Coût et bénéfice d'une
+    vente (`cost`, `profit`) ne sont renseignés que pour un utilisateur détenant
+    `balances.view` (`canViewSalesProfit()` dans `lib/sales.ts`) : sinon ils valent
+    `null` dans `GET /api/ventes` et `GET /api/ventes/[id]`, et l'interface masque la
+    colonne / la statistique. Masquer un élément d'interface ne protège rien (§9).
+    ⚠️ Dans la matrice livrée, **Vendeur/Caissier détient déjà `balances.view`** (il voit
+    `/soldes` et la marge) : il voit donc aussi le bénéfice. Pour le lui retirer, il faut
+    changer la matrice ou passer par une surcharge `deny` par utilisateur.
+14. **La marge ne sort jamais d'un document client** : ni PDF, ni image, ni WhatsApp.
+    Elle vit dans des zones `no-print` ou des écrans internes — jamais dans
+    `InvoiceDocument`, `purchase-document` ni un gabarit d'export (`lib/export-document.ts`).
 
 ## Organisation
 

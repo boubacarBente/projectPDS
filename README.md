@@ -861,8 +861,10 @@ Marchandises achetées · Choix du fournisseur · Produits, quantités, prix d'a
 Reprise de `createPurchaseInvoice()` + page `/factures-usine` de Gaz, renommée `/achats`.
 
 ### 7.6 Ventes (§6)
-Vente rapide · **Client ou vente comptant** · Plusieurs produits · **Total et remises automatiques** · Comptant / partiel / crédit · Espèces, Mobile Money, virement, autres · **Déduction automatique du stock** · Historique, correction et **annulation selon autorisation**.
+Vente rapide · **Client ou vente comptant** · Plusieurs produits · **Total et remises automatiques** · Comptant / partiel / crédit · Espèces, Mobile Money, virement, autres · **Déduction automatique du stock** · Historique, correction et **annulation selon autorisation** · **Colonne « Bénéfice » par vente** · **Brouillon** (ni stock ni caisse) validable en un clic.
 → Détaillé en [§10](#10-la-création-de-ventes).
+
+**Colonne « Bénéfice »** (liste des ventes, statistique **Bénéfice** de la modale de détail ouverte depuis la liste, et lignes coût/bénéfice de la carte « Traçabilité » sur `/ventes/[id]`) : `total_ht − Σ(quantité × prix d'achat)`, calculée à la lecture, **vert** si la vente rapporte, **rouge** si elle est vendue à perte, `—` pour un brouillon ou une vente annulée (il n'y a pas encore de bénéfice). Le pourcentage de marge accompagne le montant, et l'infobulle de la colonne donne le coût. Réservé à `balances.view`, et **jamais imprimé** ni exporté : la fiche facture la place dans la carte « Traçabilité » (`no-print`), un document client ne porte aucune marge. Voir §15 pour la formule, la nuance Q20 et la règle de confidentialité.
 
 ### 7.7 Factures et reçus (§7)
 Numéro unique **compatible avec le format actuel de Planète Déco Sarlu** (voir Q1) · Produits, quantités, prix unitaire, montant (GNF) · **Informations client et entreprise avec logo** · **Sous-total, remise, total HT, TVA, total à payer** · Statut payée / partiellement payée / impayée · **Statut de paiement (intégral, acompte, solde) et échéancier en cas de crédit** · **Impression et génération PDF** · **Réimpression des anciennes factures** · **Reçu après chaque paiement**.
@@ -1304,8 +1306,13 @@ Les deux alimentent le **bénéfice net** (§10) et les **rapports par période*
 | **Bénéfice brut** | CA − coût des marchandises vendues |
 | **Bénéfice net** | Bénéfice brut **− `expenses`** de la période − main-d'œuvre des chantiers et des fabrications |
 | Produits les plus rentables | Tri par marge unitaire et par marge cumulée |
+| **Bénéfice par vente** (§7.6) | `sales_invoices.total_ht` − Σ (quantité × `products.purchase_price`) des lignes, **par facture** — base HT et **après remise globale**, donc Σ(bénéfices par vente) retombe exactement sur la marge brute de la période |
 
 > **Aucun de ces montants n'est stocké** : ils sont tous calculés à la lecture, depuis les factures, les paiements et les dépenses. C'est ce qui garantit qu'un solde ne peut jamais « dériver ». Le prix d'achat utilisé pour la marge est celui **du jour de la vente** (lu sur `products.purchase_price`), et non celui du jour de l'édition du rapport.
+
+⚠️ **Nuance à connaître (Q20)** : le prix d'achat est lu sur la fiche produit **au moment du calcul**, pas au moment de la vente. Modifier le prix d'achat d'un produit déplace donc la marge des ventes **passées** — c'est le compromis V1 assumé, cohérent entre `/soldes`, `/rapports` et la colonne « Bénéfice ». L'évolution prévue (Q20) est d'**instantanéiser le coût sur la ligne de vente** (`sales_invoice_items.unit_cost`, comme le font déjà `service_job_materials`, `brick_production_materials` et `furniture_order_materials`) : les marges passées seraient alors figées, et l'historique antérieur affiché comme estimation.
+
+**Confidentialité du bénéfice** : coût et bénéfice sont des **données financières sensibles**. Le serveur ne les renseigne que pour un utilisateur détenant `balances.view` (`canViewSalesProfit()` dans `lib/sales.ts`) : sans ce droit, `cost` et `profit` valent `null` dans `GET /api/ventes` et `GET /api/ventes/[id]`, la colonne « Bénéfice » et le bloc de la fiche facture disparaissent. Masquer ne suffit pas — le serveur reste seul juge (§9). À noter : dans la matrice livrée, le rôle **Vendeur/Caissier** détient déjà `balances.view` (il voit `/soldes`), il voit donc aussi le bénéfice.
 
 Reprise de `calculateSalesProfitMetrics()` (Gaz) et de la structure `RapportData` (`lib/rapports-types.ts`) : `summary`, `comparison`, `monthlyData`, `soldByProduct`, `productMargins`, `topCustomers`, `receivables`, `payables`, `stockInsights`, `decisionSummary` — complétés par `expenses`, `netProfit` et `jobCosts`.
 

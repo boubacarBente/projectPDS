@@ -36,9 +36,11 @@ import {
   type PaymentRow,
 } from '@/lib/payments';
 import { getProduct } from '@/lib/products';
+import { type Role, can } from '@/lib/permissions';
 import { getSettings, nextDocumentNumber } from '@/lib/settings';
 import { addStockMovement } from '@/lib/stock';
 import { enqueueSyncWrite } from '@/lib/sync';
+import { getEffectivePermissions } from '@/lib/user-permissions';
 
 /* ------------------------------------------------------------------ *
  * Types exposés (contrat d'API — ne pas renommer les champs)
@@ -67,6 +69,23 @@ export type SalesInvoiceRow = {
   cancelReason: string | null;
   notes: string | null;
   itemCount: number;
+  /**
+   * Coût des marchandises vendues, **calculé à la lecture** (somme des
+   * quantité × prix d'achat des lignes). `null` hors vente validée.
+   *
+   * Donnée **financière sensible** : renseignée uniquement pour un rôle qui
+   * détient `balances.view` — voir `canViewSalesProfit()`.
+   */
+  cost: number | null;
+  /**
+   * Bénéfice de la vente : `totalHt − cost`. `null` hors vente validée (un
+   * brouillon n'est pas une vente, une annulation ne laisse aucun bénéfice).
+   *
+   * Base **HT et après remise globale** : c'est ce qui garantit que la somme
+   * des bénéfices par vente retombe exactement sur la marge du §15 affichée
+   * dans `/soldes`.
+   */
+  profit: number | null;
   createdAt: Date | null;
 };
 
@@ -158,7 +177,24 @@ const INVOICE_COLUMNS = `
   v.amount_paid, v.remaining_amount, v.payment_status, v.payment_method, v.status,
   v.cancel_reason, v.cancelled_by, v.cancelled_at, v.notes, v.created_at, v.sync_id,
   u.name AS user_name,
-  (SELECT COUNT(*) FROM sales_invoice_items i WHERE i.invoice_id = v.id) AS item_count
+  (SELECT COUNT(*) FROM sales_invoice_items i WHERE i.invoice_id = v.id) AS item_count,
+  /*
+   * Coût des marchandises vendues, par sous-requête corrélée.
+   *
+   * Le README §15 fixe la règle : le prix d'achat de la marge est lu sur la
+   * colonne purchase_price de products — compromis V1 documenté en Q20,
+   * l'instantané du coût sur la ligne étant l'évolution prévue. C'est
+   * exactement la source utilisée par computeCogs() de lib/dashboard.ts, donc
+   * le bénéfice par vente est réconcilié avec /soldes et /rapports.
+   *
+   * Conséquence à connaître : modifier le prix d'achat d'un produit déplace la
+   * marge des ventes passées. Ce n'est pas une marge historique figée.
+   * (Pas d'accent grave dans ce commentaire : il fermerait le gabarit.)
+   */
+  (SELECT COALESCE(SUM(i.quantity * COALESCE(p.purchase_price, 0)), 0)
+     FROM sales_invoice_items i
+     LEFT JOIN products p ON p.id = i.product_id
+    WHERE i.invoice_id = v.id) AS cost
 `;
 
 const INVOICE_FROM = `
@@ -176,6 +212,17 @@ function plainNumber(value: number): string {
 }
 
 function mapInvoiceRow(row: any): SalesInvoiceRow {
+  const totalHt = Number(row.total_ht ?? 0);
+  const cost = roundMoney(Number(row.cost ?? 0));
+  const status = row.status as SalesInvoiceRow['status'];
+  /*
+   * Le bénéfice n'a de sens que pour une vente **validée** : un brouillon n'est
+   * pas encore une vente, une annulation ne laisse ni chiffre d'affaires ni
+   * coût. On renvoie donc `null` plutôt qu'un montant que personne ne devrait
+   * additionner.
+   */
+  const isSale = status === 'active';
+
   return {
     id: Number(row.id),
     invoiceNumber: row.invoice_number,
@@ -187,7 +234,7 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
     dueDate: row.due_date ?? null,
     subTotal: Number(row.sub_total ?? 0),
     discount: Number(row.discount ?? 0),
-    totalHt: Number(row.total_ht ?? 0),
+    totalHt,
     taxRate: Number(row.tax_rate ?? 0),
     taxAmount: Number(row.tax_amount ?? 0),
     total: Number(row.total ?? 0),
@@ -199,6 +246,8 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
     cancelReason: row.cancel_reason ?? null,
     notes: row.notes ?? null,
     itemCount: Number(row.item_count ?? 0),
+    cost: isSale ? cost : null,
+    profit: isSale ? roundMoney(totalHt - cost) : null,
     // `created_at` est stocké en secondes (mode timestamp Drizzle), comme dans
     // `lib/customers.ts`.
     createdAt: row.created_at ? new Date(Number(row.created_at) * 1000) : null,
@@ -1394,6 +1443,36 @@ export async function getSalesStats(period: PeriodKey = 'month'): Promise<SalesS
       count: Number(row.count ?? 0),
     })),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Bénéfice — donnée financière sensible
+ * ------------------------------------------------------------------ */
+
+/**
+ * Le bénéfice d'une vente ne quitte le serveur que pour un utilisateur qui
+ * détient réellement `balances.view` : matrice du rôle **puis** surcharges par
+ * utilisateur, exactement comme `requireAction()` de `lib/api.ts`.
+ *
+ * Masquer la colonne dans l'interface ne suffirait pas — la règle du projet est
+ * que le serveur reste seul juge (§9). Un vendeur lit donc ses ventes sans
+ * jamais recevoir le coût ni la marge.
+ */
+export async function canViewSalesProfit(user: { id: number; role: Role }): Promise<boolean> {
+  const permissions = await getEffectivePermissions({ id: user.id, role: user.role });
+  return can(user, 'balances.view', permissions);
+}
+
+/**
+ * Retire coût et bénéfice d'une ligne de vente avant de la renvoyer à un
+ * utilisateur qui n'a pas `balances.view`. On **conserve les clés** (`null`) :
+ * le contrat d'API ne change pas de forme, il cesse simplement de porter la
+ * donnée.
+ */
+export function withoutSalesProfit<T extends { cost: number | null; profit: number | null }>(
+  row: T,
+): T {
+  return { ...row, cost: null, profit: null };
 }
 
 /* ------------------------------------------------------------------ *

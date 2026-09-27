@@ -8,7 +8,14 @@ import {
   requireAction,
 } from '@/lib/api';
 import { requirePermission } from '@/lib/permissions';
-import { cancelSalesInvoice, getSalesInvoice, parseSalesInput, updateSalesInvoice } from '@/lib/sales';
+import {
+  canViewSalesProfit,
+  cancelSalesInvoice,
+  getSalesInvoice,
+  parseSalesInput,
+  updateSalesInvoice,
+  withoutSalesProfit,
+} from '@/lib/sales';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -18,16 +25,20 @@ type Params = { params: Promise<{ id: string }> };
  * Une facture reste consultable et réimprimable indéfiniment, même annulée :
  * les lignes portent leurs **instantanés** (`product_name`,
  * `unit`) et ne dépendent donc pas de l'état actuel du catalogue.
+ *
+ * Comme pour la liste, le **bénéfice** n'est renvoyé qu'avec `balances.view`.
  */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('sales.view');
+    const user = await requireAction('sales.view');
     const { id } = await params;
 
     const detail = await getSalesInvoice(parseId(id));
     if (!detail) throw new NotFoundError('Facture introuvable');
 
-    return ok(detail);
+    if (await canViewSalesProfit(user)) return ok(detail);
+
+    return ok({ ...detail, invoice: withoutSalesProfit(detail.invoice) });
   } catch (error) {
     return fail(error);
   }

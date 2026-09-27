@@ -91,6 +91,11 @@ export default function VentesPage() {
   const canCancel = usePermission('sales.cancel');
   /** `sales.update` : valider un brouillon sort le stock définitivement. */
   const canValidate = usePermission('sales.update');
+  /**
+   * `balances.view` : seul ce rôle reçoit et voit le **bénéfice** d'une vente.
+   * Le serveur applique la même règle de son côté (`canViewSalesProfit`).
+   */
+  const canViewProfit = usePermission('balances.view');
 
   /* ------------------------------- État liste ------------------------------ */
   const [invoices, setInvoices] = useState<SalesInvoiceRow[]>([]);
@@ -588,6 +593,7 @@ export default function VentesPage() {
           canPay={canPay}
           canCancel={canCancel}
           canValidate={canValidate}
+          canViewProfit={canViewProfit}
           onOpenDetail={openDetailModal}
           onOpenInvoice={openInvoicePage}
           onOpenPayment={openPaymentModal}
