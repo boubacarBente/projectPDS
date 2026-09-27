@@ -674,7 +674,21 @@ export default function VenteDetailPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {/*
+          * Rangée de statistiques. Le **bénéfice** y figure — c'est le premier
+          * endroit où on le cherche — mais uniquement pour `balances.view` :
+          * le serveur ne renvoie `profit` que dans ce cas, donc `null` signifie
+          * « pas le droit » *ou* « vente non validée ».
+          *
+          * ⚠️ Cette zone est à l'écran, **pas** dans le document exporté : les
+          * exports (PDF, image, WhatsApp) repartent d'un gabarit autonome
+          * (`renderExportDocument`) qui ne connaît ni le coût ni la marge.
+          */}
+        <div
+          className={`grid grid-cols-2 gap-3 ${
+            canViewProfit && invoice.profit !== null ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
+          }`}
+        >
           <MiniStat label="Total" value={<MoneyText value={invoice.total} />} />
           <MiniStat label="Payé" tone="success" value={<MoneyText value={schedule.paid} />} />
           <MiniStat
@@ -682,6 +696,23 @@ export default function VenteDetailPage() {
             tone={schedule.remaining > 0.001 ? 'error' : 'success'}
             value={<MoneyText value={schedule.remaining} colored bold />}
           />
+          {canViewProfit && invoice.profit !== null && (
+            <MiniStat
+              label="Bénéfice"
+              tone={invoice.profit >= 0 ? 'success' : 'error'}
+              value={
+                <span className="flex items-baseline gap-1.5">
+                  {/* Vert si la vente rapporte, rouge si elle est vendue à perte. */}
+                  <MoneyText value={invoice.profit} colored bold />
+                  <span className="whitespace-nowrap text-xs font-normal text-base-content/60">
+                    {formatPercent(
+                      invoice.totalHt > 0.001 ? (invoice.profit / invoice.totalHt) * 100 : 0,
+                    )}
+                  </span>
+                </span>
+              }
+            />
+          )}
           <MiniStat
             label={invoice.dueDate ? 'Échéance' : 'Règlement'}
             tone={schedule.isOverdue ? 'error' : 'neutral'}
@@ -823,27 +854,16 @@ export default function VenteDetailPage() {
               <StatusBadge status={invoice.status} kind="invoice" />
             </InfoRow>
             {/*
-              * Bénéfice de la vente — réservé à `balances.view`, et **absent à
-              * l'impression** : cette carte est en `no-print`, et un document
-              * client ne doit jamais porter une marge.
+              * Coût des marchandises — réservé à `balances.view`, et **absent à
+              * l'impression** (cette carte est en `no-print`). Le **bénéfice**
+              * lui-même est dans la rangée de statistiques en haut de page : on
+              * ne l'affiche pas deux fois, mais le coût reste ici, dans la zone
+              * de traçabilité où on le cherche pour vérifier un chiffre.
               */}
             {canViewProfit && invoice.profit !== null && (
-              <>
-                <InfoRow label="Coût des marchandises">
-                  <MoneyText value={invoice.cost ?? 0} />
-                </InfoRow>
-                <InfoRow label="Bénéfice">
-                  <span className="flex items-center justify-end gap-2">
-                    {/* Vert si la vente rapporte, rouge si elle est vendue à perte. */}
-                    <MoneyText value={invoice.profit} colored bold />
-                    <Badge tone={invoice.profit >= 0 ? 'success' : 'error'}>
-                      {formatPercent(
-                        invoice.totalHt > 0.001 ? (invoice.profit / invoice.totalHt) * 100 : 0,
-                      )}
-                    </Badge>
-                  </span>
-                </InfoRow>
-              </>
+              <InfoRow label="Coût des marchandises">
+                <MoneyText value={invoice.cost ?? 0} />
+              </InfoRow>
             )}
           </div>
         </Card>
