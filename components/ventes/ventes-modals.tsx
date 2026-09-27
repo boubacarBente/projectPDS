@@ -39,7 +39,7 @@ import {
 import { useSettings } from '@/app/parametres/page';
 import { usePermission } from '@/components/role-gate';
 import { formatDateShort } from '@/lib/date-format';
-import { formatCurrency, formatNumber, formatPercent, today } from '@/lib/format';
+import { formatCurrency, formatNumber, today } from '@/lib/format';
 import type {
   PaymentSchedule as LibPaymentSchedule,
   SalesInvoiceItemRow as LibSalesInvoiceItemRow,
@@ -566,22 +566,14 @@ export function InvoiceDetailModal({
                 * Bénéfice de la vente : réservé à `balances.view` — le serveur
                 * ne renvoie `profit` que dans ce cas, donc `null` ici signifie
                 * « pas le droit » ou « vente non validée ». Vert si la vente
-                * rapporte, rouge si elle est vendue à perte.
+                * rapporte, rouge si elle est vendue à perte. Le **montant seul**
+                * (pas de taux de marge).
                 */}
               {canViewProfit && invoice.profit !== null && (
                 <MiniStat
                   label="Bénéfice"
                   tone={invoice.profit >= 0 ? 'success' : 'error'}
-                  value={
-                    <span className="flex items-baseline gap-1.5">
-                      <MoneyText value={invoice.profit} colored bold />
-                      <span className="whitespace-nowrap text-xs font-normal text-base-content/60">
-                        {formatPercent(
-                          invoice.totalHt > 0.001 ? (invoice.profit / invoice.totalHt) * 100 : 0,
-                        )}
-                      </span>
-                    </span>
-                  }
+                  value={<MoneyText value={invoice.profit} colored bold />}
                 />
               )}
             </div>

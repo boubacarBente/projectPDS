@@ -63,7 +63,7 @@ import {
 } from '@/lib/export-document';
 import { shareOnWhatsApp } from '@/components/export-dropdown';
 import { formatDateShort, formatDateTime } from '@/lib/date-format';
-import { formatCurrency, formatNumber, formatPercent, formatQuantity } from '@/lib/format';
+import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format';
 const DOCUMENT_ID = 'vente-invoice-document';
 
 type LoadedInvoice = {
@@ -700,17 +700,8 @@ export default function VenteDetailPage() {
             <MiniStat
               label="Bénéfice"
               tone={invoice.profit >= 0 ? 'success' : 'error'}
-              value={
-                <span className="flex items-baseline gap-1.5">
-                  {/* Vert si la vente rapporte, rouge si elle est vendue à perte. */}
-                  <MoneyText value={invoice.profit} colored bold />
-                  <span className="whitespace-nowrap text-xs font-normal text-base-content/60">
-                    {formatPercent(
-                      invoice.totalHt > 0.001 ? (invoice.profit / invoice.totalHt) * 100 : 0,
-                    )}
-                  </span>
-                </span>
-              }
+              /* Le montant seul, volontairement : pas de taux de marge. */
+              value={<MoneyText value={invoice.profit} colored bold />}
             />
           )}
           <MiniStat

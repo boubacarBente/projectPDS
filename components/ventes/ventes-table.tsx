@@ -21,7 +21,7 @@ import { IconAction, RowActions } from '@/components/row-actions';
 import { Tooltip } from '@/components/tooltip';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
-import { formatCurrency, formatPercent } from '@/lib/format';
+import { formatCurrency } from '@/lib/format';
 import type { SalesInvoiceRow } from '@/components/ventes/ventes-modals';
 
 /** Une facture reste-t-elle encaissable ? (brouillon, annulée ou soldée ⇒ non) */
@@ -119,6 +119,9 @@ export function VentesTable({
      * `profit` que dans ce cas, donc `null` ici veut dire « pas le droit »).
      * `MoneyText colored` est le bon code couleur pour un résultat : vert si la
      * vente rapporte, **rouge si elle est vendue à perte**.
+     *
+     * Le montant seul : l'infobulle rappelle le coût des marchandises, sans
+     * taux de marge (choix explicite — un taux se lit mal d'un coup d'œil).
      */
     ...(canViewProfit
       ? [
@@ -132,17 +135,8 @@ export function VentesTable({
                 return <span className="text-base-content/40">—</span>;
               }
 
-              const marginPercent =
-                invoice.totalHt > 0.001
-                  ? Math.round((invoice.profit / invoice.totalHt) * 1000) / 10
-                  : 0;
-
               return (
-                <Tooltip
-                  label={`Coût ${formatCurrency(invoice.cost ?? 0)} · marge ${formatPercent(
-                    marginPercent,
-                  )}`}
-                >
+                <Tooltip label={`Coût des marchandises : ${formatCurrency(invoice.cost ?? 0)}`}>
                   <span>
                     <MoneyText value={invoice.profit} colored bold />
                   </span>
