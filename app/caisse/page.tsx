@@ -496,6 +496,39 @@ export default function CaissePage() {
 
   const sessionOpen = Boolean(session && session.status === 'open');
 
+  /**
+   * Libellés de la synthèse : ils suivent ce que les totaux décrivent vraiment
+   * (`summary.scope`). Après une clôture, la référence est la **dernière session
+   * clôturée** — afficher « Entrées de la session » au-dessus de tout
+   * l'historique ferait croire que la clôture a effacé les données.
+   */
+  const scopeReference =
+    summary?.scope === 'session'
+      ? `Session #${summary.scopeSessionId ?? '—'} en cours`
+      : summary?.scope === 'lastClosed'
+        ? `Session #${summary.scopeSessionId ?? '—'} clôturée`
+        : 'Ensemble de l’historique';
+  const scopeLabels = {
+    income:
+      summary?.scope === 'session'
+        ? 'Entrées de la session'
+        : summary?.scope === 'lastClosed'
+          ? 'Entrées de la dernière session'
+          : 'Entrées (période)',
+    expense:
+      summary?.scope === 'session'
+        ? 'Sorties de la session'
+        : summary?.scope === 'lastClosed'
+          ? 'Sorties de la dernière session'
+          : 'Sorties (période)',
+    result:
+      summary?.scope === 'session'
+        ? 'Résultat de la session'
+        : summary?.scope === 'lastClosed'
+          ? 'Résultat de la dernière session'
+          : 'Résultat (période)',
+  };
+
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
       <PageHeader
@@ -605,19 +638,19 @@ export default function CaissePage() {
             hint={sessionOpen ? 'Dernier solde de la session ouverte' : 'Dernier solde connu'}
           />
           <StatCardDelta
-            label="Entrées de la session"
+            label={scopeLabels.income}
             tone="success"
             value={<MoneyText value={summary?.incomeTotal ?? 0} currency={currency} />}
-            hint={`${formatNumber(summary?.movementsCount ?? 0)} mouvement(s)`}
+            hint={`${formatNumber(summary?.movementsCount ?? 0)} mouvement(s) · ${scopeReference}`}
           />
           <StatCardDelta
-            label="Sorties de la session"
+            label={scopeLabels.expense}
             tone="error"
             value={<MoneyText value={summary?.expenseTotal ?? 0} currency={currency} />}
             hint="Dépenses, achats et retraits"
           />
           <StatCardDelta
-            label="Résultat de la session"
+            label={scopeLabels.result}
             tone={(summary?.incomeTotal ?? 0) - (summary?.expenseTotal ?? 0) >= 0 ? 'success' : 'error'}
             value={
               <MoneyText
@@ -635,7 +668,7 @@ export default function CaissePage() {
       {/* ------------------------ Espèces / Mobile Money ----------------------- */}
       <PageSection
         title="Répartition par moyen de paiement"
-        subtitle="Chaque mouvement porte son moyen : la répartition est calculée, jamais saisie."
+        subtitle={`Chaque mouvement porte son moyen : la répartition est calculée, jamais saisie. ${scopeReference}.`}
       >
         {isLoading && !summary ? (
           <SkeletonCards count={2} />
@@ -643,7 +676,11 @@ export default function CaissePage() {
           <Card>
             {(summary?.byMethod?.length ?? 0) === 0 ? (
               <p className="py-2 text-sm text-base-content/60">
-                Aucun mouvement sur la session en cours.
+                {summary?.scope === 'session'
+                  ? 'Aucun mouvement sur la session en cours.'
+                  : summary?.scope === 'lastClosed'
+                    ? 'Aucun mouvement sur la dernière session clôturée.'
+                    : 'Aucun mouvement de caisse.'}
               </p>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

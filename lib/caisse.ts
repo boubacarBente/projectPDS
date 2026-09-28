@@ -423,26 +423,74 @@ export type CashSummary = {
   openingAmount: number;
   sessionStatus: 'open' | 'closed';
   sessionId: number | null;
+  /**
+   * Sur quoi portent les totaux (`incomeTotal`, `expenseTotal`, `byMethod`) :
+   *  - `session` : la session **ouverte** ;
+   *  - `lastClosed` : la **dernière session clôturée** — il n'y a plus de session
+   *    ouverte, mais les chiffres gardent un sens et un libellé ;
+   *  - `all` : tout l'historique (aucun filtre).
+   *
+   * Sans ce champ, l'écran affichait « Entrées de la session » au-dessus de
+   * l'historique complet : de quoi croire que la clôture avait tout effacé.
+   */
+  scope: 'session' | 'lastClosed' | 'all';
+  /** Session décrite par les totaux (ouverte ou dernière clôturée). */
+  scopeSessionId: number | null;
+  /** Date de clôture de la session décrite, quand elle est clôturée. */
+  scopeClosedAt: Date | null;
   incomeTotal: number;
   expenseTotal: number;
   byMethod: { method: string; income: number; expense: number; net: number }[];
   movementsCount: number;
 };
 
+/** Dernière session clôturée : référence quand aucune session n'est ouverte. */
+export async function getLastClosedSession(): Promise<CashSessionRow | null> {
+  const row = await db
+    .select()
+    .from(cashSessions)
+    .where(eq(cashSessions.status, 'closed'))
+    .orderBy(desc(cashSessions.id))
+    .limit(1);
+
+  return row[0] ? mapSession(row[0]) : null;
+}
+
 /** Résumé de caisse sur une période, avec répartition Espèces / Mobile Money (§8). */
 export async function getCashSummary(options: { from?: string; to?: string } = {}): Promise<CashSummary> {
   const session = await getOpenSession();
   const balance = await getCashBalance();
 
+  /*
+   * Sur quoi portent les totaux ? La session ouverte si elle existe ; sinon la
+   * **dernière session clôturée** — jamais « tout l'historique » en silence.
+   */
+  let scope: CashSummary['scope'] = 'all';
+  let scopeSessionId: number | null = null;
+  let scopeClosedAt: Date | null = null;
+
   const conditions: string[] = [];
   const args: (string | number)[] = [];
+
   if (session) {
+    scope = 'session';
+    scopeSessionId = session.id;
     conditions.push('session_id = ?');
     args.push(session.id);
   } else if (options.from && options.to) {
     conditions.push('date >= ? AND date <= ?');
     args.push(options.from, options.to);
+  } else {
+    const lastClosed = await getLastClosedSession();
+    if (lastClosed) {
+      scope = 'lastClosed';
+      scopeSessionId = lastClosed.id;
+      scopeClosedAt = lastClosed.closedAt;
+      conditions.push('session_id = ?');
+      args.push(lastClosed.id);
+    }
   }
+
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const totals = await rawGet<{ income: number | null; expense: number | null; count: number }>(
@@ -468,6 +516,9 @@ export async function getCashSummary(options: { from?: string; to?: string } = {
     openingAmount: session?.openingAmount ?? 0,
     sessionStatus: session ? 'open' : 'closed',
     sessionId: session?.id ?? null,
+    scope,
+    scopeSessionId,
+    scopeClosedAt,
     incomeTotal: Number(totals?.income ?? 0),
     expenseTotal: Number(totals?.expense ?? 0),
     byMethod: byMethod.map((m) => ({
