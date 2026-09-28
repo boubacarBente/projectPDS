@@ -432,177 +432,149 @@ export async function seedDemoData(): Promise<SeedReport> {
   }
 
   /* ------------------- Transactions de démonstration -------------------- */
-  // Une session de caisse ouverte, pour que l'écran Caisse soit exploitable.
-  const session = await db
-    .insert(cashSessions)
-    .values({
-      status: 'open',
-      openingAmount: 2_000_000,
-      notes: 'Session de démonstration',
-      ...syncDefaults,
-    })
-    .returning({ id: cashSessions.id });
-
-  const sessionId = session[0].id;
-  let cashBalance = 2_000_000;
-
-  await db.insert(cashMovements).values({
-    type: 'income',
-    amount: 2_000_000,
-    paymentMethod: 'Espèces',
-    motif: "Montant d'ouverture de caisse",
-    referenceType: 'manual',
-    sessionId,
-    balanceAfter: cashBalance,
-    date: addDays(todayDate, -20),
-    ...syncDefaults,
-  });
-
-  // Achats fournisseurs (entrées de stock).
-  const purchases: { supplierIndex: number; daysAgo: number; lines: [string, number][]; paidRatio: number }[] = [
-    { supplierIndex: 0, daysAgo: 24, lines: [['Planche bois rouge 2,5 m', 40], ['Chevron 7 x 7 cm — 3 m', 60], ['Contreplaqué 15 mm — 2,44 x 1,22 m', 12]], paidRatio: 1 },
-    { supplierIndex: 2, daysAgo: 18, lines: [['Ciment CEM II 50 kg', 40]], paidRatio: 1 },
-    { supplierIndex: 3, daysAgo: 12, lines: [['Panneau Alucobond 4 mm rouge', 60], ['Panneau Alucobond 4 mm argent', 40]], paidRatio: 0.5 },
-    { supplierIndex: 1, daysAgo: 7, lines: [['Charnière invisible', 200], ['Poignée aluminium brossé', 80]], paidRatio: 0 },
-  ];
-
-  /**
-   * Compteurs de numérotation à remettre à niveau APRÈS le préremplissage.
+  /*
+   * Historique de démonstration sur **24 mois** — deux années civiles — pour que
+   * les filtres aient tous de quoi travailler : « Aujourd'hui » (des ventes du
+   * jour), « Semaine », « Mois », « Année » (deux années distinctes) et « Total »
+   * (tout l'historique). Les rapports comparatifs trouvent ainsi toujours un
+   * « mois précédent ».
    *
-   * ⚠️ **Indispensable.** Les documents de démonstration reçoivent des numéros
-   * (`FAC-2026-000001`, `ACH-2026-000001`, `REC-…`), mais `nextSequence()`
-   * ignore leur existence : il repart de 1. Sans cette remise à niveau, la
-   * **première vraie vente** tenterait `FAC-2026-000001` à nouveau et la base
-   * refuserait l'insertion, puisque le numéro de facture est **unique**.
+   * Une **session de caisse par mois** : les mois passés sont **clôturés** (avec
+   * un écart de comptage de temps en temps, sinon la colonne « Écart » resterait
+   * vide), le mois courant reste **ouvert**. Une session = un mois, un montant
+   * d'ouverture, un théorique, un compté, un écart.
    *
-   * Le bug a été constaté en vérification : « Failed query: insert into
-   * sales_invoices … ». On enregistre donc le plus grand numéro utilisé, par
-   * type de document et par année.
+   * Les documents sont insérés **dans l'ordre chronologique**, mois par mois.
+   * C'est indispensable : le stock (`stockBefore`/`stockAfter`) et le solde de
+   * caisse (`balanceAfter`) doivent se lire dans le même ordre que les dates.
    */
-  const sequenceUsage = {
-    invoice: new Map<number, number>(),
-    purchase: new Map<number, number>(),
-    receipt: new Map<number, number>(),
-  };
+  const HISTORY_MONTHS = 24;
+  /** Fond de caisse du premier mois (espèces réellement présentes : réaliste). */
+  const OPENING_FUND = 8_000_000;
+  /** Plancher d'espèces : un tiroir ne passe jamais sous ce montant. */
+  const CASH_FLOOR = 500_000;
 
-  const recordSequence = (
-    kind: 'invoice' | 'purchase' | 'receipt',
-    year: number,
-    value: number,
-  ) => {
-    const map = sequenceUsage[kind];
-    map.set(year, Math.max(map.get(year) ?? 0, value));
-  };
+  const monthOf = (date: string) => date.slice(0, 7);
 
-  let purchaseSequence = 0;
-  for (const purchase of purchases) {
-    purchaseSequence += 1;
-    const date = addDays(todayDate, -purchase.daysAgo);
-    const purchaseYear = Number(date.slice(0, 4));
-    recordSequence('purchase', purchaseYear, purchaseSequence);
-
-    const lines = purchase.lines.map(([name, quantity]) => {
-      const seed = PRODUCTS.find((p) => p.name === name)!;
-      return { name, quantity, unitPrice: seed.purchasePrice, amount: seed.purchasePrice * quantity };
-    });
-
-    const total = lines.reduce((sum, l) => sum + l.amount, 0);
-    const amountPaid = Math.round(total * purchase.paidRatio);
-    const remaining = total - amountPaid;
-
-    const invoice = await db
-      .insert(purchaseInvoices)
-      .values({
-        reference: renderDocumentNumber(settings.purchasePrefix, purchaseSequence, settings.invoiceNumberFormat, purchaseYear),
-        supplierId: supplierIds[purchase.supplierIndex],
-        date,
-        dueDate: addDays(date, 30),
-        total,
-        amountPaid,
-        remainingAmount: remaining,
-        paymentStatus: amountPaid <= 0 ? 'unpaid' : remaining <= 0 ? 'paid' : 'partial',
-        paymentMethod: amountPaid > 0 ? 'Espèces' : 'Crédit',
-        ...syncDefaults,
-      })
-      .returning({ id: purchaseInvoices.id });
-
-    for (const line of lines) {
-      const productId = productIds.get(line.name)!;
-      const seed = PRODUCTS.find((p) => p.name === line.name)!;
-
-      await db.insert(purchaseInvoiceItems).values({
-        invoiceId: invoice[0].id,
-        productId,
-        productName: seed.name,
-        unit: seed.unit,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
-        amount: line.amount,
-        ...syncDefaults,
-      });
-
-      const [current] = await db
-        .select({ stock: products.stock })
-        .from(products)
-        .where(eq(products.id, productId));
-
-      const stockBefore = Number(current?.stock ?? 0);
-      const stockAfter = stockBefore + line.quantity;
-
-      await db.insert(stockMovements).values({
-        productId,
-        type: 'entry',
-        quantity: line.quantity,
-        motif: `Achat fournisseur — démonstration`,
-        stockBefore,
-        stockAfter,
-        referenceType: 'purchase',
-        referenceId: invoice[0].id,
-        ...syncDefaults,
-      });
-
-      await db.update(products).set({ stock: stockAfter }).where(eq(products.id, productId));
-    }
-
-    if (amountPaid > 0) {
-      await db.insert(payments).values({
-        receiptNumber: renderDocumentNumber(settings.receiptPrefix, purchaseSequence, settings.invoiceNumberFormat, purchaseYear),
-        type: 'purchase',
-        referenceId: invoice[0].id,
-        amount: amountPaid,
-        paymentMethod: 'Espèces',
-        paymentLabel: remaining <= 0 ? 'full' : 'deposit',
-        date,
-        notes: 'Règlement de démonstration',
-        ...syncDefaults,
-      });
-
-      cashBalance -= amountPaid;
-      await db.insert(cashMovements).values({
-        type: 'expense',
-        amount: amountPaid,
-        paymentMethod: 'Espèces',
-        motif: `Règlement achat (démonstration)`,
-        referenceType: 'purchase',
-        referenceId: invoice[0].id,
-        sessionId,
-        balanceAfter: cashBalance,
-        date,
-        ...syncDefaults,
-      });
-    }
-
-    purchaseCount += 1;
+  /** Premier jour du mois décalé de `delta` mois. */
+  function shiftMonth(start: string, delta: number): string {
+    const year = Number(start.slice(0, 4));
+    const month = Number(start.slice(5, 7));
+    const shifted = new Date(Date.UTC(year, month - 1 + delta, 1));
+    return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-01`;
   }
 
-  // Ventes clients.
-  const sales: {
+  /** Jour `day` du mois, ramené au dernier jour réel (février, mois de 30 jours). */
+  function dayOfMonth(start: string, day: number): string {
+    const year = Number(start.slice(0, 4));
+    const month = Number(start.slice(5, 7));
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return `${start.slice(0, 8)}${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+  }
+
+  /* ------------------------------- Les plans ------------------------------ */
+
+  type PlannedSale = {
+    kind: 'sale';
+    date: string;
     customerIndex: number | null;
-    daysAgo: number;
     lines: [string, number][];
     paidRatio: number;
     method: string;
-  }[] = [
+  };
+  type PlannedPurchase = {
+    kind: 'purchase';
+    date: string;
+    supplierIndex: number;
+    lines: [string, number][];
+    paidRatio: number;
+    note: string;
+  };
+  type PlannedCharge = {
+    kind: 'charge';
+    date: string;
+    category: string;
+    amount: number;
+    description: string;
+    method: string;
+  };
+  type PlannedDoc = PlannedSale | PlannedPurchase | PlannedCharge;
+
+  /** Fournisseur cohérent avec la catégorie du produit réapprovisionné. */
+  function supplierForProduct(name: string): number {
+    const product = PRODUCTS.find((p) => p.name === name);
+    switch (product?.category) {
+      case 'Meuble':
+      case 'Bois':
+        return 0; // Scierie Kindia Bois
+      case 'Quincaillerie':
+      case 'Peinture':
+      case 'Placo':
+      case 'Staff':
+        return 1; // Quincaillerie du Port
+      case 'Alucobond':
+        return 3; // Alucobond Afrique de l'Ouest
+      default:
+        return 2; // Cimenterie Guinéenne SA (briques, ciment, sable)
+    }
+  }
+
+  /** Paniers qui tournent d'un mois sur l'autre (les graphiques ne sont pas figés). */
+  const SALE_BASKETS: [string, number][][] = [
+    [
+      ['Ensemble salon complet', 1],
+      ['Chaise bois massif', 6],
+    ],
+    [
+      ['Armoire 2 portes standard', 2],
+      ['Table à manger 6 places', 1],
+    ],
+    [
+      ['Panneau Alucobond 4 mm rouge', 24.5],
+      ['Rail R48', 40],
+      ['Plaque BA13 1,20 x 2,60 m', 30],
+    ],
+    [
+      ['Bloc béton 20x20x40', 150],
+      ['Brique pleine 15 trous', 400],
+    ],
+    [
+      ['Lit 2 places avec tête de lit', 1],
+      ['Buffet bas 4 portes', 2],
+    ],
+    [
+      ['Peinture acrylique blanche 20 L', 60],
+      ['Vernis bois brillant 5 L', 8],
+      ['Enduit de lissage 25 kg', 6],
+    ],
+    [
+      ['Bureau de direction', 1],
+      ['Chaise bois massif', 12],
+      ['Contreplaqué 15 mm — 2,44 x 1,22 m', 4],
+    ],
+    [
+      ['Staff décoratif en poudre', 12],
+      ['Corniche staff 2 m', 18],
+    ],
+  ];
+
+  const SALE_METHODS = ['Espèces', 'Espèces', 'Mobile Money', 'Virement', 'Espèces', 'Mobile Money'];
+
+  /** Charges de structure, chaque mois, à des jours fixes. */
+  const MONTHLY_CHARGES: { day: number; category: string; amount: number; description: string; method: string }[] = [
+    { day: 3, category: 'Loyer', amount: 3_500_000, description: 'Loyer du magasin', method: 'Virement' },
+    { day: 8, category: 'Électricité', amount: 1_250_000, description: 'Facture EDG', method: 'Mobile Money' },
+    { day: 12, category: 'Carburant', amount: 850_000, description: 'Carburant camion de livraison', method: 'Espèces' },
+    { day: 18, category: 'Transport', amount: 620_000, description: 'Transport de marchandises Dubréka → Conakry', method: 'Espèces' },
+    { day: 27, category: 'Salaire', amount: 4_800_000, description: 'Salaires des journaliers', method: 'Espèces' },
+  ];
+
+  /**
+   * Ventes du **mois courant** : jeu écrit à la main, volontairement varié
+   * (comptoir, crédit partiel, Mobile Money, virement) pour que « Aujourd'hui »
+   * et « Semaine » soient parlants.
+   */
+  const CURRENT_MONTH_SALES: { customerIndex: number | null; daysAgo: number; lines: [string, number][]; paidRatio: number; method: string }[] = [
     { customerIndex: 0, daysAgo: 21, lines: [['Ensemble salon complet', 1], ['Chaise bois massif', 6]], paidRatio: 1, method: 'Virement' },
     { customerIndex: 2, daysAgo: 17, lines: [['Lit 2 places avec tête de lit', 1]], paidRatio: 0.5, method: 'Mobile Money' },
     { customerIndex: 3, daysAgo: 14, lines: [['Panneau Alucobond 4 mm rouge', 24.5], ['Plaque BA13 1,20 x 2,60 m', 40], ['Peinture acrylique blanche 20 L', 60]], paidRatio: 0.3, method: 'Espèces' },
@@ -612,138 +584,12 @@ export async function seedDemoData(): Promise<SeedReport> {
     { customerIndex: 5, daysAgo: 3, lines: [['Plaque BA13 1,20 x 2,60 m', 30], ['Rail R48', 40], ['Vernis bois brillant 5 L', 8]], paidRatio: 0.6, method: 'Mobile Money' },
     { customerIndex: 0, daysAgo: 2, lines: [['Chaise bois massif', 12], ['Bureau de direction', 1]], paidRatio: 0.25, method: 'Espèces' },
     { customerIndex: null, daysAgo: 1, lines: [['Peinture acrylique blanche 20 L', 20], ['Clous 50 mm (1 kg)', 5.5]], paidRatio: 1, method: 'Espèces' },
-    { customerIndex: 3, daysAgo: 0, lines: [['Bloc béton 20x20x40', 150], ['Ciment CEM II 50 kg', 10]], paidRatio: 1, method: 'Mobile Money' },
+    { customerIndex: 3, daysAgo: 0, lines: [['Bloc béton 20x20x40', 150], ['Brique creuse 12 trous', 200]], paidRatio: 1, method: 'Mobile Money' },
   ];
 
-  const taxRate = settings.defaultTaxRate;
-  let saleSequence = 0;
-  let receiptSequence = 100;
-
-  for (const sale of sales) {
-    saleSequence += 1;
-    const date = addDays(todayDate, -sale.daysAgo);
-    const year = Number(date.slice(0, 4));
-    recordSequence('invoice', year, saleSequence);
-
-    const lines = sale.lines.map(([name, quantity]) => {
-      const seed = PRODUCTS.find((p) => p.name === name)!;
-      return {
-        name,
-        seed,
-        quantity,
-        unitPrice: seed.salePrice,
-        amount: seed.salePrice * quantity,
-      };
-    });
-
-    const subTotal = lines.reduce((sum, l) => sum + l.amount, 0);
-    const discount = 0;
-    const totalHt = subTotal - discount;
-    const taxAmount = Math.round((totalHt * taxRate) / 100);
-    const total = totalHt + taxAmount;
-    const amountPaid = Math.round(total * sale.paidRatio);
-    const remaining = total - amountPaid;
-
-    const customerName =
-      sale.customerIndex === null ? 'Client comptoir' : CUSTOMERS[sale.customerIndex].name;
-
-    const invoice = await db
-      .insert(salesInvoices)
-      .values({
-        invoiceNumber: renderDocumentNumber(settings.invoicePrefix, saleSequence, settings.invoiceNumberFormat, year),
-        customerId: sale.customerIndex === null ? null : customerIds[sale.customerIndex],
-        customerName,
-        date,
-        dueDate: remaining > 0 ? addDays(date, 30) : null,
-        subTotal,
-        discount,
-        totalHt,
-        taxRate,
-        taxAmount,
-        total,
-        amountPaid,
-        remainingAmount: remaining,
-        paymentStatus: amountPaid <= 0 ? 'unpaid' : remaining <= 0 ? 'paid' : 'partial',
-        paymentMethod: sale.method,
-        status: 'active',
-        ...syncDefaults,
-      })
-      .returning({ id: salesInvoices.id });
-
-    for (const line of lines) {
-      const productId = productIds.get(line.name)!;
-
-      await db.insert(salesInvoiceItems).values({
-        invoiceId: invoice[0].id,
-        productId,
-        productName: line.seed.name,
-        unit: line.seed.unit,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
-        discount: 0,
-        amount: line.amount,
-        ...syncDefaults,
-      });
-
-      const [current] = await db
-        .select({ stock: products.stock })
-        .from(products)
-        .where(eq(products.id, productId));
-
-      const stockBefore = Number(current?.stock ?? 0);
-      const stockAfter = stockBefore - line.quantity;
-
-      await db.insert(stockMovements).values({
-        productId,
-        type: 'exit',
-        quantity: line.quantity,
-        motif: `Vente (démonstration)`,
-        stockBefore,
-        stockAfter,
-        referenceType: 'sale',
-        referenceId: invoice[0].id,
-        ...syncDefaults,
-      });
-
-      await db.update(products).set({ stock: stockAfter }).where(eq(products.id, productId));
-    }
-
-    if (amountPaid > 0) {
-      receiptSequence += 1;
-      recordSequence('receipt', year, receiptSequence);
-      await db.insert(payments).values({
-        receiptNumber: renderDocumentNumber(settings.receiptPrefix, receiptSequence, settings.invoiceNumberFormat, year),
-        type: 'sale',
-        referenceId: invoice[0].id,
-        amount: amountPaid,
-        paymentMethod: sale.method,
-        paymentLabel: remaining <= 0 ? 'full' : 'deposit',
-        date,
-        notes: 'Encaissement de démonstration',
-        ...syncDefaults,
-      });
-
-      cashBalance += amountPaid;
-      await db.insert(cashMovements).values({
-        type: 'income',
-        amount: amountPaid,
-        paymentMethod: sale.method,
-        motif: `Encaissement vente (démonstration)`,
-        referenceType: 'sale',
-        referenceId: invoice[0].id,
-        sessionId,
-        balanceAfter: cashBalance,
-        date,
-        ...syncDefaults,
-      });
-    }
-
-    salesCount += 1;
-  }
-
-  // Dépenses de fonctionnement.
-  const expenseSeeds: { category: string; amount: number; description: string; daysAgo: number; method: string }[] = [
-    { category: 'Loyer', amount: 3_500_000, description: 'Loyer du magasin — mois en cours', daysAgo: 20, method: 'Espèces' },
+  /** Charges du mois courant (dates réelles, comme les ventes ci-dessus). */
+  const CURRENT_MONTH_CHARGES: { category: string; amount: number; description: string; daysAgo: number; method: string }[] = [
+    { category: 'Loyer', amount: 3_500_000, description: 'Loyer du magasin — mois en cours', daysAgo: 20, method: 'Virement' },
     { category: 'Carburant', amount: 850_000, description: 'Carburant camion de livraison', daysAgo: 15, method: 'Espèces' },
     { category: 'Électricité', amount: 1_250_000, description: 'Facture EDG', daysAgo: 12, method: 'Mobile Money' },
     { category: 'Transport', amount: 620_000, description: 'Transport de marchandises Dubréka → Conakry', daysAgo: 8, method: 'Espèces' },
@@ -751,43 +597,573 @@ export async function seedDemoData(): Promise<SeedReport> {
     { category: 'Autre', amount: 320_000, description: 'Fournitures de bureau', daysAgo: 2, method: 'Espèces' },
   ];
 
-  for (const expense of expenseSeeds) {
-    const date = addDays(todayDate, -expense.daysAgo);
+  const currentMonthStart = `${monthOf(todayDate)}-01`;
+  const taxRate = settings.defaultTaxRate;
 
-    const inserted = await db
-      .insert(expenses)
+  /**
+   * Construction des plans, du mois le plus ancien au mois courant.
+   *
+   * Le volume varie d'un mois sur l'autre (facteur ci-dessous) : les graphiques
+   * montrent une activité réelle, pas une ligne plate. L'objectif de calibrage
+   * est que la boutique soit **rentable** (marge brute > charges), sinon les
+   * écrans Soldes et Rapports afficheraient une entreprise qui perd de l'argent.
+   */
+  const VOLUME_FACTORS = [1.6, 1.9, 1.3, 2.1, 1.7, 1.4, 2, 1.5];
+  const plansByMonth = new Map<string, PlannedDoc[]>();
+
+  /*
+   * Les documents sont rangés **par mois de leur date**, jamais par le mois
+   * « courant » supposé : une vente d'il y a 21 jours peut tomber dans le mois
+   * précédent (le 5 du mois, 21 jours en arrière = le mois d'avant). Le
+   * classement par date évite une session qui mélange deux mois.
+   */
+  const bucketFor = (date: string): PlannedDoc[] => {
+    const key = `${monthOf(date)}-01`;
+    const list = plansByMonth.get(key) ?? [];
+    plansByMonth.set(key, list);
+    return list;
+  };
+
+  // Une entrée par mois, même sans document : chaque mois a sa session de caisse.
+  for (let offset = HISTORY_MONTHS - 1; offset >= 0; offset -= 1) {
+    bucketFor(shiftMonth(currentMonthStart, -offset));
+  }
+
+  for (let offset = HISTORY_MONTHS - 1; offset >= 0; offset -= 1) {
+    const start = shiftMonth(currentMonthStart, -offset);
+
+    if (offset === 0) {
+      for (const sale of CURRENT_MONTH_SALES) {
+        bucketFor(addDays(todayDate, -sale.daysAgo)).push({
+          kind: 'sale',
+          date: addDays(todayDate, -sale.daysAgo),
+          customerIndex: sale.customerIndex,
+          lines: sale.lines,
+          paidRatio: sale.paidRatio,
+          method: sale.method,
+        });
+      }
+      for (const charge of CURRENT_MONTH_CHARGES) {
+        bucketFor(addDays(todayDate, -charge.daysAgo)).push({
+          kind: 'charge',
+          date: addDays(todayDate, -charge.daysAgo),
+          category: charge.category,
+          amount: charge.amount,
+          description: charge.description,
+          method: charge.method,
+        });
+      }
+    } else {
+      const docs = bucketFor(start);
+      const volume = VOLUME_FACTORS[offset % VOLUME_FACTORS.length];
+      const saleCount = 5 + (offset % 3); // 5 à 7 ventes par mois
+      const saleDays = [4, 9, 14, 19, 24, 28];
+      for (let index = 0; index < saleCount; index += 1) {
+        const basket = SALE_BASKETS[(offset + index) % SALE_BASKETS.length];
+        docs.push({
+          kind: 'sale',
+          date: dayOfMonth(start, saleDays[index % saleDays.length]),
+          // Un client sur trois est « de passage » (vente comptoir).
+          customerIndex: (offset + index) % 3 === 0 ? null : (offset + index) % CUSTOMERS.length,
+          lines: basket.map(([name, quantity]) => [name, Math.max(1, Math.round(quantity * volume))] as [string, number]),
+          paidRatio: (offset + index) % 4 === 0 ? 0.5 : 1,
+          method: SALE_METHODS[(offset + index) % SALE_METHODS.length],
+        });
+      }
+
+      for (const charge of MONTHLY_CHARGES) {
+        docs.push({
+          kind: 'charge',
+          date: dayOfMonth(start, charge.day),
+          category: charge.category,
+          amount: charge.amount,
+          description: `${charge.description} — ${start.slice(0, 7)}`,
+          method: charge.method,
+        });
+      }
+    }
+  }
+
+  /*
+   * Réapprovisionnement, **au plus juste** : on rachète ce qui manque pour
+   * couvrir les ventes du mois, en suivant le **stock simulé mois après mois** —
+   * et non le stock initial. C'est ce qui garantit qu'aucun produit ne part en
+   * négatif : vendre 96 L de peinture alors qu'il n'y en a que 240 en stock
+   * impose de racheter dès le troisième mois, pas au premier.
+   *
+   * Un réapprovisionnement « au plus juste » est aussi ce que fait un vrai
+   * magasin, et il évite de vider la trésorerie au premier mois.
+   */
+  const plannedStock = new Map<string, number>(PRODUCTS.map((p) => [p.name, p.stock]));
+
+  /*
+   * Le **mois courant** est réapprovisionné comme les autres : ses ventes du mois
+   * (et celles qui débordent sur le mois précédent) doivent être couvertes par du
+   * stock réel, sinon la dernière vente de la période part en négatif.
+   */
+  for (let offset = HISTORY_MONTHS - 1; offset >= 0; offset -= 1) {
+    const start = shiftMonth(currentMonthStart, -offset);
+    const docs = plansByMonth.get(start) ?? [];
+
+    const consumed = new Map<string, number>();
+    for (const doc of docs) {
+      if (doc.kind !== 'sale') continue;
+      for (const [name, quantity] of doc.lines) {
+        consumed.set(name, (consumed.get(name) ?? 0) + quantity);
+      }
+    }
+
+    const bySupplier = new Map<number, [string, number][]>();
+    for (const [name, quantity] of consumed) {
+      const available = plannedStock.get(name) ?? 0;
+      // On vise le mois suivant avec 15 % de marge de sécurité.
+      const needed = Math.ceil(quantity * 1.15) - available;
+      if (needed <= 0) {
+        plannedStock.set(name, available - quantity);
+        continue;
+      }
+      const supplierIndex = supplierForProduct(name);
+      const lines = bySupplier.get(supplierIndex) ?? [];
+      lines.push([name, needed]);
+      bySupplier.set(supplierIndex, lines);
+      plannedStock.set(name, available + needed - quantity);
+    }
+
+    let purchaseIndex = 0;
+    for (const [supplierIndex, lines] of bySupplier) {
+      purchaseIndex += 1;
+      docs.push({
+        kind: 'purchase',
+        date: dayOfMonth(start, purchaseIndex),
+        supplierIndex,
+        lines,
+        // Les deux premiers mois sont à moitié à crédit : la liste des
+        // fournisseurs montre ainsi de vraies dettes, et le tiroir respire.
+        paidRatio: offset >= HISTORY_MONTHS - 2 || offset % 5 === 0 ? 0.5 : 1,
+        note: `Réapprovisionnement ${start.slice(0, 7)}`,
+      });
+    }
+  }
+
+  /* ----------------------------- Insertion ------------------------------- */
+
+  const sequenceUsage = {
+    invoice: new Map<number, number>(),
+    purchase: new Map<number, number>(),
+    receipt: new Map<number, number>(),
+  };
+
+  const recordSequence = (kind: 'invoice' | 'purchase' | 'receipt', year: number, value: number) => {
+    const map = sequenceUsage[kind];
+    map.set(year, Math.max(map.get(year) ?? 0, value));
+  };
+
+  /** Solde par moyen de paiement : sert à ne jamais assécher un moyen. */
+  const balanceByMethod = new Map<string, number>();
+  /** Écarts de comptage semés dans l'historique (le plus souvent : aucun écart). */
+  const countingGaps = [-15_000, 0, 0, 0, 25_000, 0, -5_000];
+
+  let cashBalance = 0;
+  let saleSequence = 0;
+  let purchaseSequence = 0;
+  let receiptSequence = 100;
+  let monthIndex = 0;
+
+  /** Choisit le moyen de paiement d'une sortie sans jamais assécher la caisse. */
+  function payoutMethod(amount: number, preferred: string): string {
+    const floorFor = (method: string) => (method === 'Espèces' ? CASH_FLOOR : 0);
+    const candidates = [preferred, 'Espèces', 'Mobile Money', 'Virement'];
+
+    for (const method of candidates) {
+      if ((balanceByMethod.get(method) ?? 0) - amount >= floorFor(method)) return method;
+    }
+
+    // Aucun moyen ne couvre seul : on prend celui qui a le plus de fonds.
+    let best = preferred;
+    let bestBalance = Number.NEGATIVE_INFINITY;
+    for (const method of candidates) {
+      const balance = balanceByMethod.get(method) ?? 0;
+      if (balance > bestBalance) {
+        best = method;
+        bestBalance = balance;
+      }
+    }
+    return best;
+  }
+
+  for (let offset = HISTORY_MONTHS - 1; offset >= 0; offset -= 1) {
+    const start = shiftMonth(currentMonthStart, -offset);
+    const docs = plansByMonth.get(start) ?? [];
+    const isCurrentMonth = offset === 0;
+
+    /*
+     * Report du fond de caisse **par moyen de paiement**.
+     *
+     * Chaque session démarre par une entrée d'ouverture *par moyen* : ce qui
+     * reste en espèces, en Mobile Money et en banque. Un seul mouvement
+     * d'ouverture « Espèces » (comme avant) faussait toute la répartition par
+     * moyen de l'écran Caisse : le report entier y apparaissait comme un
+     * encaissement en espèces.
+     */
+    const openingAmount = cashBalance === 0 ? OPENING_FUND : cashBalance;
+    if (cashBalance === 0) balanceByMethod.set('Espèces', OPENING_FUND);
+    const closedAt = new Date(`${dayOfMonth(start, 28)}T18:00:00Z`);
+
+    const session = await db
+      .insert(cashSessions)
       .values({
-        category: expense.category,
-        amount: expense.amount,
-        description: expense.description,
-        paymentMethod: expense.method,
-        date,
+        status: isCurrentMonth ? 'open' : 'closed',
+        openedAt: new Date(`${start}T08:00:00Z`),
+        openingAmount,
+        closedAt: isCurrentMonth ? null : closedAt,
+        notes: isCurrentMonth
+          ? 'Session de démonstration — mois en cours'
+          : `Session de démonstration — ${start.slice(0, 7)}`,
         ...syncDefaults,
       })
-      .returning({ id: expenses.id });
+      .returning({ id: cashSessions.id });
 
-    cashBalance -= expense.amount;
-    await db.insert(cashMovements).values({
-      type: 'expense',
-      amount: expense.amount,
-      paymentMethod: expense.method,
-      motif: `Dépense — ${expense.category}`,
-      referenceType: 'expense',
-      referenceId: inserted[0].id,
-      sessionId,
-      balanceAfter: cashBalance,
-      date,
+    const sessionId = session[0].id;
+    cashBalance = 0;
+
+    for (const method of ['Espèces', 'Mobile Money', 'Virement']) {
+      const carried = balanceByMethod.get(method) ?? 0;
+      if (carried <= 0) continue;
+      cashBalance += carried;
+      await db.insert(cashMovements).values({
+        type: 'income',
+        amount: carried,
+        paymentMethod: method,
+        motif: `Montant d'ouverture de caisse — ${method}`,
+        referenceType: 'manual',
+        sessionId,
+        balanceAfter: cashBalance,
+        date: start,
+        ...syncDefaults,
+      });
+    }
+
+    docs.sort((a, b) => a.date.localeCompare(b.date));
+
+    for (const doc of docs) {
+      /* ------------------------------ Achat ------------------------------ */
+      if (doc.kind === 'purchase') {
+        purchaseSequence += 1;
+        const purchaseYear = Number(doc.date.slice(0, 4));
+        recordSequence('purchase', purchaseYear, purchaseSequence);
+
+        const lines = doc.lines.map(([name, quantity]) => {
+          const seed = PRODUCTS.find((p) => p.name === name)!;
+          return { name, quantity, unitPrice: seed.purchasePrice, amount: seed.purchasePrice * quantity };
+        });
+
+        const total = lines.reduce((sum, line) => sum + line.amount, 0);
+        const amountPaid = Math.round(total * doc.paidRatio);
+        const remaining = total - amountPaid;
+        const method = amountPaid > 0 ? payoutMethod(amountPaid, 'Virement') : 'Crédit';
+
+        const invoice = await db
+          .insert(purchaseInvoices)
+          .values({
+            reference: renderDocumentNumber(settings.purchasePrefix, purchaseSequence, settings.invoiceNumberFormat, purchaseYear),
+            supplierId: supplierIds[doc.supplierIndex],
+            date: doc.date,
+            dueDate: addDays(doc.date, 30),
+            total,
+            amountPaid,
+            remainingAmount: remaining,
+            paymentStatus: amountPaid <= 0 ? 'unpaid' : remaining <= 0 ? 'paid' : 'partial',
+            paymentMethod: amountPaid > 0 ? method : 'Crédit',
+            ...syncDefaults,
+          })
+          .returning({ id: purchaseInvoices.id });
+
+        for (const line of lines) {
+          const productId = productIds.get(line.name)!;
+          const seed = PRODUCTS.find((p) => p.name === line.name)!;
+
+          await db.insert(purchaseInvoiceItems).values({
+            invoiceId: invoice[0].id,
+            productId,
+            productName: seed.name,
+            unit: seed.unit,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            amount: line.amount,
+            ...syncDefaults,
+          });
+
+          const [current] = await db
+            .select({ stock: products.stock })
+            .from(products)
+            .where(eq(products.id, productId));
+
+          const stockBefore = Number(current?.stock ?? 0);
+          const stockAfter = stockBefore + line.quantity;
+
+          await db.insert(stockMovements).values({
+            productId,
+            type: 'entry',
+            quantity: line.quantity,
+            motif: doc.note,
+            stockBefore,
+            stockAfter,
+            referenceType: 'purchase',
+            referenceId: invoice[0].id,
+            ...syncDefaults,
+          });
+
+          await db.update(products).set({ stock: stockAfter }).where(eq(products.id, productId));
+        }
+
+        if (amountPaid > 0) {
+          receiptSequence += 1;
+          recordSequence('receipt', purchaseYear, receiptSequence);
+          await db.insert(payments).values({
+            receiptNumber: renderDocumentNumber(settings.receiptPrefix, receiptSequence, settings.invoiceNumberFormat, purchaseYear),
+            type: 'purchase',
+            referenceId: invoice[0].id,
+            amount: amountPaid,
+            paymentMethod: method,
+            paymentLabel: remaining <= 0 ? 'full' : 'deposit',
+            date: doc.date,
+            notes: 'Règlement de démonstration',
+            ...syncDefaults,
+          });
+
+          cashBalance -= amountPaid;
+          balanceByMethod.set(method, (balanceByMethod.get(method) ?? 0) - amountPaid);
+          await db.insert(cashMovements).values({
+            type: 'expense',
+            amount: amountPaid,
+            paymentMethod: method,
+            motif: `Règlement achat (démonstration) — ${doc.note}`,
+            referenceType: 'purchase',
+            referenceId: invoice[0].id,
+            sessionId,
+            balanceAfter: cashBalance,
+            date: doc.date,
+            ...syncDefaults,
+          });
+        }
+
+        purchaseCount += 1;
+        continue;
+      }
+
+      /* ------------------------------ Vente ------------------------------ */
+      if (doc.kind === 'sale') {
+        saleSequence += 1;
+        const saleYear = Number(doc.date.slice(0, 4));
+        recordSequence('invoice', saleYear, saleSequence);
+
+        const lines = doc.lines.map(([name, quantity]) => {
+          const seed = PRODUCTS.find((p) => p.name === name)!;
+          return { name, seed, quantity, unitPrice: seed.salePrice, amount: seed.salePrice * quantity };
+        });
+
+        const subTotal = lines.reduce((sum, line) => sum + line.amount, 0);
+        const discount = 0;
+        const totalHt = subTotal - discount;
+        const taxAmount = Math.round((totalHt * taxRate) / 100);
+        const total = totalHt + taxAmount;
+        const amountPaid = Math.round(total * doc.paidRatio);
+        const remaining = total - amountPaid;
+
+        const customerName =
+          doc.customerIndex === null ? 'Client comptoir' : CUSTOMERS[doc.customerIndex].name;
+
+        const invoice = await db
+          .insert(salesInvoices)
+          .values({
+            invoiceNumber: renderDocumentNumber(settings.invoicePrefix, saleSequence, settings.invoiceNumberFormat, saleYear),
+            customerId: doc.customerIndex === null ? null : customerIds[doc.customerIndex],
+            customerName,
+            date: doc.date,
+            dueDate: remaining > 0 ? addDays(doc.date, 30) : null,
+            subTotal,
+            discount,
+            totalHt,
+            taxRate,
+            taxAmount,
+            total,
+            amountPaid,
+            remainingAmount: remaining,
+            paymentStatus: amountPaid <= 0 ? 'unpaid' : remaining <= 0 ? 'paid' : 'partial',
+            paymentMethod: doc.method,
+            status: 'active',
+            ...syncDefaults,
+          })
+          .returning({ id: salesInvoices.id });
+
+        for (const line of lines) {
+          const productId = productIds.get(line.name)!;
+
+          await db.insert(salesInvoiceItems).values({
+            invoiceId: invoice[0].id,
+            productId,
+            productName: line.seed.name,
+            unit: line.seed.unit,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            discount: 0,
+            amount: line.amount,
+            ...syncDefaults,
+          });
+
+          const [current] = await db
+            .select({ stock: products.stock })
+            .from(products)
+            .where(eq(products.id, productId));
+
+          const stockBefore = Number(current?.stock ?? 0);
+          const stockAfter = stockBefore - line.quantity;
+
+          await db.insert(stockMovements).values({
+            productId,
+            type: 'exit',
+            quantity: line.quantity,
+            motif: `Vente (démonstration)`,
+            stockBefore,
+            stockAfter,
+            referenceType: 'sale',
+            referenceId: invoice[0].id,
+            ...syncDefaults,
+          });
+
+          await db.update(products).set({ stock: stockAfter }).where(eq(products.id, productId));
+        }
+
+        if (amountPaid > 0) {
+          receiptSequence += 1;
+          recordSequence('receipt', saleYear, receiptSequence);
+          await db.insert(payments).values({
+            receiptNumber: renderDocumentNumber(settings.receiptPrefix, receiptSequence, settings.invoiceNumberFormat, saleYear),
+            type: 'sale',
+            referenceId: invoice[0].id,
+            amount: amountPaid,
+            paymentMethod: doc.method,
+            paymentLabel: remaining <= 0 ? 'full' : 'deposit',
+            date: doc.date,
+            notes: 'Encaissement de démonstration',
+            ...syncDefaults,
+          });
+
+          cashBalance += amountPaid;
+          balanceByMethod.set(doc.method, (balanceByMethod.get(doc.method) ?? 0) + amountPaid);
+          await db.insert(cashMovements).values({
+            type: 'income',
+            amount: amountPaid,
+            paymentMethod: doc.method,
+            motif: `Encaissement vente (démonstration)`,
+            referenceType: 'sale',
+            referenceId: invoice[0].id,
+            sessionId,
+            balanceAfter: cashBalance,
+            date: doc.date,
+            ...syncDefaults,
+          });
+        }
+
+        salesCount += 1;
+        continue;
+      }
+
+      /* ----------------------------- Dépense ----------------------------- */
+      const method = payoutMethod(doc.amount, doc.method);
+
+      const inserted = await db
+        .insert(expenses)
+        .values({
+          category: doc.category,
+          amount: doc.amount,
+          description: doc.description,
+          paymentMethod: method,
+          date: doc.date,
+          ...syncDefaults,
+        })
+        .returning({ id: expenses.id });
+
+      cashBalance -= doc.amount;
+      balanceByMethod.set(method, (balanceByMethod.get(method) ?? 0) - doc.amount);
+      await db.insert(cashMovements).values({
+        type: 'expense',
+        amount: doc.amount,
+        paymentMethod: method,
+        motif: `Dépense — ${doc.category}`,
+        referenceType: 'expense',
+        referenceId: inserted[0].id,
+        sessionId,
+        balanceAfter: cashBalance,
+        date: doc.date,
+        ...syncDefaults,
+      });
+
+      expenseCount += 1;
+    }
+
+    /*
+     * Clôture du mois : le théorique est le dernier solde de la session ; le
+     * compté s'en écarte de temps en temps, et l'écart est **enregistré**, jamais
+     * masqué — c'est le principe même de l'écran Caisse.
+     */
+    if (isCurrentMonth) {
+      await db
+        .update(cashSessions)
+        .set({ theoreticalAmount: cashBalance })
+        .where(eq(cashSessions.id, sessionId));
+    } else {
+      const gap = countingGaps[monthIndex % countingGaps.length];
+      const countedAmount = cashBalance + gap;
+      await db
+        .update(cashSessions)
+        .set({
+          theoreticalAmount: cashBalance,
+          countedAmount,
+          difference: countedAmount - cashBalance,
+        })
+        .where(eq(cashSessions.id, sessionId));
+    }
+
+    monthIndex += 1;
+  }
+
+  /*
+   * Filet de sécurité avant les **modules de fabrication** (chantiers,
+   * briqueterie, atelier) : leurs matériaux sortent du stock, et l'historique de
+   * vente ci-dessus l'a entamé. On remet chaque produit au moins à son niveau du
+   * catalogue, par une **entrée d'inventaire** au motif explicite — sans quoi la
+   * consommation suivante partirait en négatif et le préremplissage s'arrêterait
+   * sur « Stock insuffisant » (constaté en vérification).
+   */
+  const productsAfterHistory = await db
+    .select({ id: products.id, name: products.name, stock: products.stock })
+    .from(products);
+
+  for (const product of productsAfterHistory) {
+    const catalogueProduct = PRODUCTS.find((p) => p.name === product.name);
+    if (!catalogueProduct) continue;
+
+    const current = Number(product.stock ?? 0);
+    if (current >= catalogueProduct.stock) continue;
+
+    await db.insert(stockMovements).values({
+      productId: product.id,
+      type: 'entry',
+      quantity: catalogueProduct.stock - current,
+      motif: 'Stock de démonstration — complément avant les chantiers, la briqueterie et l’atelier',
+      stockBefore: current,
+      stockAfter: catalogueProduct.stock,
+      referenceType: 'inventory',
+      referenceId: null,
       ...syncDefaults,
     });
 
-    expenseCount += 1;
+    await db
+      .update(products)
+      .set({ stock: catalogueProduct.stock })
+      .where(eq(products.id, product.id));
   }
-
-  // La session doit refléter le solde réel après toutes ces opérations.
-  await db
-    .update(cashSessions)
-    .set({ theoreticalAmount: cashBalance })
-    .where(eq(cashSessions.id, sessionId));
 
   /*
    * Remise à niveau des compteurs de numérotation.
