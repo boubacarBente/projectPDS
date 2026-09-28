@@ -241,47 +241,74 @@ export function CloseCashSessionModal({
   isOpen,
   onClose,
   session,
+  theoreticalByMethod = [],
   onSaved,
 }: {
   isOpen: boolean;
   onClose: () => void;
   /** La session ouverte : son dernier `balanceAfter` est le montant théorique. */
   session: CashSessionRow | null;
+  /**
+   * Théorique **par moyen de paiement** (calculé par l'API). Un tiroir ne se
+   * compte pas avec l'argent d'un téléphone : sans ce détail, on ne peut
+   * comparer que des totaux qui ne veulent rien dire.
+   */
+  theoreticalByMethod?: { method: string; theoretical: number }[];
   onSaved: () => void | Promise<void>;
 }) {
-  const [countedAmount, setCountedAmount] = useState('');
+  const [counted, setCounted] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const theoretical = Number(session?.theoreticalAmount ?? 0);
+  const totalTheoretical =
+    theoreticalByMethod.length > 0
+      ? theoreticalByMethod.reduce((sum, row) => sum + row.theoretical, 0)
+      : Number(session?.theoreticalAmount ?? 0);
 
   useEffect(() => {
     if (!isOpen) return;
-    // On pré-remplit avec le théorique : le caissier corrige ce qu'il compte
-    // réellement — l'écart nul est le cas courant, pas l'exception.
-    setCountedAmount(session ? String(theoretical) : '');
+    /*
+     * On pré-remplit chaque moyen avec son théorique : le caissier corrige ce
+     * qu'il compte réellement — l'écart nul est le cas courant, pas l'exception.
+     */
+    const initial: Record<string, string> = {};
+    for (const row of theoreticalByMethod) initial[row.method] = String(row.theoretical);
+    setCounted(initial);
     setNotes('');
     setErrors({});
     setIsSubmitting(false);
-    // `theoretical` est dérivé de `session` : la dépendance explicite évite de
-    // réamorcer la saisie à chaque rendu.
+    // `theoreticalByMethod` est dérivé de la session : la dépendance sur son
+    // identifiant suffit et évite de réamorcer la saisie à chaque rendu.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, session?.id, theoretical]);
+  }, [isOpen, session?.id]);
 
-  const parsedCounted = parseAmount(countedAmount);
-  const hasCounted = countedAmount.trim() !== '' && Number.isFinite(parsedCounted);
-  const difference = hasCounted ? Math.round((parsedCounted - theoretical) * 100) / 100 : 0;
+  /** Écart par moyen, recalculé à chaque frappe. */
+  const perMethod = theoreticalByMethod.map((row) => {
+    const raw = counted[row.method] ?? '';
+    const parsed = parseAmount(raw);
+    const valid = raw.trim() !== '' && Number.isFinite(parsed) && parsed >= 0;
+    return {
+      ...row,
+      raw,
+      counted: valid ? parsed : null,
+      difference: valid ? Math.round((parsed - row.theoretical) * 100) / 100 : null,
+    };
+  });
+
+  const totalCounted = perMethod.reduce((sum, row) => sum + (row.counted ?? 0), 0);
+  const hasAllCounts = perMethod.length > 0 && perMethod.every((row) => row.counted !== null);
+  const difference = hasAllCounts ? Math.round((totalCounted - totalTheoretical) * 100) / 100 : 0;
 
   function validate(): boolean {
     const next: FieldErrors = {};
 
     if (!session) {
       next.form = 'Aucune session de caisse ouverte.';
-    } else if (!countedAmount.trim()) {
-      next.counted = 'Le montant compté est obligatoire';
-    } else if (!Number.isFinite(parsedCounted) || parsedCounted < 0) {
-      next.counted = 'Le montant compté doit être un nombre positif ou nul';
+    } else if (perMethod.length === 0) {
+      next.form = 'Aucun mouvement dans cette session : rien à compter.';
+    } else if (!hasAllCounts) {
+      next.counted = 'Indiquez le montant compté pour chaque moyen de paiement';
     }
 
     setErrors(next);
@@ -302,7 +329,8 @@ export function CloseCashSessionModal({
         credentials: 'same-origin',
         body: JSON.stringify({
           sessionId: session.id,
-          countedAmount: parsedCounted,
+          // Comptage par moyen : l'écart de chaque moyen est jugé séparément.
+          counted: Object.fromEntries(perMethod.map((row) => [row.method, row.counted ?? 0])),
           notes: notes.trim() || null,
         }),
       });
@@ -345,36 +373,59 @@ export function CloseCashSessionModal({
     >
       <div className="rounded-xl border border-base-200 bg-base-200/40 p-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-sm text-base-content/60">Montant théorique (calculé)</span>
-          <MoneyText value={theoretical} bold />
+          <span className="text-sm text-base-content/60">Théorique total (calculé)</span>
+          <MoneyText value={totalTheoretical} bold />
         </div>
         <p className="mt-1 text-xs text-base-content/50">
-          Dernier solde enregistré de la session ouverte — il n’est pas modifiable.
+          <strong>Un tiroir ne se compte pas avec l’argent d’un téléphone.</strong> Saisissez le
+          compté moyen par moyen : chaque écart est jugé séparément. Les montants sont pré-remplis
+          avec le théorique — corrigez ce que vous avez réellement compté.
         </p>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4">
-        <FormField
-          label="Montant compté (GNF)"
-          htmlFor="cash-counted-amount"
-          required
-          error={errors.counted}
-          hint="Ce que vous avez réellement compté dans la caisse."
-        >
-          <input
-            id="cash-counted-amount"
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="any"
-            value={countedAmount}
-            onChange={(event) => setCountedAmount(event.target.value)}
-            placeholder="Ex. 1 250 000"
-            className="input input-bordered w-full text-right tabular"
-          />
-        </FormField>
+      <div className="mt-4 space-y-3">
+        {perMethod.map((row) => (
+          <div key={row.method} className="rounded-xl border border-base-200 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold">{row.method}</span>
+              <span className="flex items-center gap-1.5 text-xs text-base-content/60">
+                Théorique <MoneyText value={row.theoretical} />
+              </span>
+            </div>
+            <div className="mt-2 flex items-center gap-3">
+              <input
+                id={`cash-counted-${row.method.replace(/\s+/g, '-').toLowerCase()}`}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                aria-label={`Montant compté — ${row.method}`}
+                value={row.raw}
+                onChange={(event) =>
+                  setCounted((current) => ({ ...current, [row.method]: event.target.value }))
+                }
+                className="input input-bordered w-full text-right tabular"
+              />
+              <span
+                className={`w-44 shrink-0 text-right text-xs font-medium tabular ${
+                  row.difference === null || row.difference === 0 ? 'text-success' : 'text-warning'
+                }`}
+              >
+                {row.difference === null
+                  ? '—'
+                  : row.difference === 0
+                    ? 'Écart nul'
+                    : `${row.difference > 0 ? 'Excédent' : 'Manquant'} ${Math.abs(row.difference).toLocaleString('fr-FR')} GNF`}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
 
-        {/* L'écart est recalculé à chaque frappe et affiché explicitement. */}
+      {errors.counted && <p className="mt-2 text-xs text-error">{errors.counted}</p>}
+
+      <div className="mt-4 grid grid-cols-1 gap-4">
+        {/* L'écart total est recalculé à chaque frappe et affiché explicitement. */}
         <div
           className={`rounded-xl border p-3 ${
             difference === 0

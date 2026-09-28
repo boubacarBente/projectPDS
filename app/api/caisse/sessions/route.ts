@@ -6,7 +6,9 @@ import { writeAudit } from '@/lib/audit';
 /**
  * GET  /api/caisse/sessions — session ouverte + historique + résumé.
  * POST /api/caisse/sessions — ouverture (`{ openingAmount, notes }`).
- * PUT  /api/caisse/sessions — clôture (`{ sessionId, countedAmount, notes }`).
+ * PUT  /api/caisse/sessions — clôture, **comptage par moyen de paiement** :
+ *   `{ sessionId, counted: { "Espèces": 23000000, "Mobile Money": … }, notes }`.
+ *   `countedAmount` (comptage global) reste accepté pour les appels existants.
  */
 export async function GET() {
   try {
@@ -54,8 +56,23 @@ export async function PUT(request: NextRequest) {
     const user = await requireAction('cash.close');
     const body = await readJson<any>(request);
 
+    /*
+     * Comptage **par moyen** : on ne compte pas un tiroir avec l'argent d'un
+     * téléphone. Chaque moyen présent dans la session reçoit son montant compté.
+     */
+    const countedByMethod =
+      body?.counted && typeof body.counted === 'object' && !Array.isArray(body.counted)
+        ? Object.fromEntries(
+            Object.entries(body.counted as Record<string, unknown>).map(([method, value]) => [
+              method,
+              toNumber(value, 0),
+            ]),
+          )
+        : null;
+
     const session = await closeSession({
       sessionId: toNumber(body.sessionId),
+      countedByMethod,
       countedAmount: toNumber(body.countedAmount, 0),
       userId: user.id,
       notes: body.notes ?? null,
@@ -70,6 +87,9 @@ export async function PUT(request: NextRequest) {
         theoreticalAmount: session.theoreticalAmount,
         countedAmount: session.countedAmount,
         difference: session.difference,
+        // Détail par moyen : conservé ici de façon structurée (et lisible dans la
+        // note de la session), en attendant une table dédiée.
+        counts: session.counts,
       },
     });
 

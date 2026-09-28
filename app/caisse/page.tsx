@@ -576,7 +576,7 @@ export default function CaissePage() {
                   ? `Depuis le ${session?.openedAt ? formatDateTime(session.openedAt) : '—'} par ${
                       session?.openedByName || '—'
                     } · montant d'ouverture ${formatNumber(session?.openingAmount ?? 0)} ${currency}`
-                  : 'Tant qu’aucune session n’est ouverte, les encaissements restent hors du suivi de caisse : ouvrez-la pour commencer la journée.'}
+                  : 'Aucune session n’est ouverte : la première opération de caisse en ouvrira une automatiquement, avec un fond de caisse de 0. Pour compter le fond réel, ouvrez-la maintenant.'}
               </p>
             </div>
           </div>
@@ -917,6 +917,15 @@ export default function CaissePage() {
               }
             : null
         }
+        /*
+         * Comptage **par moyen** : l'API renvoie déjà le net par moyen de la
+         * session ouverte (`summary.byMethod`), qui est exactement le théorique à
+         * compter — tiroir, téléphone et banque séparément.
+         */
+        theoreticalByMethod={(summary?.byMethod ?? []).map((row) => ({
+          method: row.method,
+          theoretical: row.net,
+        }))}
         onSaved={refresh}
       />
 

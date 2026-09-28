@@ -331,6 +331,22 @@ export async function resetBusinessData(): Promise<{ tables: string[] }> {
       }
     }
 
+    /*
+     * Les compteurs d'auto-incrémentation sont remis à zéro eux aussi : sans
+     * cela, une base « réinitialisée » repart à `#74` pour les sessions de caisse
+     * et `FAC-…` sur des identifiants élevés — de quoi croire qu'il reste des
+     * données. `sqlite_sequence` n'existe que si une table AUTOINCREMENT a servi.
+     */
+    try {
+      await rawRun(
+        `DELETE FROM main."sqlite_sequence" WHERE name <> 'settings' AND name <> 'users'`,
+        [],
+        tx,
+      );
+    } catch {
+      /* table absente (aucune AUTOINCREMENT utilisée) : rien à faire */
+    }
+
     // Le stock repart de zéro proprement (les mouvements ont été effacés).
     await rawRun(`UPDATE main."products" SET stock = 0`, [], tx).catch(() => {});
   });

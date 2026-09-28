@@ -128,23 +128,109 @@ export async function getSessionById(id: number): Promise<CashSessionRow | null>
   return row[0] ? mapSession(row[0]) : null;
 }
 
+/** Solde théorique d'une session : `balance_after` du dernier mouvement. */
+export async function getSessionTheoreticalAmount(sessionId: number): Promise<number> {
+  const row = await rawGet<{ balance_after: number }>(
+    `SELECT balance_after FROM cash_movements
+     WHERE session_id = ?
+     ORDER BY id DESC LIMIT 1`,
+    [sessionId],
+  );
+  return Number(row?.balance_after ?? 0);
+}
+
 /**
- * Clôture journalière (§8) : le montant **théorique** est calculé, le montant
- * **compté** est saisi, et l'**écart** est enregistré — jamais masqué.
+ * Montant **théorique par moyen de paiement** : ce que la session devrait
+ * contenir en espèces, en Mobile Money, en banque…
+ *
+ * C'est la seule base honnête pour un comptage : on ne compte pas un tiroir avec
+ * l'argent d'un téléphone. Chaque moyen repris à l'ouverture (report du fond de
+ * caisse) est inclus, puisqu'il figure comme un mouvement de la session.
+ */
+export async function getSessionTheoreticalByMethod(
+  sessionId: number,
+): Promise<{ method: string; theoretical: number }[]> {
+  const rows = await rawAll<{ payment_method: string; theoretical: number | null }>(
+    `SELECT payment_method,
+            SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END) AS theoretical
+       FROM cash_movements
+      WHERE session_id = ?
+      GROUP BY payment_method
+      ORDER BY payment_method`,
+    [sessionId],
+  );
+
+  return rows.map((row) => ({
+    method: row.payment_method,
+    theoretical: Number(row.theoretical ?? 0),
+  }));
+}
+
+/** Détail d'un comptage de clôture, par moyen de paiement. */
+export type CashCountByMethod = {
+  method: string;
+  theoretical: number;
+  counted: number;
+  difference: number;
+};
+
+/**
+ * Clôture de la session (§8) : le **théorique** est calculé par moyen, le
+ * **compté** est saisi par moyen, et l'**écart** de chaque moyen est enregistré —
+ * jamais masqué.
+ *
+ * Le détail par moyen est conservé dans la **note** de la session (lisible par
+ * l'utilisateur) et dans le **journal d'actions** (structuré), en attendant une
+ * table dédiée ; les colonnes de la session gardent les **totaux**, donc
+ * l'historique, les rapports et les exports restent inchangés.
  */
 export async function closeSession(input: {
   sessionId: number;
-  countedAmount: number;
+  /** Comptage par moyen (`{ Espèces: 23000000, 'Mobile Money': … }`). */
+  countedByMethod?: Record<string, number> | null;
+  /** Comptage global, quand l'appelant n'a pas le détail (compatibilité). */
+  countedAmount?: number;
   userId?: number | null;
   notes?: string | null;
-}): Promise<CashSessionRow> {
+}): Promise<CashSessionRow & { counts: CashCountByMethod[] }> {
   const session = await getSessionById(input.sessionId);
   if (!session) throw new CashSessionError('Session de caisse introuvable');
   if (session.status === 'closed') throw new CashSessionError('Cette session est déjà clôturée');
 
-  const theoretical = await getSessionTheoreticalAmount(input.sessionId);
-  const counted = Number(input.countedAmount) || 0;
+  const theoreticals = await getSessionTheoreticalByMethod(input.sessionId);
+  const unique = new Map<string, number>();
+  for (const row of theoreticals) unique.set(row.method, row.theoretical);
+
+  const counts: CashCountByMethod[] = [];
+  for (const [method, theoretical] of unique) {
+    const raw = input.countedByMethod?.[method];
+    // Un moyen non saisi est réputé compté juste : c'est ce qu'on attend d'un
+    // caissier qui n'a touché qu'au tiroir et a relevé le reste.
+    const counted = raw === undefined ? theoretical : Math.round(Number(raw) * 100) / 100;
+    counts.push({
+      method,
+      theoretical,
+      counted,
+      difference: Math.round((counted - theoretical) * 100) / 100,
+    });
+  }
+
+  const theoretical =
+    counts.length > 0
+      ? counts.reduce((sum, row) => sum + row.theoretical, 0)
+      : await getSessionTheoreticalAmount(input.sessionId);
+  const counted =
+    counts.length > 0
+      ? counts.reduce((sum, row) => sum + row.counted, 0)
+      : Number(input.countedAmount) || 0;
   const difference = Math.round((counted - theoretical) * 100) / 100;
+
+  const detailLines = counts.map(
+    (row) =>
+      `${row.method} : ${row.counted.toLocaleString('fr-FR')} / ${row.theoretical.toLocaleString('fr-FR')}`,
+  );
+  const detail =
+    detailLines.length > 0 ? `Comptage — ${detailLines.join(' · ')}` : null;
 
   await db
     .update(cashSessions)
@@ -155,7 +241,7 @@ export async function closeSession(input: {
       theoreticalAmount: theoretical,
       countedAmount: counted,
       difference,
-      notes: input.notes?.trim() || session.notes,
+      notes: [input.notes?.trim(), detail].filter(Boolean).join(' — ') || session.notes,
       updatedAt: new Date(),
     })
     .where(eq(cashSessions.id, input.sessionId));
@@ -170,18 +256,7 @@ export async function closeSession(input: {
     difference,
   });
 
-  return updated;
-}
-
-/** Solde théorique d'une session : `balance_after` du dernier mouvement. */
-export async function getSessionTheoreticalAmount(sessionId: number): Promise<number> {
-  const row = await rawGet<{ balance_after: number }>(
-    `SELECT balance_after FROM cash_movements
-     WHERE session_id = ?
-     ORDER BY id DESC LIMIT 1`,
-    [sessionId],
-  );
-  return Number(row?.balance_after ?? 0);
+  return { ...updated, counts };
 }
 
 /**

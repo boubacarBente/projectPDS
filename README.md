@@ -1319,7 +1319,7 @@ Règles : quantité **décimale** (real) ; `stock` ne descend jamais sous 0 ; **
 | Entrées et sorties d'argent | `cash_movements` (`income` / `expense`), alimentées automatiquement par les ventes, les encaissements clients, les achats payés, les dépenses, et manuellement |
 | Calcul du solde | `balance_after` recalculé à chaque mouvement + `GET /api/caisse/summary` |
 | Espèces et Mobile Money | Colonne **`payment_method`** sur chaque mouvement + répartition dans le résumé |
-| **Clôture journalière** | Modale « Clôturer la caisse » → `counted_amount` saisi, **`theoretical_amount`** calculé, **`difference`** (`counted − theoretical`), note, `status = 'closed'` |
+| **Clôture journalière** | Modale « Clôturer la caisse » → **comptage par moyen de paiement** (`counted` par moyen : un tiroir ne se compte pas avec l'argent d'un téléphone), `theoretical_amount` et `counted_amount` **par moyen** puis totaux, **`difference`** (`counted − theoretical`), note, `status = 'closed'` |
 | Historique des mouvements | Table paginée + filtres (type, moyen de paiement, période, session) |
 
 Règles : **une seule session `open` à la fois** ; tant qu'elle est fermée, toute vente encaissée propose d'abord l'ouverture ; chaque mouvement porte son **origine** (`reference_type` / `reference_id`) pour permettre le rapprochement caisse ↔ vente ↔ dépense.
