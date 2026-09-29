@@ -1,16 +1,35 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+/**
+ * Tableau de bord de la **briqueterie** (README §20, point 1).
+ *
+ * Un seul appel : `GET /api/briqueterie/tableau-de-bord`. Douze indicateurs
+ * issus des mêmes tables — six requêtes concurrentes sur SQLite local se
+ * marcheraient dessus pour rien, et un seul aller-retour garantit que **tous les
+ * chiffres affichés appartiennent au même instant**.
+ *
+ * Rappels de la révision §20 que cette page doit rendre lisibles :
+ *  - **il n'y a pas de module de matières premières** : le ciment, le sable et le
+ *    carburant sont des **dépenses rattachées à un lot**, qui sortent de la caisse ;
+ *  - le **coût de production** ne contient que ces dépenses rattachées (plus la
+ *    main-d'œuvre des affectations), **jamais** les dépenses générales — un loyer
+ *    ne doit pas augmenter le prix de revient d'une brique ;
+ *  - les **ventes de briques** sont celles du canal `brick` : elles n'apparaissent
+ *    pas dans la liste `/ventes` du commerce général.
+ *
+ * Aucun import de valeur depuis `lib/brick*.ts` (ces modules touchent `@/db`) :
+ * tout passe par l'API, et les types sont redéclarés ici (CONVENTIONS §11 bis).
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { DataToolbar } from '@/components/data-toolbar';
-import { IconAction, RowActions } from '@/components/row-actions';
-import { FilterSelect, Pagination } from '@/components/search-filter';
+import { ToolbarButton } from '@/components/data-toolbar';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
-import { DatePicker } from '@/components/date-picker';
+import { ExportDropdown } from '@/components/export-dropdown';
 import {
   Badge,
+  Card,
   EmptyState,
   ErrorState,
   MoneyText,
@@ -21,118 +40,188 @@ import {
   StatCardDelta,
 } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
-import { useViewStateRehydration, writeViewState, clampPage } from '@/lib/view-state';
-import { formatDateShort } from '@/lib/date-format';
-import { formatNumber, formatPercent, formatQuantity } from '@/lib/format';
+import { useSettings } from '@/app/parametres/page';
+import { BrickTabs } from '@/components/briqueterie/brick-tabs';
 import {
-  BRICK_STAGE_LABELS,
-  BRICK_STAGE_TONES,
+  BRICK_PRODUCTION_STATUS_LABELS,
   BrickProductionModal,
   BrickTypesManagerModal,
-  BrokenBricksModal,
-  BrickWorkersManagerButton,
-  brickProductionColumns,
-  brickShapeLabel,
-  brickStageLabel,
-  goodQuantityOf,
-  nextBrickStage,
   readApiError,
   type BrickProductionRow,
-  type BrickStage,
-  type BrickSummary,
   type BrickTypeRow,
   type Paginated,
 } from '@/components/briqueterie/briqueterie-modals';
+import { RevenueTrendChart } from '@/components/dashboard/dashboard-charts';
+import { formatDateShort } from '@/lib/date-format';
+import { formatCurrency, formatNumber, formatPercent, formatQuantity } from '@/lib/format';
 
-/* ==================================================================
- * Page « Briqueterie » (README §20).
- *
- * Vue d'ensemble : synthèse de la période, rapport fabriquées / cassées /
- * vendues par type, liste des lots filtrable par type, par étape et par
- * période, et deux modales d'action (« Nouveau lot », « Types de briques »).
- *
- * Les matières premières et l'équipe se gèrent depuis la fiche du lot
- * (`/briqueterie/[id]`) : chaque écriture y déclenche un mouvement de stock
- * côté serveur, jamais depuis cette page.
- *
- * ⚠️ Aucun import runtime de `lib/brick.ts` : ce module touche `@/db`. Les
- * types et libellés sont redéclarés dans `components/briqueterie/`, et toute la
- * donnée passe par `/api/briqueterie/*` (CONVENTIONS §11 bis).
- * ================================================================== */
+/* ------------------------------------------------------------------ *
+ * Types — miroir exact du JSON de /api/briqueterie/tableau-de-bord
+ * ------------------------------------------------------------------ */
 
-const PRODUCTIONS_LIMIT = 20;
+type BrickOrderStatus =
+  | 'draft'
+  | 'confirmed'
+  | 'in_production'
+  | 'ready'
+  | 'partially_delivered'
+  | 'delivered'
+  | 'cancelled';
 
-/** Clé d'état de vue — doit rester stable pour que le retour arrière restaure. */
-const VIEW_NAME = 'briqueterie';
-
-type ProductionsViewState = {
-  search: string;
-  brickTypeId: string;
-  stage: string;
-  from: string;
-  to: string;
-  page: number;
+const ORDER_STATUS_LABELS: Record<BrickOrderStatus, string> = {
+  draft: 'Brouillons',
+  confirmed: 'Confirmées',
+  in_production: 'En production',
+  ready: 'Prêtes',
+  partially_delivered: 'Partiellement livrées',
+  delivered: 'Livrées',
+  cancelled: 'Annulées',
 };
 
-function buildQuery(entries: Record<string, string | number | boolean | undefined>): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(entries)) {
-    if (value === undefined || value === '' || value === false) continue;
-    params.set(key, String(value));
-  }
-  return params.toString();
+/** Statuts mis en avant sur le tableau de bord : « en attente » au sens du client. */
+const ORDER_STATUS_ORDER: BrickOrderStatus[] = [
+  'draft',
+  'confirmed',
+  'in_production',
+  'ready',
+  'partially_delivered',
+  'delivered',
+];
+
+type StockLine = {
+  brickTypeId: number;
+  brickTypeName: string;
+  dimensions: string | null;
+  productId: number;
+  productName: string;
+  unit: string;
+  salePrice: number;
+  stock: number;
+  stockMin: number;
+  averageUnitCost: number;
+  isLow: boolean;
+  isOut: boolean;
+  saleValue: number;
+};
+
+type Dashboard = {
+  period: { from: string; to: string; label: string };
+  production: {
+    today: number;
+    week: number;
+    month: number;
+    monthCost: number;
+    monthLots: number;
+    monthBroken: number;
+    monthUnitCost: number;
+  };
+  sales: {
+    today: number;
+    todayCount: number;
+    month: number;
+    monthCount: number;
+    year: number;
+    yearCount: number;
+  };
+  collected: number;
+  outstanding: number;
+  expenses: { productionMonth: number; generalMonth: number };
+  profitability: {
+    revenue: number;
+    productionCost: number;
+    grossMargin: number;
+    generalExpenses: number;
+    estimatedResult: number;
+    marginRate: number;
+  };
+  stock: {
+    lines: StockLine[];
+    totalQuantity: number;
+    totalPurchaseValue: number;
+    totalSaleValue: number;
+    lowCount: number;
+    outCount: number;
+  };
+  orders: Record<BrickOrderStatus, number>;
+  productionByType: {
+    brickTypeId: number;
+    brickTypeName: string;
+    lots: number;
+    produced: number;
+    broken: number;
+    cost: number;
+    unitCost: number;
+  }[];
+  charts: {
+    production: { date: string; produced: number; cost: number }[];
+    sales: { date: string; revenue: number; quantity: number }[];
+    expenses: { date: string; production: number; general: number }[];
+  };
+  topProducts: { productName: string; quantity: number; revenue: number }[];
+  alerts: { brickTypeId: number; name: string; stock: number; stockMin: number; unit: string }[];
+};
+
+/** Format court d'une date de graphique : « 12/03 » plutôt que la date complète. */
+function shortDay(value: string): string {
+  return value.length === 10 ? `${value.slice(8, 10)}/${value.slice(5, 7)}` : value;
 }
 
-/** Forme d'un type, à partir de la liste chargée — repli neutre si absente. */
-function shapeOfType(types: BrickTypeRow[], brickTypeId: number): string | null {
-  return types.find((type) => type.id === brickTypeId)?.shape ?? null;
-}
+export default function BriqueterieDashboardPage() {
+  const { settings } = useSettings();
+  const currency = settings.currency || 'GNF';
 
-export default function BriqueteriePage() {
   const canCreate = usePermission('brick.create');
-  const canUpdate = usePermission('brick.update');
+  const canSell = usePermission('sales.create');
+  const canOrder = usePermission('brick.create');
 
-  /* ── Filtres de la liste ──────────────────────────────────────────── */
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [brickTypeId, setBrickTypeId] = useState('');
-  const [stage, setStage] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [page, setPage] = useState(1);
-
-  /* ── Données ──────────────────────────────────────────────────────── */
-  const [productions, setProductions] = useState<BrickProductionRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
+  const [data, setData] = useState<Dashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
+  const [token, setToken] = useState(0);
 
   const [types, setTypes] = useState<BrickTypeRow[]>([]);
   const [typesLoaded, setTypesLoaded] = useState(false);
 
-  const [summary, setSummary] = useState<BrickSummary | null>(null);
-  const [summaryLoading, setSummaryLoading] = useState(true);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryToken, setSummaryToken] = useState(0);
-
-  /* ── Modales : un état booléen chacune (§8.3 règle 1) ─────────────── */
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isTypesOpen, setIsTypesOpen] = useState(false);
-  const [isBrokenOpen, setIsBrokenOpen] = useState(false);
-  const [brokenTarget, setBrokenTarget] = useState<BrickProductionRow | null>(null);
-  const [isAdvancing, setIsAdvancing] = useState<number | null>(null);
 
-  const requestGate = useRef(false);
+  const refresh = useCallback(() => setToken((value) => value + 1), []);
 
-  /* ── Débounce de la recherche (300 ms, §5) ────────────────────────── */
+  /* ── Tableau de bord ─────────────────────────────────────────────── */
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search), 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+    const controller = new AbortController();
+    setIsLoading(true);
+    setError(null);
 
-  /* ── Liste des types : filtre + sélecteur de la modale ────────────── */
+    fetch('/api/briqueterie/tableau-de-bord', {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await readApiError(response, 'Le tableau de bord est indisponible.'));
+        }
+        return (await response.json()) as Dashboard;
+      })
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        setData(payload);
+      })
+      .catch((caught: unknown) => {
+        if (caught instanceof Error && caught.name === 'AbortError') return;
+        setError(
+          caught instanceof Error ? caught.message : 'Le tableau de bord est indisponible.',
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [token]);
+
+  /* ── Types de briques : sélecteur de la modale « Nouveau lot » ───── */
   useEffect(() => {
     const controller = new AbortController();
 
@@ -147,246 +236,88 @@ export default function BriqueteriePage() {
         }
         return (await response.json()) as Paginated<BrickTypeRow>;
       })
-      .then((payload) => {
-        if (controller.signal.aborted) return;
-        setTypes(Array.isArray(payload.data) ? payload.data : []);
-      })
+      .then((payload) => setTypes(Array.isArray(payload.data) ? payload.data : []))
       .catch(() => {
-        // Liste d'appoint : son échec ne doit pas masquer la page principale.
+        // Liste d'appoint : son échec ne doit pas masquer le tableau de bord.
       })
       .finally(() => {
         if (!controller.signal.aborted) setTypesLoaded(true);
       });
 
     return () => controller.abort();
-  }, [reloadToken]);
+  }, [token]);
 
-  /* ── Synthèse de la période ───────────────────────────────────────── */
-  useEffect(() => {
-    const controller = new AbortController();
-    setSummaryLoading(true);
-    setSummaryError(null);
+  const alertLines = data?.alerts ?? [];
 
-    const query = buildQuery({ stats: 1, from, to });
-
-    fetch(`/api/briqueterie/productions?${query}`, {
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'same-origin',
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(await readApiError(response, 'Synthèse indisponible.'));
-        }
-        return (await response.json()) as { summary: BrickSummary };
-      })
-      .then((payload) => {
-        if (controller.signal.aborted) return;
-        setSummary(payload.summary ?? null);
-      })
-      .catch((caught: unknown) => {
-        if (caught instanceof Error && caught.name === 'AbortError') return;
-        setSummaryError(caught instanceof Error ? caught.message : 'Synthèse indisponible');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSummaryLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [from, to, summaryToken]);
-
-  /* ── Liste des lots ───────────────────────────────────────────────── */
-  useEffect(() => {
-    // Le gate sur `typesLoaded` évite de partir chercher les lots avant que le
-    // filtre « type » ne soit alimenté, et garantit qu'un seul fetch est en vol.
-    if (!typesLoaded) return;
-    if (requestGate.current) return;
-    requestGate.current = true;
-
-    const controller = new AbortController();
-    setIsLoading(true);
-    setError(null);
-
-    const query = buildQuery({
-      search: debouncedSearch,
-      brickTypeId: brickTypeId ? Number(brickTypeId) : undefined,
-      stage,
-      from,
-      to,
-      page,
-      limit: PRODUCTIONS_LIMIT,
-    });
-
-    fetch(`/api/briqueterie/productions?${query}`, {
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'same-origin',
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(await readApiError(response, 'Chargement des lots impossible.'));
-        }
-        return (await response.json()) as Paginated<BrickProductionRow>;
-      })
-      .then((payload) => {
-        if (controller.signal.aborted) return;
-        setProductions(Array.isArray(payload.data) ? payload.data : []);
-        setTotal(Number(payload.total ?? 0));
-        const pages = Number(payload.totalPages ?? 1) || 1;
-        setTotalPages(pages);
-        const corrected = clampPage(page, pages);
-        if (corrected !== null) setPage(corrected);
-      })
-      .catch((caught: unknown) => {
-        if (caught instanceof Error && caught.name === 'AbortError') return;
-        setError(caught instanceof Error ? caught.message : 'Chargement des lots impossible.');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-          requestGate.current = false;
-        }
-      });
-
-    return () => {
-      controller.abort();
-      requestGate.current = false;
-    };
-  }, [typesLoaded, page, debouncedSearch, brickTypeId, stage, from, to, reloadToken]);
-
-  /* ── Restauration d'état au retour arrière (§5) ───────────────────── */
-  const rehydrated = useViewStateRehydration<ProductionsViewState>(VIEW_NAME, (saved) => {
-    if (saved.search !== undefined) {
-      setSearch(saved.search);
-      setDebouncedSearch(saved.search);
-    }
-    if (saved.brickTypeId !== undefined) setBrickTypeId(saved.brickTypeId);
-    if (saved.stage !== undefined) setStage(saved.stage);
-    if (saved.from !== undefined) setFrom(saved.from);
-    if (saved.to !== undefined) setTo(saved.to);
-    if (saved.page) setPage(saved.page);
-  });
-
-  useEffect(() => {
-    if (!rehydrated) return;
-    writeViewState(VIEW_NAME, { search, brickTypeId, stage, from, to, page });
-  }, [rehydrated, search, brickTypeId, stage, from, to, page]);
-
-  /* ── Rafraîchissements ────────────────────────────────────────────── */
-  const refreshAll = useCallback(() => {
-    setReloadToken((token) => token + 1);
-    setSummaryToken((token) => token + 1);
-  }, []);
-
-  const refreshSummary = useCallback(() => setSummaryToken((token) => token + 1), []);
-  const refreshList = useCallback(() => setReloadToken((token) => token + 1), []);
-
-  /* ── Étape suivante : le crédit de stock est géré côté serveur ────── */
-  const advance = useCallback(
-    async (production: BrickProductionRow) => {
-      const next = nextBrickStage(production.stage);
-      if (!next) return;
-
-      setIsAdvancing(production.id);
-      try {
-        const response = await fetch(`/api/briqueterie/productions/${production.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ action: 'advance_stage', stage: next.key }),
-        });
-
-        if (!response.ok) {
-          throw new Error(await readApiError(response, 'Le passage d’étape a échoué.'));
-        }
-
-        const updated = (await response.json()) as BrickProductionRow;
-
-        if (next.key === 'stored') {
-          toast.success(
-            `Lot ${updated.batchNumber} mis en stock : ${formatQuantity(goodQuantityOf(updated), updated.productUnit)} créditées au produit ${updated.productName}.`,
-          );
-        } else {
-          toast.success(`Lot ${updated.batchNumber} — étape « ${brickStageLabel(next.key)} ».`);
-        }
-
-        refreshAll();
-      } catch (caught) {
-        toast.error(caught instanceof Error ? caught.message : 'Le passage d’étape a échoué.');
-      } finally {
-        setIsAdvancing(null);
-      }
-    },
-    [refreshAll],
-  );
-
-  /* ── Options de filtre ────────────────────────────────────────────── */
-  const typeFilterOptions = useMemo(
-    () =>
-      types.map((type) => ({
-        value: String(type.id),
-        label: `${type.name}${type.dimensions ? ` — ${type.dimensions}` : ''}`,
-      })),
-    [types],
-  );
-
-  const stageFilterOptions = useMemo(
-    () =>
-      (Object.keys(BRICK_STAGE_LABELS) as BrickStage[]).map((key) => ({
-        value: key,
-        label: BRICK_STAGE_LABELS[key],
-      })),
-    [],
-  );
-
-  const hasFilters = Boolean(search || brickTypeId || stage || from || to);
-
-  const resetFilters = useCallback(() => {
-    setSearch('');
-    setBrickTypeId('');
-    setStage('');
-    setFrom('');
-    setTo('');
-    setPage(1);
-  }, []);
-
-  /* ── Colonnes : le numéro de lot devient un lien vers la fiche ────── */
-  const columns: Column<BrickProductionRow>[] = useMemo(
-    () =>
-      brickProductionColumns.map((column) =>
-        column.key === 'batchNumber'
-          ? {
-              ...column,
-              render: (production: BrickProductionRow) => (
-                <div className="min-w-0">
-                  <Link
-                    href={`/briqueterie/${production.id}`}
-                    className="font-mono text-sm font-semibold text-primary hover:underline"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    {production.batchNumber}
-                  </Link>
-                  <div className="truncate text-xs text-base-content/50">
-                    {production.brickTypeName}
-                  </div>
-                </div>
-              ),
-            }
-          : column,
-      ),
-    [],
+  const stockColumns = useMemo<Column<StockLine>[]>(
+    () => [
+      {
+        key: 'brickTypeName',
+        label: 'Produit',
+        primary: true,
+        render: (line) => (
+          <div className="min-w-0">
+            <div className="truncate font-medium">{line.brickTypeName}</div>
+            <div className="truncate text-xs text-base-content/50">{line.productName}</div>
+          </div>
+        ),
+      },
+      {
+        key: 'stock',
+        label: 'Stock actuel',
+        render: (line) => (
+          <div className="flex items-center gap-2">
+            <QuantityText value={line.stock} unit={line.unit} />
+            {line.isOut ? (
+              <Badge tone="error">Rupture</Badge>
+            ) : line.isLow ? (
+              <Badge tone="warning">Seuil atteint</Badge>
+            ) : (
+              <Badge tone="success">Disponible</Badge>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'stockMin',
+        label: 'Seuil minimum',
+        hideOnMobile: true,
+        render: (line) => <QuantityText value={line.stockMin} unit={line.unit} />,
+      },
+      {
+        key: 'averageUnitCost',
+        label: 'Coût de revient moyen',
+        hideOnMobile: true,
+        className: 'text-right whitespace-nowrap',
+        render: (line) => <MoneyText value={line.averageUnitCost} currency={currency} />,
+      },
+      {
+        key: 'salePrice',
+        label: 'Prix de vente',
+        className: 'text-right whitespace-nowrap',
+        render: (line) => <MoneyText value={line.salePrice} currency={currency} />,
+      },
+      {
+        key: 'saleValue',
+        label: 'Valeur de vente',
+        hideOnMobile: true,
+        className: 'text-right whitespace-nowrap',
+        render: (line) => <MoneyText value={line.saleValue} currency={currency} />,
+      },
+    ],
+    [currency],
   );
 
   /* ── Rendu ────────────────────────────────────────────────────────── */
+
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
       <PageHeader
-        eyebrow="Production"
+        eyebrow="Briqueterie"
         title="Briqueterie"
-        description="Lots de fabrication, matières premières consommées, pertes et coût de revient par brique."
+        description="Production du jour, ventes, stock des briques, dépenses et rentabilité — calculés en direct depuis les fiches de fabrication."
         actions={
           <>
-            <BrickWorkersManagerButton onChanged={refreshAll} />
             <button
               type="button"
               className="btn btn-ghost min-h-11 border border-base-300"
@@ -394,6 +325,16 @@ export default function BriqueteriePage() {
             >
               Types de briques
             </button>
+            {canOrder && (
+              <Link href="/briqueterie/commandes" className="btn btn-ghost min-h-11 border border-base-300">
+                Commandes
+              </Link>
+            )}
+            {canSell && (
+              <Link href="/ventes/nouvelle?canal=briqueterie" className="btn btn-primary min-h-11">
+                Nouvelle vente
+              </Link>
+            )}
             {canCreate && (
               <button
                 type="button"
@@ -407,319 +348,355 @@ export default function BriqueteriePage() {
         }
       />
 
-      {/* 2 · Cartes de synthèse — fabriquées, cassées, coûts */}
-      {summaryLoading ? (
-        <SkeletonCards count={6} />
-      ) : summaryError ? (
-        <ErrorState title="Synthèse indisponible" description={summaryError} onRetry={refreshSummary} />
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-          <StatCardDelta
-            label="Lots de la période"
-            tone="primary"
-            value={summary?.productionsCount ?? 0}
-            hint={`${summary?.byType.length ?? 0} type(s) de brique`}
-          />
-          <StatCardDelta
-            label="Briques fabriquées"
-            tone="success"
-            value={<QuantityText value={summary?.good ?? 0} />}
-            hint="Production − cassées"
-          />
-          <StatCardDelta
-            label="Briques cassées"
-            tone="warning"
-            value={<QuantityText value={summary?.broken ?? 0} />}
-            hint={
-              summary && summary.produced + summary.broken > 0
-                ? `${formatPercent((summary.broken / (summary.produced + summary.broken)) * 100)} de la production`
-                : 'Aucune perte enregistrée'
-            }
-          />
-          <StatCardDelta
-            label="Coût de revient total"
-            tone="info"
-            value={<MoneyText value={summary?.totalCost ?? 0} />}
-            hint="Matières + main-d’œuvre"
-          />
-          <StatCardDelta
-            label="Coût unitaire moyen"
-            tone="primary"
-            value={<MoneyText value={summary?.averageUnitCost ?? 0} />}
-            hint="Par brique bonne"
-          />
-          <StatCardDelta
-            label="Briques vendues"
-            tone="success"
-            value={<QuantityText value={summary?.sold ?? 0} />}
-            hint={
-              summary && summary.soldRevenue > 0
-                ? `${formatNumber(summary.soldRevenue)} GNF facturés sur la période`
-                : 'Aucune vente sur la période'
-            }
-          />
-        </div>
-      )}
+      <BrickTabs />
 
-      {/* Rapport fabriquées / cassées / vendues par type (§20) */}
-      <PageSection
-        title="Fabriquées, cassées et vendues par type"
-        subtitle="Le coût de revient unitaire est calculé : coût total ÷ (production − cassées)."
-      >
-        {summaryLoading ? (
-          <SkeletonTable rows={3} cols={5} />
-        ) : (summary?.byType.length ?? 0) === 0 ? (
-          <EmptyState
-            title="Aucune fabrication sur cette période"
-            description="Lancez un premier lot, ou élargissez la période : seuls les lots fabriqués dans l’intervalle apparaissent ici."
-            action={
-              canCreate ? (
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11"
-                  onClick={() => setIsCreateOpen(true)}
-                >
-                  Lancer une fabrication
-                </button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {(summary?.byType ?? []).map((type) => (
-              <div
-                key={type.brickTypeId}
-                className="rounded-xl border border-base-200 bg-base-100 p-4 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold">{type.brickTypeName}</div>
-                    <div className="text-xs text-base-content/50">
-                      Coût unitaire <MoneyText value={type.unitCost} />
-                    </div>
-                  </div>
-                  <Badge tone="primary">{brickShapeLabel(shapeOfType(types, type.brickTypeId))}</Badge>
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                  <div>
-                    <div className="text-[11px] uppercase text-base-content/45">Fabriquées</div>
-                    <div className="font-semibold text-success">
-                      <QuantityText value={type.produced} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-base-content/45">Cassées</div>
-                    <div className="font-semibold text-warning">
-                      <QuantityText value={type.broken} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase text-base-content/45">Vendues</div>
-                    <div className="font-semibold text-info">
-                      <QuantityText value={type.sold} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </PageSection>
-
-      {/* 3 · Barre d'outils */}
-      <DataToolbar
-        search={search}
-        onSearchChange={(value) => {
-          setSearch(value);
-          setPage(1);
-        }}
-        /*
-         * « n° » et non « numéro » : voir `app/ventes/page.tsx` — la chaîne
-         * « numéro » fait classer le champ en CREDIT_CARD_NUMBER par Chrome.
-         */
-        searchPlaceholder="Rechercher un n° de lot, un type, une note…"
-        filters={
-          <>
-            <FilterSelect
-              value={brickTypeId}
-              onChange={(value) => {
-                setBrickTypeId(value);
-                setPage(1);
-              }}
-              options={typeFilterOptions}
-              placeholder="Tous les types"
-            />
-            <FilterSelect
-              value={stage}
-              onChange={(value) => {
-                setStage(value);
-                setPage(1);
-              }}
-              options={stageFilterOptions}
-              placeholder="Toutes les étapes"
-            />
-          </>
-        }
-        secondaryFilters={
-          <>
-            <div className="space-y-1">
-              <DatePicker
-                value={from}
-                onChange={(value) => {
-                  setFrom(value);
-                  setPage(1);
-                }}
-                placeholder="Du"
-              />
-            </div>
-            <div className="space-y-1">
-              <DatePicker
-                value={to}
-                onChange={(value) => {
-                  setTo(value);
-                  setPage(1);
-                }}
-                placeholder="Au"
-              />
-            </div>
-            {(from || to) && (
-              <button
-                type="button"
-                className="btn btn-ghost min-h-11 border border-base-300"
-                onClick={() => {
-                  setFrom('');
-                  setTo('');
-                  setPage(1);
-                }}
-              >
-                Effacer la période
-              </button>
-            )}
-          </>
-        }
-        secondaryCount={(from ? 1 : 0) + (to ? 1 : 0)}
-      />
-
-      {hasFilters && (
-        <div className="flex flex-wrap items-center gap-2 text-sm text-base-content/60">
-          <span>Filtres actifs :</span>
-          {search && <Badge tone="info">Recherche : {search}</Badge>}
-          {brickTypeId && (
-            <Badge tone="primary">
-              Type : {types.find((type) => String(type.id) === brickTypeId)?.name ?? brickTypeId}
-            </Badge>
-          )}
-          {stage && <Badge tone={BRICK_STAGE_TONES[stage as BrickStage]}>{brickStageLabel(stage)}</Badge>}
-          {(from || to) && (
-            <Badge tone="neutral">
-              {from ? formatDateShort(from) : '…'} → {to ? formatDateShort(to) : '…'}
-            </Badge>
-          )}
-          <button type="button" className="btn btn-ghost btn-xs min-h-11" onClick={resetFilters}>
-            Réinitialiser
-          </button>
-        </div>
-      )}
-
-      {/* 4 · Liste des lots */}
-      {isLoading ? (
-        <SkeletonTable rows={6} cols={6} />
-      ) : error ? (
+      {isLoading && !data ? (
+        <>
+          <SkeletonCards count={8} />
+          <SkeletonTable rows={4} cols={5} />
+        </>
+      ) : error || !data ? (
         <ErrorState
-          title="Chargement des lots impossible"
-          description={error}
-          onRetry={refreshList}
-        />
-      ) : productions.length === 0 ? (
-        <EmptyState
-          title="Aucun lot de fabrication"
-          description={
-            hasFilters
-              ? 'Aucun lot ne correspond à ces filtres. Élargissez la période ou réinitialisez la recherche.'
-              : 'Lancez un premier lot : les matières premières consommées sortiront du stock et le coût de revient se calculera automatiquement.'
-          }
-          action={
-            hasFilters ? (
-              <button type="button" className="btn btn-primary min-h-11" onClick={resetFilters}>
-                Réinitialiser les filtres
-              </button>
-            ) : canCreate ? (
-              <button
-                type="button"
-                className="btn btn-primary min-h-11"
-                onClick={() => setIsCreateOpen(true)}
-              >
-                Lancer une fabrication
-              </button>
-            ) : undefined
-          }
+          title="Tableau de bord indisponible"
+          description={error ?? 'Le tableau de bord est indisponible.'}
+          onRetry={refresh}
         />
       ) : (
         <>
-          <ResponsiveTable
-            columns={columns}
-            data={productions}
-            getRowKey={(production) => production.id}
-            actions={(production) => {
-              const next = nextBrickStage(production.stage);
-              return (
-                <RowActions>
-                  <IconAction
-                    icon="view"
-                    label="Ouvrir la fiche du lot"
-                    href={`/briqueterie/${production.id}`}
-                  />
-                  {canUpdate && next && (
-                    <IconAction
-                      icon="advance"
-                      tone="primary"
-                      disabled={isAdvancing === production.id}
-                      label={`Passer à l’étape « ${brickStageLabel(next.key)} »`}
-                      onClick={() => void advance(production)}
+          {/* 1 · Production et ventes — les deux lectures du jour */}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCardDelta
+              label="Production du jour"
+              tone="primary"
+              value={<QuantityText value={data.production.today} />}
+              hint={`Semaine ${formatQuantity(data.production.week)} · Mois ${formatQuantity(data.production.month)}`}
+            />
+            <StatCardDelta
+              label="Production du mois"
+              tone="success"
+              value={<QuantityText value={data.production.month} />}
+              hint={`${data.production.monthLots} lot(s) · cassées ${formatQuantity(data.production.monthBroken)}`}
+            />
+            <StatCardDelta
+              label="Coût unitaire moyen"
+              tone="info"
+              value={<MoneyText value={data.production.monthUnitCost} currency={currency} />}
+              hint={`Coût du mois ${formatCurrency(data.production.monthCost, currency)}`}
+            />
+            <StatCardDelta
+              label="Stock total"
+              tone={data.stock.outCount > 0 ? 'warning' : 'primary'}
+              value={<QuantityText value={data.stock.totalQuantity} />}
+              hint={`${formatNumber(data.stock.lines.length)} produit(s) · ${data.stock.outCount} rupture(s)`}
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCardDelta
+              label="Ventes du jour"
+              tone="success"
+              value={<MoneyText value={data.sales.today} currency={currency} />}
+              hint={`${data.sales.todayCount} vente(s) de briques`}
+            />
+            <StatCardDelta
+              label="Ventes du mois"
+              tone="success"
+              value={<MoneyText value={data.sales.month} currency={currency} />}
+              hint={`${data.sales.monthCount} vente(s)`}
+            />
+            <StatCardDelta
+              label="Ventes de l’année"
+              tone="primary"
+              value={<MoneyText value={data.sales.year} currency={currency} />}
+              hint={`${data.sales.yearCount} vente(s)`}
+            />
+            <StatCardDelta
+              label="Montant encaissé / reste à recevoir"
+              tone={data.outstanding > 0 ? 'warning' : 'success'}
+              value={<MoneyText value={data.collected} currency={currency} />}
+              hint={`Reste à recevoir : ${formatCurrency(data.outstanding, currency)}`}
+            />
+          </div>
+
+          {/* 2 · Dépenses et rentabilité du mois */}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCardDelta
+              label="Dépenses de production"
+              tone="warning"
+              value={<MoneyText value={data.expenses.productionMonth} currency={currency} />}
+              hint="Ciment, sable, carburant, main-d’œuvre… rattachés aux lots du mois"
+            />
+            <StatCardDelta
+              label="Dépenses générales"
+              tone="neutral"
+              value={<MoneyText value={data.expenses.generalMonth} currency={currency} />}
+              hint="Transport, loyer, électricité… hors production"
+            />
+            <StatCardDelta
+              label="Chiffre d’affaires du mois"
+              tone="success"
+              value={<MoneyText value={data.profitability.revenue} currency={currency} />}
+              hint={`Marge brute estimée : ${formatCurrency(data.profitability.grossMargin, currency)}`}
+            />
+            <StatCardDelta
+              label="Bénéfice estimé du mois"
+              tone={data.profitability.estimatedResult >= 0 ? 'success' : 'error'}
+              value={<MoneyText value={data.profitability.estimatedResult} currency={currency} />}
+              hint={`CA − coûts de production − dépenses générales · marge ${formatPercent(data.profitability.marginRate)}`}
+            />
+          </div>
+
+          {/* 3 · Alertes de stock faible — jamais la couleur seule */}
+          {alertLines.length > 0 ? (
+            <div className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-2 text-sm font-semibold text-warning">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5 shrink-0"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    aria-hidden
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
                     />
-                  )}
-                  {canUpdate && (
-                    <IconAction
-                      icon="broken"
-                      label="Enregistrer des briques cassées"
-                      onClick={() => {
-                        setBrokenTarget(production);
-                        setIsBrokenOpen(true);
-                      }}
-                    />
-                  )}
-                </RowActions>
-              );
-            }}
-          />
-          <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+                  </svg>
+                  Alerte de stock faible — {alertLines.length} produit(s) sous le seuil minimum
+                </p>
+                <Link href="/briqueterie/stock" className="btn btn-ghost btn-sm min-h-11 border border-base-300">
+                  Gérer le stock
+                </Link>
+              </div>
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {alertLines.map((alert) => (
+                  <li key={alert.brickTypeId}>
+                    <Badge tone={alert.stock <= 0 ? 'error' : 'warning'}>
+                      {alert.name} : {formatQuantity(alert.stock, alert.unit)} (seuil{' '}
+                      {formatQuantity(alert.stockMin)})
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
+              Aucun produit sous son seuil minimum : le stock de briques est suffisant.
+            </div>
+          )}
+
+          {/* 4 · Commandes par statut */}
+          <PageSection
+            title="Commandes en cours"
+            subtitle="Une commande ne touche pas le stock : elle devient une facture de vente quand on la facture."
+            actions={
+              <Link href="/briqueterie/commandes" className="btn btn-ghost min-h-11 border border-base-300">
+                Toutes les commandes
+              </Link>
+            }
+          >
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              {ORDER_STATUS_ORDER.map((status) => (
+                <Link
+                  key={status}
+                  href={`/briqueterie/commandes?status=${status}`}
+                  className="rounded-xl border border-base-200 bg-base-100 px-3 py-3 text-center transition-colors hover:border-primary/40"
+                >
+                  <div className="text-[11px] uppercase text-base-content/45">
+                    {ORDER_STATUS_LABELS[status]}
+                  </div>
+                  <div className="mt-1 text-2xl font-semibold tabular">
+                    {formatNumber(data.orders[status] ?? 0)}
+                  </div>
+                </Link>
+              ))}
+            </div>
+            {(data.orders.cancelled ?? 0) > 0 && (
+              <p className="mt-3 text-xs text-base-content/50">
+                {formatNumber(data.orders.cancelled)} commande(s) annulée(s) — une annulation garde
+                toujours son motif et son auteur.
+              </p>
+            )}
+          </PageSection>
+
+          {/* 5 · Graphiques d'évolution (30 derniers jours) */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <p className="mb-3 text-sm font-semibold">Production — 30 derniers jours</p>
+              <RevenueTrendChart
+                labels={data.charts.production.map((point) => shortDay(point.date))}
+                series={[
+                  { label: 'Briques produites', values: data.charts.production.map((p) => p.produced), tone: 1 },
+                ]}
+              />
+            </Card>
+
+            <Card>
+              <p className="mb-3 text-sm font-semibold">Ventes de briques — 30 derniers jours</p>
+              <RevenueTrendChart
+                labels={data.charts.sales.map((point) => shortDay(point.date))}
+                series={[
+                  { label: 'Chiffre d’affaires', values: data.charts.sales.map((p) => p.revenue), tone: 0 },
+                ]}
+              />
+            </Card>
+
+            <Card className="lg:col-span-2">
+              <p className="mb-3 text-sm font-semibold">Dépenses — 30 derniers jours</p>
+              <RevenueTrendChart
+                labels={data.charts.expenses.map((point) => shortDay(point.date))}
+                series={[
+                  {
+                    label: 'Dépenses de production',
+                    values: data.charts.expenses.map((p) => p.production),
+                    tone: 2,
+                  },
+                  {
+                    label: 'Dépenses générales',
+                    values: data.charts.expenses.map((p) => p.general),
+                    tone: 4,
+                  },
+                ]}
+              />
+            </Card>
+          </div>
+
+          {/* 6 · Production du mois par produit */}
+          <PageSection
+            title="Quantité produite par produit"
+            subtitle="Mois en cours. Le coût unitaire est calculé : coût total ÷ (production − cassées)."
+          >
+            {data.productionByType.length === 0 ? (
+              <EmptyState
+                title="Aucune fabrication ce mois-ci"
+                description="Lancez un lot et rattachez-lui ses dépenses : la production apparaîtra ici, avec son coût de revient."
+                action={
+                  canCreate ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary min-h-11"
+                      onClick={() => setIsCreateOpen(true)}
+                    >
+                      Lancer une fabrication
+                    </button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="table table-sm">
+                  <thead>
+                    <tr>
+                      <th scope="col">Produit</th>
+                      <th scope="col" className="text-right">Lots</th>
+                      <th scope="col" className="text-right">Produites</th>
+                      <th scope="col" className="text-right">Cassées</th>
+                      <th scope="col" className="text-right">Coût total</th>
+                      <th scope="col" className="text-right">Coût unitaire</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.productionByType.map((row) => (
+                      <tr key={row.brickTypeId}>
+                        <td className="font-medium">{row.brickTypeName}</td>
+                        <td className="text-right tabular">{formatNumber(row.lots)}</td>
+                        <td className="text-right">
+                          <QuantityText value={row.produced} />
+                        </td>
+                        <td className="text-right">
+                          <QuantityText
+                            value={row.broken}
+                            className={row.broken > 0 ? 'text-warning' : ''}
+                          />
+                        </td>
+                        <td className="text-right">
+                          <MoneyText value={row.cost} currency={currency} />
+                        </td>
+                        <td className="text-right">
+                          <MoneyText value={row.unitCost} currency={currency} bold />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </PageSection>
+
+          {/* 7 · Stock actuel par produit */}
+          <PageSection
+            title="Stock actuel par produit"
+            subtitle="Lu sur le produit lié, lui-même somme des mouvements de stock — une seule source de vérité."
+            actions={
+              <Link href="/briqueterie/stock" className="btn btn-ghost min-h-11 border border-base-300">
+                Voir le stock détaillé
+              </Link>
+            }
+          >
+            {data.stock.lines.length === 0 ? (
+              <EmptyState
+                title="Aucun produit de briqueterie"
+                description="Créez un type de brique lié à un produit pour suivre son stock ici."
+              />
+            ) : (
+              <ResponsiveTable
+                columns={stockColumns}
+                data={data.stock.lines}
+                getRowKey={(line) => line.brickTypeId}
+                emptyMessage="Aucun produit."
+              />
+            )}
+          </PageSection>
+
+          {/* 8 · Meilleures ventes du mois */}
+          {data.topProducts.length > 0 && (
+            <PageSection title="Meilleures ventes du mois" subtitle="Par chiffre d’affaires.">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {data.topProducts.map((product) => (
+                  <div
+                    key={product.productName}
+                    className="rounded-xl border border-base-200 bg-base-100 px-3 py-3"
+                  >
+                    <div className="truncate text-[11px] uppercase text-base-content/45">
+                      {product.productName}
+                    </div>
+                    <div className="mt-1">
+                      <MoneyText value={product.revenue} currency={currency} bold />
+                    </div>
+                    <div className="text-xs text-base-content/55">
+                      {formatQuantity(product.quantity)} vendues
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </PageSection>
+          )}
+
           <p className="text-center text-xs text-base-content/50">
-            {total} lot{total > 1 ? 's' : ''} — page {page} sur {totalPages}
+            Période analysée : {formatDateShort(data.period.from)} → {formatDateShort(data.period.to)}.
+            Les annulations ne sont jamais supprimées : elles gardent leur motif et leur auteur.
           </p>
         </>
       )}
 
-      {/* 6 · Modales — un état booléen chacune */}
+      {/* Modales — un état booléen chacune */}
       <BrickProductionModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         brickTypes={types.filter((type) => type.isActive)}
         isOptionsLoading={!typesLoaded}
-        onSaved={refreshAll}
+        onSaved={refresh}
       />
 
       <BrickTypesManagerModal
         isOpen={isTypesOpen}
         onClose={() => setIsTypesOpen(false)}
-        onChanged={refreshAll}
+        onChanged={refresh}
         onTypesLoaded={setTypes}
-      />
-
-      <BrokenBricksModal
-        isOpen={isBrokenOpen}
-        onClose={() => setIsBrokenOpen(false)}
-        production={brokenTarget}
-        onRegistered={refreshAll}
       />
     </div>
   );

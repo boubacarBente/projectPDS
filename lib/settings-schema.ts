@@ -29,6 +29,8 @@ export type Settings = {
   receiptPrefix: string;
   jobPrefix: string;
   brickPrefix: string;
+  /** Préfixe des **commandes** de briqueterie (§20) — distinct des lots `BRI`. */
+  brickOrderPrefix: string;
   furniturePrefix: string;
   defaultTaxRate: number;
   /* Référentiels — listes fermées (§6.6) */
@@ -77,6 +79,7 @@ export const DEFAULT_SETTINGS: Settings = {
   receiptPrefix: 'REC',
   jobPrefix: 'CHA',
   brickPrefix: 'BRI',
+  brickOrderPrefix: 'BCM',
   furniturePrefix: 'MEU',
   // Q2 : taux par défaut 0 % (facturation sans TVA), champ présent et configurable.
   defaultTaxRate: 0,

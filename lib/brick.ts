@@ -43,6 +43,14 @@ import { nextDocumentNumber } from '@/lib/settings';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/api';
 import { roundMoney, today } from '@/lib/format';
+import {
+  createExpense,
+  cancelExpense,
+  getExpense,
+  updateExpense,
+  PRODUCTION_EXPENSE_REFERENCE,
+  type ExpenseRow,
+} from '@/lib/expenses';
 
 /* ------------------------------------------------------------------ *
  * Types et listes fermées
@@ -53,6 +61,32 @@ export type BrickShape = (typeof BRICK_SHAPES)[number];
 
 export const BRICK_STAGES = ['molding', 'drying', 'firing', 'stored'] as const;
 export type BrickStage = (typeof BRICK_STAGES)[number];
+
+/**
+ * **Statut d'une fiche de production** (§20).
+ *
+ *  - `registered` : la fabrication est lancée, les dépenses s'y rattachent ;
+ *  - `finished` : le lot est **terminé** — c'est le cas dès l'entrée dans
+ *    l'étape `stored`, qui crédite le stock de briques finies ;
+ *  - `cancelled` : annulée avec un motif obligatoire (jamais supprimée).
+ *
+ * Le tombstone `deleted_at` reste posé en même temps que `cancelled` : les
+ * listes existantes filtrent déjà dessus, et la synchronisation aussi.
+ */
+export const BRICK_PRODUCTION_STATUSES = ['registered', 'finished', 'cancelled'] as const;
+export type BrickProductionStatus = (typeof BRICK_PRODUCTION_STATUSES)[number];
+
+export const BRICK_PRODUCTION_STATUS_LABELS: Record<BrickProductionStatus, string> = {
+  registered: 'Enregistrée',
+  finished: 'Terminée',
+  cancelled: 'Annulée',
+};
+
+export function isBrickProductionStatus(value: unknown): value is BrickProductionStatus {
+  return (
+    typeof value === 'string' && (BRICK_PRODUCTION_STATUSES as readonly string[]).includes(value)
+  );
+}
 
 export function isBrickShape(value: unknown): value is BrickShape {
   return typeof value === 'string' && (BRICK_SHAPES as readonly string[]).includes(value);
@@ -105,8 +139,16 @@ export type BrickProductionRow = {
   startDate: string | null;
   endDate: string | null;
   stage: BrickStage;
+  /** Enregistrée | Terminée | Annulée. */
+  status: BrickProductionStatus;
+  /** Équipe ou responsable de production (texte libre). */
+  team: string | null;
+  /** Somme des matières premières **historiques** (§20 : plus de module matières). */
   materialCost: number;
+  /** Main-d'œuvre des affectations (`days × daily_rate`). */
   laborCost: number;
+  /** Somme des **dépenses rattachées** (`expenses.reference_type = 'brick_production'`). */
+  expenseCost: number;
   totalCost: number;
   /** Calculé : `total_cost ÷ (produced − broken)`. */
   unitCost: number;
@@ -114,10 +156,14 @@ export type BrickProductionRow = {
   stored: boolean;
   materialsCount: number;
   workersCount: number;
+  /** Nombre de dépenses rattachées à la fiche. */
+  expensesCount: number;
   userId: number | null;
   userName: string | null;
   notes: string | null;
   isCancelled: boolean;
+  cancelReason: string | null;
+  cancelledAt: Date | null;
   createdAt: Date | null;
 };
 
@@ -146,8 +192,12 @@ export type BrickProductionWorkerRow = {
 };
 
 export type ProductionCosts = {
+  /** Matières premières **historiques** (lots antérieurs au §20 révisé). */
   materialCost: number;
+  /** Main-d'œuvre : somme des affectations `days × daily_rate`. */
   laborCost: number;
+  /** Dépenses **rattachées à la fiche** (ciment, sable, carburant…). */
+  expenseCost: number;
   totalCost: number;
   producedQuantity: number;
   brokenQuantity: number;
@@ -156,12 +206,41 @@ export type ProductionCosts = {
   unitCost: number;
 };
 
+/** Une dépense rattachée à un lot — vue « production » de `expenses` (§9, §20). */
+export type BrickProductionExpenseRow = {
+  id: number;
+  productionId: number;
+  category: string;
+  description: string | null;
+  amount: number;
+  paymentMethod: string;
+  beneficiary: string | null;
+  /** Date métier `YYYY-MM-DD`. */
+  date: string;
+  userId: number | null;
+  userName: string | null;
+  cancelled: boolean;
+  createdAt: Date | null;
+};
+
+export type BrickProductionExpenseInput = {
+  category: string;
+  amount: number;
+  description?: string | null;
+  paymentMethod?: string;
+  beneficiary?: string | null;
+  date: string;
+  userId?: number | null;
+};
+
 export type BrickProductionDetail = {
   production: BrickProductionRow;
   brickType: BrickTypeRow | null;
   product: { id: number; name: string; unit: string; stock: number; salePrice: number } | null;
   materials: BrickProductionMaterialRow[];
   workers: BrickProductionWorkerRow[];
+  /** Dépenses rattachées — la source de coût de la fiche (§20). */
+  expenses: BrickProductionExpenseRow[];
   costs: ProductionCosts;
 };
 
@@ -172,6 +251,8 @@ export type BrickProductionInput = {
   brokenQuantity?: number;
   startDate?: string | null;
   endDate?: string | null;
+  /** Équipe ou responsable de production. */
+  team?: string | null;
   notes?: string | null;
   userId?: number | null;
 };
@@ -182,6 +263,7 @@ export type BrickProductionPatch = {
   brokenQuantity?: number;
   startDate?: string | null;
   endDate?: string | null;
+  team?: string | null;
   notes?: string | null;
 };
 
@@ -189,6 +271,8 @@ export type BrickProductionListOptions = {
   search?: string;
   brickTypeId?: number;
   stage?: string;
+  /** `registered` | `finished` | `cancelled`. */
+  status?: string;
   from?: string;
   to?: string;
   page?: number;
@@ -206,6 +290,8 @@ export type BrickSummary = {
   soldRevenue: number;
   materialsCost: number;
   laborCost: number;
+  /** Dépenses rattachées aux lots de la période (ciment, sable, carburant…). */
+  expensesCost: number;
   totalCost: number;
   /** Coût de revient moyen d'une brique vendable. */
   averageUnitCost: number;
@@ -382,11 +468,16 @@ const PRODUCTION_SELECT = `
   SELECT p.id, p.batch_number, p.brick_type_id, bt.name AS brick_type_name, bt.shape, bt.dimensions,
          bt.product_id, pr.name AS product_name, pr.unit AS product_unit,
          p.planned_quantity, p.produced_quantity, p.broken_quantity,
-         p.start_date, p.end_date, p.stage,
-         p.material_cost, p.labor_cost, p.total_cost, p.user_id, u.name AS user_name,
+         p.start_date, p.end_date, p.stage, p.status, p.team,
+         p.material_cost, p.labor_cost, p.expense_cost, p.total_cost,
+         p.cancel_reason, p.cancelled_at,
+         p.user_id, u.name AS user_name,
          p.notes, p.deleted_at, p.created_at,
          (SELECT COUNT(*) FROM brick_production_materials m WHERE m.production_id = p.id) AS materials_count,
          (SELECT COUNT(*) FROM brick_production_workers w WHERE w.production_id = p.id) AS workers_count,
+         (SELECT COUNT(*) FROM expenses e
+           WHERE e.reference_type = 'brick_production' AND e.reference_id = p.id
+             AND e.deleted_at IS NULL) AS expenses_count,
          (SELECT COUNT(*) FROM stock_movements sm
            WHERE sm.reference_type = 'brick_production' AND sm.reference_id = p.id AND sm.type = 'entry') AS stored_count
   FROM brick_productions p
@@ -398,8 +489,12 @@ const PRODUCTION_SELECT = `
 function mapProductionRow(row: any): BrickProductionRow {
   const produced = Number(row.produced_quantity ?? 0);
   const broken = Number(row.broken_quantity ?? 0);
-  const totalCost = Number(row.total_cost ?? 0);
+  const materialCost = Number(row.material_cost ?? 0);
+  const laborCost = Number(row.labor_cost ?? 0);
+  const expenseCost = Number(row.expense_cost ?? 0);
+  const totalCost = Number(row.total_cost ?? 0) || roundMoney(materialCost + laborCost + expenseCost);
   const good = roundMoney(produced - broken);
+  const isCancelled = row.deleted_at != null;
 
   return {
     id: Number(row.id),
@@ -417,17 +512,30 @@ function mapProductionRow(row: any): BrickProductionRow {
     startDate: row.start_date,
     endDate: row.end_date,
     stage: isBrickStage(row.stage) ? row.stage : 'molding',
-    materialCost: Number(row.material_cost ?? 0),
-    laborCost: Number(row.labor_cost ?? 0),
+    // Une fiche annulée porte `status = 'cancelled'` **et** le tombstone : on
+    // dérive le statut du tombstone quand la colonne n'a pas suivi, pour ne
+    // jamais afficher « Enregistrée » sur un lot annulé.
+    status: isCancelled
+      ? 'cancelled'
+      : isBrickProductionStatus(row.status)
+        ? row.status
+        : 'registered',
+    team: row.team ?? null,
+    materialCost,
+    laborCost,
+    expenseCost,
     totalCost,
     unitCost: good > 0 ? Math.round((totalCost / good) * 100) / 100 : 0,
     stored: Number(row.stored_count ?? 0) > 0,
     materialsCount: Number(row.materials_count ?? 0),
     workersCount: Number(row.workers_count ?? 0),
+    expensesCount: Number(row.expenses_count ?? 0),
     userId: row.user_id,
     userName: row.user_name,
     notes: row.notes,
-    isCancelled: row.deleted_at != null,
+    isCancelled,
+    cancelReason: row.cancel_reason ?? null,
+    cancelledAt: row.cancelled_at ? new Date(Number(row.cancelled_at) * 1000) : null,
     createdAt: row.created_at ? new Date(Number(row.created_at) * 1000) : null,
   };
 }
@@ -442,8 +550,24 @@ export async function listBrickProductions(
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const where: string[] = ['p.deleted_at IS NULL'];
+  const where: string[] = [];
   const args: (string | number)[] = [];
+
+  /*
+   * Le filtre de statut commande le traitement du tombstone : par défaut un lot
+   * annulé disparaît des listes (`deleted_at IS NULL`), mais si l'utilisateur
+   * **demande** les annulés, il faut au contraire les inclure — sinon le filtre
+   * « Annulée » serait toujours vide, ce qui est le pire des mensonges.
+   */
+  if (options.status === 'cancelled') {
+    where.push("(p.status = 'cancelled' OR p.deleted_at IS NOT NULL)");
+  } else {
+    where.push('p.deleted_at IS NULL');
+    if (isBrickProductionStatus(options.status)) {
+      where.push('p.status = ?');
+      args.push(options.status);
+    }
+  }
 
   if (options.search) {
     where.push('(p.batch_number LIKE ? OR bt.name LIKE ? OR p.notes LIKE ?)');
@@ -457,6 +581,9 @@ export async function listBrickProductions(
   if (isBrickStage(options.stage)) {
     where.push('p.stage = ?');
     args.push(options.stage);
+  }
+  if (isBrickProductionStatus(options.status)) {
+    // Traité plus haut : le filtre de statut décide aussi du tombstone.
   }
   if (options.from) {
     where.push(`${PRODUCTION_DATE} >= ?`);
@@ -537,20 +664,34 @@ export async function listProductionWorkers(productionId: number): Promise<Brick
   }));
 }
 
-/** Coût de revient — **calculé**, jamais stocké (§20). */
+/**
+ * Coût de revient — **calculé**, jamais stocké (§20).
+ *
+ * Trois composantes, dans cet ordre :
+ *  1. `materialCost` — **héritage** : les lignes de `brick_production_materials`
+ *     des lots saisis avant la révision §20 (les matières premières ne sont plus
+ *     un module : elles sont devenues des dépenses rattachées). On continue de
+ *     les compter pour qu'un lot historique garde son coût réel.
+ *  2. `laborCost` — les affectations d'équipe (`days × daily_rate`).
+ *  3. `expenseCost` — les **dépenses rattachées** (`expenses`), qui portent
+ *     désormais le ciment, le sable, le carburant, l'électricité…
+ */
 export function computeProductionCosts(
   production: BrickProductionRow,
   materials: BrickProductionMaterialRow[],
   workers: BrickProductionWorkerRow[],
+  expenses: BrickProductionExpenseRow[] = [],
 ): ProductionCosts {
   const materialCost = roundMoney(materials.reduce((sum, m) => sum + m.amount, 0));
   const laborCost = roundMoney(workers.reduce((sum, w) => sum + w.amount, 0));
-  const totalCost = roundMoney(materialCost + laborCost);
+  const expenseCost = roundMoney(expenses.reduce((sum, e) => sum + e.amount, 0));
+  const totalCost = roundMoney(materialCost + laborCost + expenseCost);
   const good = roundMoney(production.producedQuantity - production.brokenQuantity);
 
   return {
     materialCost,
     laborCost,
+    expenseCost,
     totalCost,
     producedQuantity: production.producedQuantity,
     brokenQuantity: production.brokenQuantity,
@@ -563,10 +704,11 @@ export async function getBrickProduction(id: number): Promise<BrickProductionDet
   const production = await getBrickProductionRow(id);
   if (!production) return null;
 
-  const [brickType, materials, workers] = await Promise.all([
+  const [brickType, materials, workers, expenses] = await Promise.all([
     getBrickType(production.brickTypeId),
     listProductionMaterials(id),
     listProductionWorkers(id),
+    listProductionExpenses(id),
   ]);
 
   const productRow = await rawGet<{
@@ -591,7 +733,8 @@ export async function getBrickProduction(id: number): Promise<BrickProductionDet
       : null,
     materials,
     workers,
-    costs: computeProductionCosts(production, materials, workers),
+    expenses,
+    costs: computeProductionCosts(production, materials, workers, expenses),
   };
 }
 
@@ -599,12 +742,183 @@ export async function getProductionCost(id: number): Promise<ProductionCosts> {
   const production = await getBrickProductionRow(id);
   if (!production) throw new NotFoundError('Lot de fabrication introuvable');
 
-  const [materials, workers] = await Promise.all([
+  const [materials, workers, expenses] = await Promise.all([
     listProductionMaterials(id),
     listProductionWorkers(id),
+    listProductionExpenses(id),
   ]);
 
-  return computeProductionCosts(production, materials, workers);
+  return computeProductionCosts(production, materials, workers, expenses);
+}
+
+/* ------------------------------------------------------------------ *
+ * Dépenses rattachées à un lot (§20)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Les dépenses d'un lot sont des lignes de `expenses` portant
+ * `reference_type = 'brick_production'` et `reference_id = <lot>`.
+ *
+ * Ce choix est structurant : **il n'y a pas de module de matières premières**.
+ * Le ciment, le sable, le carburant ou la main-d'œuvre ponctuelle sont des
+ * dépenses — elles sortent de la caisse (`lib/expenses.ts` s'en charge), elles
+ * s'annulent avec un motif, elles sont synchronisées et elles apparaissent dans
+ * les rapports par catégorie. Le lot ne fait que les **rattacher à lui-même**.
+ */
+export async function listProductionExpenses(
+  productionId: number,
+  options: { includeCancelled?: boolean } = {},
+): Promise<BrickProductionExpenseRow[]> {
+  const where = options.includeCancelled ? '' : 'AND e.deleted_at IS NULL';
+  const rows = await rawAll<any>(
+    `SELECT e.id, e.category, e.amount, e.description, e.payment_method, e.beneficiary,
+            e.date, e.reference_id, e.user_id, e.created_at, e.deleted_at, u.name AS user_name
+     FROM expenses e
+     LEFT JOIN users u ON u.id = e.user_id
+     WHERE e.reference_type = 'brick_production' AND e.reference_id = ? ${where}
+     ORDER BY e.date ASC, e.id ASC`,
+    [productionId],
+  );
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    productionId: Number(row.reference_id),
+    category: row.category,
+    description: row.description ?? null,
+    amount: Number(row.amount ?? 0),
+    paymentMethod: row.payment_method ?? 'Espèces',
+    beneficiary: row.beneficiary ?? null,
+    date: row.date,
+    userId: row.user_id == null ? null : Number(row.user_id),
+    userName: row.user_name ?? null,
+    cancelled: row.deleted_at != null,
+    createdAt: row.created_at ? new Date(Number(row.created_at) * 1000) : null,
+  }));
+}
+
+/**
+ * Ajoute une dépense à la fiche — **interdit sur un lot annulé**.
+ *
+ * La validation de catégorie est celle de la portée `production` (liste métier
+ * ciment/sable/carburant/main-d'œuvre…), pas celle des paramètres.
+ */
+export async function addProductionExpense(
+  productionId: number,
+  input: BrickProductionExpenseInput,
+): Promise<BrickProductionExpenseRow> {
+  const production = await assertProductionEditable(productionId);
+
+  const expense = await createExpense({
+    category: input.category,
+    amount: input.amount,
+    description: input.description ?? null,
+    paymentMethod: input.paymentMethod,
+    beneficiary: input.beneficiary ?? null,
+    date: input.date,
+    scope: 'production',
+    referenceType: PRODUCTION_EXPENSE_REFERENCE,
+    referenceId: productionId,
+    userId: input.userId ?? null,
+  });
+
+  await syncProductionCosts(productionId);
+
+  return {
+    id: expense.id,
+    productionId,
+    category: expense.category,
+    description: expense.description,
+    amount: expense.amount,
+    paymentMethod: expense.paymentMethod,
+    beneficiary: expense.beneficiary,
+    date: expense.date,
+    userId: expense.userId,
+    userName: expense.userName,
+    cancelled: expense.cancelled,
+    createdAt: expense.createdAt,
+  };
+}
+
+/** Modifie une dépense du lot — le montant recalcule le coût total de la fiche. */
+export async function updateProductionExpense(
+  productionId: number,
+  expenseId: number,
+  patch: {
+    category?: string;
+    amount?: number;
+    description?: string | null;
+    paymentMethod?: string;
+    beneficiary?: string | null;
+    date?: string;
+  },
+  options: { userId?: number | null } = {},
+): Promise<BrickProductionExpenseRow> {
+  await assertProductionEditable(productionId);
+
+  const expense = await getExpense(expenseId);
+  if (!expense) throw new NotFoundError('Dépense introuvable');
+  if (expense.referenceType !== PRODUCTION_EXPENSE_REFERENCE || expense.referenceId !== productionId) {
+    throw new ValidationError('Cette dépense n’est pas rattachée à ce lot de fabrication');
+  }
+
+  const updated = await updateExpense(
+    expenseId,
+    {
+      category: patch.category,
+      amount: patch.amount,
+      description: patch.description,
+      paymentMethod: patch.paymentMethod,
+      beneficiary: patch.beneficiary,
+      date: patch.date,
+    },
+    { userId: options.userId ?? null },
+  );
+
+  await syncProductionCosts(productionId);
+
+  return {
+    id: updated.id,
+    productionId,
+    category: updated.category,
+    description: updated.description,
+    amount: updated.amount,
+    paymentMethod: updated.paymentMethod,
+    beneficiary: updated.beneficiary,
+    date: updated.date,
+    userId: updated.userId,
+    userName: updated.userName,
+    cancelled: updated.cancelled,
+    createdAt: updated.createdAt,
+  };
+}
+
+/**
+ * Retire une dépense du lot : **annulation motivée**, jamais de suppression
+ * (§7). L'argent revient en caisse par le mouvement inverse de `lib/expenses.ts`.
+ */
+export async function removeProductionExpense(
+  productionId: number,
+  expenseId: number,
+  reason: string,
+  options: { userId?: number | null } = {},
+): Promise<BrickProductionRow> {
+  await assertProductionEditable(productionId);
+
+  const expense = await getExpense(expenseId);
+  if (!expense) throw new NotFoundError('Dépense introuvable');
+  if (expense.referenceType !== PRODUCTION_EXPENSE_REFERENCE || expense.referenceId !== productionId) {
+    throw new ValidationError('Cette dépense n’est pas rattachée à ce lot de fabrication');
+  }
+
+  const motif = (reason ?? '').trim();
+  if (!motif) throw new ValidationError('Le motif de retrait de la dépense est obligatoire');
+
+  await cancelExpense(expenseId, { reason: motif, userId: options.userId ?? null });
+  await syncProductionCosts(productionId);
+
+  const result = await getBrickProductionRow(productionId);
+  if (!result) throw new NotFoundError('Lot de fabrication introuvable');
+  return result;
 }
 
 /* ------------------------------------------------------------------ *
@@ -641,6 +955,7 @@ export async function getBrickSummary(options: { from?: string; to?: string } = 
     broken: number | null;
     material_cost: number | null;
     labor_cost: number | null;
+    expense_cost: number | null;
     total_cost: number | null;
   }>(
     `SELECT p.brick_type_id, bt.name AS brick_type_name,
@@ -649,12 +964,28 @@ export async function getBrickSummary(options: { from?: string; to?: string } = 
             SUM(p.broken_quantity) AS broken,
             SUM(p.material_cost) AS material_cost,
             SUM(p.labor_cost) AS labor_cost,
+            SUM(p.expense_cost) AS expense_cost,
             SUM(p.total_cost) AS total_cost
      FROM brick_productions p
      INNER JOIN brick_types bt ON bt.id = p.brick_type_id
      WHERE ${prodWhere.join(' AND ')}
      GROUP BY p.brick_type_id, bt.name`,
     prodArgs,
+  );
+
+  /*
+   * Dépenses rattachées aux lots de la période. On les additionne via une
+   * sous-requête sur les **mêmes** bornes que les lots : une dépense de
+   * production peut porter une date de saisie différente de la date du lot, et
+   * c'est le lot qui définit la période de rattachement.
+   */
+  const expenseTotal = await rawGet<{ total: number | null }>(
+    `SELECT COALESCE(SUM(e.amount), 0) AS total
+     FROM expenses e
+     WHERE e.deleted_at IS NULL
+       AND e.reference_type = ?
+       AND e.reference_id IN (SELECT p.id FROM brick_productions p WHERE ${prodWhere.join(' AND ')})`,
+    [PRODUCTION_EXPENSE_REFERENCE, ...prodArgs],
   );
 
   const salesWhere: string[] = ["v.status = 'active'", 'i.product_id IN (SELECT product_id FROM brick_types)'];
@@ -705,6 +1036,7 @@ export async function getBrickSummary(options: { from?: string; to?: string } = 
   let broken = 0;
   let materialsCost = 0;
   let laborCost = 0;
+  let expensesCost = Number(expenseTotal?.total ?? 0);
   let productionsCount = 0;
 
   for (const row of productions) {
@@ -744,7 +1076,7 @@ export async function getBrickSummary(options: { from?: string; to?: string } = 
     });
   }
 
-  const totalCost = roundMoney(materialsCost + laborCost);
+  const totalCost = roundMoney(materialsCost + laborCost + expensesCost);
   const good = roundMoney(produced - broken);
 
   return {
@@ -758,6 +1090,7 @@ export async function getBrickSummary(options: { from?: string; to?: string } = 
     soldRevenue: roundMoney(soldRevenue),
     materialsCost: roundMoney(materialsCost),
     laborCost: roundMoney(laborCost),
+    expensesCost: roundMoney(expensesCost),
     totalCost,
     averageUnitCost: good > 0 ? Math.round((totalCost / good) * 100) / 100 : 0,
     byType: Array.from(byTypeMap.values()).sort((a, b) =>
@@ -815,7 +1148,15 @@ async function materialExitExists(productionId: number, materialId: number): Pro
   return Number(row?.c ?? 0) > 0;
 }
 
-/** Miroir des colonnes `material_cost` / `labor_cost` / `total_cost` du lot. */
+/**
+ * Miroir des colonnes de coût du lot (`material_cost`, `labor_cost`,
+ * `expense_cost`, `total_cost`).
+ *
+ * ⚠️ Le **coût de revient unitaire** n'est jamais stocké (§6.5 règle 6) : seules
+ * ces quatre colonnes, qui sont la somme de lignes réelles, sont écrites — elles
+ * servent aux agrégats SQL des rapports et sont recalculées ici à chaque
+ * écriture de ligne.
+ */
 async function syncProductionCosts(productionId: number): Promise<void> {
   const materials = await rawGet<{ total: number | null }>(
     'SELECT COALESCE(SUM(amount), 0) AS total FROM brick_production_materials WHERE production_id = ?',
@@ -825,16 +1166,23 @@ async function syncProductionCosts(productionId: number): Promise<void> {
     'SELECT COALESCE(SUM(amount), 0) AS total FROM brick_production_workers WHERE production_id = ?',
     [productionId],
   );
+  const expenseRow = await rawGet<{ total: number | null }>(
+    `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
+     WHERE reference_type = ? AND reference_id = ? AND deleted_at IS NULL`,
+    [PRODUCTION_EXPENSE_REFERENCE, productionId],
+  );
 
   const materialCost = roundMoney(Number(materials?.total ?? 0));
   const laborCost = roundMoney(Number(workers?.total ?? 0));
+  const expenseCost = roundMoney(Number(expenseRow?.total ?? 0));
 
   await db
     .update(brickProductions)
     .set({
       materialCost,
       laborCost,
-      totalCost: roundMoney(materialCost + laborCost),
+      expenseCost,
+      totalCost: roundMoney(materialCost + laborCost + expenseCost),
       updatedAt: new Date(),
     })
     .where(eq(brickProductions.id, productionId));
@@ -842,7 +1190,8 @@ async function syncProductionCosts(productionId: number): Promise<void> {
   await enqueueSyncWrite('brick_productions', null, 'update', {
     material_cost: materialCost,
     labor_cost: laborCost,
-    total_cost: roundMoney(materialCost + laborCost),
+    expense_cost: expenseCost,
+    total_cost: roundMoney(materialCost + laborCost + expenseCost),
   });
 }
 
@@ -872,8 +1221,11 @@ export async function createBrickProduction(input: BrickProductionInput): Promis
       startDate: cleanDate(input.startDate) ?? today(),
       endDate: cleanDate(input.endDate),
       stage: 'molding',
+      status: 'registered',
+      team: input.team?.trim() || null,
       materialCost: 0,
       laborCost: 0,
+      expenseCost: 0,
       totalCost: 0,
       userId: input.userId ?? null,
       notes: input.notes?.trim() || null,
@@ -885,6 +1237,8 @@ export async function createBrickProduction(input: BrickProductionInput): Promis
     brick_type_id: brickTypeId,
     planned_quantity: plannedQuantity,
     stage: 'molding',
+    status: 'registered',
+    team: input.team?.trim() || null,
   });
 
   const created = await getBrickProductionRow(inserted[0].id);
@@ -933,6 +1287,7 @@ export async function updateBrickProduction(
   }
   if (patch.startDate !== undefined) values.startDate = cleanDate(patch.startDate);
   if (patch.endDate !== undefined) values.endDate = cleanDate(patch.endDate);
+  if (patch.team !== undefined) values.team = patch.team?.trim() || null;
   if (patch.notes !== undefined) values.notes = patch.notes?.trim() || null;
 
   if (
@@ -1028,13 +1383,19 @@ export async function advanceStage(id: number, stage: BrickStage): Promise<Brick
   }
 
   const values: Record<string, unknown> = { stage, updatedAt: new Date() };
-  if (stage === 'stored' && !production.endDate) values.endDate = today();
+  if (stage === 'stored') {
+    if (!production.endDate) values.endDate = today();
+    // « Terminée » n'est pas un statut qu'on coche : c'est l'**entrée en stock**
+    // qui le pose. Une fabrication est terminée quand ses briques sont vendables.
+    values.status = 'finished';
+  }
 
   await db.update(brickProductions).set(values as any).where(eq(brickProductions.id, id));
 
   await enqueueSyncWrite('brick_productions', null, 'update', {
     batch_number: production.batchNumber,
     stage,
+    status: values.status ?? production.status,
     stored: storedNow,
   });
 
@@ -1407,7 +1768,15 @@ export async function cancelBrickProduction(
 
   await db
     .update(brickProductions)
-    .set({ notes, deletedAt: new Date(), updatedAt: new Date() })
+    .set({
+      notes,
+      status: 'cancelled',
+      cancelReason: motif,
+      cancelledAt: new Date(),
+      cancelledBy: user?.id ?? null,
+      deletedAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(eq(brickProductions.id, id));
 
   await enqueueSyncWrite('brick_productions', null, 'delete', {

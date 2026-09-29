@@ -25,6 +25,9 @@ npm run verify:routes  # découvre et appelle toutes les pages et routes d'API :
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
 npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
+npm run verify:brick       # briqueterie : dépenses rattachées, coût, stock, canal de vente, commande → facture
+npm run verify:brick:ui    # rend chaque écran de la briqueterie dans Chrome (CDP port 9333)
+npm run db:migrate         # applique les migrations sans démarrer Next (avant les verify:*)
 ```
 
 Les scripts `verify:*` interrogent une application **démarrée** et écrivent dans la base
@@ -99,6 +102,19 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 14. **La marge ne sort jamais d'un document client** : ni PDF, ni image, ni WhatsApp.
     Elle vit dans des zones `no-print` ou des écrans internes — jamais dans
     `InvoiceDocument`, `purchase-document` ni un gabarit d'export (`lib/export-document.ts`).
+15. **Un canal de vente par module.** `sales_invoices.channel` (`general` | `brick`) sépare
+    la liste `/ventes` du commerce général de celle de la briqueterie
+    (`/briqueterie/ventes`). `GET /api/ventes` **sans paramètre** ne renvoie que `general` :
+    ne jamais retirer ce défaut, sinon une vente de briques réapparaîtrait dans `/ventes`.
+    La vente de briques se crée par `/ventes/nouvelle?canal=briqueterie` — **la même page**,
+    pas un second formulaire : elle doit garder stock, caisse, reçu, brouillon et export.
+16. **Briqueterie : pas de module de matières premières.** Le ciment, le sable, le
+    carburant ou la main-d'œuvre sont des lignes de `expenses` avec
+    `reference_type = 'brick_production'` (+ `reference_id` = lot), validées contre
+    `PRODUCTION_EXPENSE_CATEGORIES` (liste métier fermée, distincte de
+    `settings.expenseCategories`). Le coût d'un lot = dépenses rattachées + main-d'œuvre des
+    affectations (+ `brick_production_materials` pour les lots antérieurs). Les **dépenses
+    générales n'entrent jamais** dans un coût de production.
 
 ## Organisation
 
@@ -109,6 +125,8 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 | Authentification des Route Handlers | `requireAction('…')` de `lib/api.ts` dans chaque handler |
 | Journal d'actions | `lib/audit.ts` (+ libellés *client-safe* dans `lib/audit-labels.ts`) |
 | Design system (présentation pure) | `components/design-system.tsx` |
+| **Bénéfice d'une période** (CA, COGS, marge, dépenses, main-d'œuvre) — source unique du tableau de bord, de `/soldes` et de `/rapports` | `lib/profit.ts` |
+| **Briqueterie** : lots et dépenses rattachées, commandes, tableau de bord, rapports et rentabilité | `lib/brick.ts`, `lib/brick-orders.ts`, `lib/brick-analytics.ts` ; écrans `app/briqueterie/*` (onglets : `components/briqueterie/brick-tabs.tsx`) |
 | Listes (tableau desktop / cartes mobile) | `components/responsive-table.tsx` |
 | État de vue des listes (filtres, page) | `lib/view-state.ts` — `sessionStorage`, par entrée d'historique |
 

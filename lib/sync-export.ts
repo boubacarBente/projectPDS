@@ -164,6 +164,21 @@ const SYNC_TABLES: Record<SyncedTable, TableSpec> = {
     refs: { production_id: 'brick_productions', worker_id: 'workers' },
     optionalRefs: ['worker_id'],
   },
+  /*
+   * Commandes de briques (§20). `sales_invoice_id` est une référence
+   * **optionnelle** : une commande non facturée n'a pas de facture, et un poste
+   * peut recevoir la commande avant la facture.
+   */
+  brick_orders: {
+    omit: [],
+    refs: { customer_id: 'customers', user_id: 'users', sales_invoice_id: 'sales_invoices' },
+    optionalRefs: ['customer_id', 'user_id', 'sales_invoice_id'],
+  },
+  brick_order_items: {
+    omit: [],
+    refs: { order_id: 'brick_orders', brick_type_id: 'brick_types', product_id: 'products' },
+    optionalRefs: ['brick_type_id', 'product_id'],
+  },
   furniture_models: { omit: [], refs: {}, optionalRefs: [] },
   furniture_model_materials: {
     omit: [],
@@ -265,7 +280,7 @@ function buildRow(table: SyncedTable, spec: TableSpec, raw: any): SyncRow | null
 }
 
 /**
- * Construit le paquet complet — **30 tables métier** dans l'ordre topologique.
+ * Construit le paquet complet — **32 tables métier** dans l'ordre topologique.
  *
  * Les références sortantes sont résolues à la source : `refs` porte des
  * `sync_id`, ce qui rend le paquet auto-suffisant et transportable vers un
@@ -278,7 +293,7 @@ export async function buildSyncPackage(options: { deviceName?: string } = {}): P
   const counts: Record<string, number> = {};
 
   // Table de correspondance `id local → sync_id`, construite table par table :
-  // une jointure générique sur 30 tables serait illisible et fragile.
+  // une jointure générique sur 32 tables serait illisible et fragile.
   const syncIdMaps = new Map<string, Map<number, string>>();
 
   const getMap = async (table: SyncedTable): Promise<Map<number, string>> => {

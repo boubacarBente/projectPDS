@@ -45,8 +45,8 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 | Version | Contenu |
 |---|---|
 | 1.0 | Première conception : héritage du projet Gaz, modales, paramètres, création de ventes, 18 chapitres du cahier des charges, lots de livraison |
-| **1.1** | **Intégration du schéma de base de données fourni par le client** (`Schema_BDD_Planete_Deco_Sarlu.pdf`). Le schéma client est conservé et corrigé sur **9 points bloquants** (§6.2) : TVA et total HT, échéance de crédit, matières premières de la briqueterie, types et dimensions des briques reliés au stock, fiche modèle et nomenclature des meubles, journal des actions, moyen de paiement et origine sur la caisse, écart de clôture, traçabilité des annulations. Nommage **anglais** (réutilisation du code Gaz) et paramètres **clé/valeur** typés. Schéma cible : **30 tables** (§6.3), avec la liste explicite de ce qu'on refuse de créer (§6.6) |
-| **1.2** | **Synchronisation avec PostgreSQL en ligne, en option** (§23). Deux modes : **A** sauvegarde unidirectionnelle, **B** multi-postes bidirectionnel. Colonnes `sync_id` / `updated_at` / `deleted_at` / `origin_device_id` sur les 30 tables métier + 5 tables locales (§6.7). Traite l'identité globale (UUID), les références entre tables, l'idempotence, les conflits et la **numérotation des factures en multi-postes** (§23.8) |
+| **1.1** | **Intégration du schéma de base de données fourni par le client** (`Schema_BDD_Planete_Deco_Sarlu.pdf`). Le schéma client est conservé et corrigé sur **9 points bloquants** (§6.2) : TVA et total HT, échéance de crédit, matières premières de la briqueterie, types et dimensions des briques reliés au stock, fiche modèle et nomenclature des meubles, journal des actions, moyen de paiement et origine sur la caisse, écart de clôture, traçabilité des annulations. Nommage **anglais** (réutilisation du code Gaz) et paramètres **clé/valeur** typés. Schéma cible : **32 tables** (§6.3, §20), avec la liste explicite de ce qu'on refuse de créer (§6.6) |
+| **1.2** | **Synchronisation avec PostgreSQL en ligne, en option** (§23). Deux modes : **A** sauvegarde unidirectionnelle, **B** multi-postes bidirectionnel. Colonnes `sync_id` / `updated_at` / `deleted_at` / `origin_device_id` sur les 32 tables métier + 5 tables locales (§6.7). Traite l'identité globale (UUID), les références entre tables, l'idempotence, les conflits et la **numérotation des factures en multi-postes** (§23.8) |
 | **1.3** | **Design system et responsive** (§5.3 à §5.5) : jetons de design, règle « aucune couleur en dur », 5 états obligatoires par écran, bibliothèque de composants, **sidebar à 6 groupes et repliable**, contrat responsive par page et **matrice de recette** à 5 colonnes. **Politique de versions** (§4) : installation de la **dernière version stable** de chaque bibliothèque, avec relevé des versions publiées et nommage explicite des écarts de majeure à re-vérifier au lot 0 |
 
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat&logo=next.js)
@@ -189,7 +189,7 @@ Le document `Schema_BDD_Planete_Deco_Sarlu.pdf` (24 tables en français) sert de
 - **9 correctifs obligatoires** appliqués, parce que sans eux des fonctionnalités du cahier des charges sont impossibles : TVA et total HT (§7), échéance de crédit (§7), matières premières de la briqueterie (§17), types et dimensions des briques reliés au stock (§17), fiche modèle et nomenclature des meubles (§18), journal des actions (§12, §14), moyen de paiement et origine sur la caisse (§8), montant théorique et écart de clôture (§8), traçabilité des annulations (§6).
 - **Une incohérence corrigée** : la main-d'œuvre était modélisée de 3 façons différentes selon le module. Elle passe par une **seule table `workers`**.
 
-Le détail complet (correspondance table par table, schéma cible de 30 tables métier, colonnes de synchronisation et ce qu'on refuse de créer) est en [§6](#6-base-de-données).
+Le détail complet (correspondance table par table, schéma cible de 32 tables métier, colonnes de synchronisation et ce qu'on refuse de créer) est en [§6](#6-base-de-données).
 
 ### 3.4 Ce qu'on ne reprend **PAS** du projet Gaz (dette technique identifiée)
 
@@ -562,7 +562,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 **SQLite** via `@libsql/client/sqlite3` + **Drizzle ORM**, fichier unique (`db/database.db` en développement, `%APPDATA%/planete-deco/database.db` en desktop), journalisation **WAL**, verrou de migration et migrations automatiques au démarrage (`db/index.ts`).
 
 > **Le schéma de cette section part du document `Schema_BDD_Planete_Deco_Sarlu.pdf` fourni par le client.**
-> Ce document annonce « 18 tables » : il en contient en réalité **24**. Quatre fonctionnalités exigées par le cahier des charges y sont impossibles en l'état (§7 TVA/HT et échéancier, §17 matières premières et dimensions des briques, §18 fiche modèle et nomenclature, §12/§14 journal des actions). Le schéma client est donc **conservé dans sa structure**, corrigé sur **9 points** et aligné sur les conventions de nommage du projet Gaz → **30 tables métier**, plus les **colonnes de synchronisation** (§6.7) et **5 tables locales de synchronisation** ([§23](#23-synchronisation-avec-postgresql-option-en-ligne)).
+> Ce document annonce « 18 tables » : il en contient en réalité **24**. Quatre fonctionnalités exigées par le cahier des charges y sont impossibles en l'état (§7 TVA/HT et échéancier, §17 matières premières et dimensions des briques, §18 fiche modèle et nomenclature, §12/§14 journal des actions). Le schéma client est donc **conservé dans sa structure**, corrigé sur **9 points** et aligné sur les conventions de nommage du projet Gaz → **32 tables métier**, plus les **colonnes de synchronisation** (§6.7) et **5 tables locales de synchronisation** ([§23](#23-synchronisation-avec-postgresql-option-en-ligne)).
 
 ### 6.1 Décisions structurantes (v1.2)
 
@@ -575,7 +575,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | **Correction de stock** | `stock_movements.type = 'adjustment'` stocke un **écart (+/−)**, pas la valeur absolue | Garantit l'invariant « somme des mouvements = stock courant ». Conforme à §4 « inventaire et correction de stock » |
 | **Dates** | `date` = `YYYY-MM-DD` (date métier, **seule filtrée**) + `created_at` = horodatage (traçabilité seule) | Évite le bug de comparaison de chaînes décrit en §6.5 |
 | **Main-d'œuvre** | **Une seule table `workers`**, référencée par les 3 modules (chantiers, briqueterie, atelier) | Corrige une incohérence du schéma client, qui modélisait le même réel de 3 façons différentes |
-| **Synchronisation en ligne** | **Option désactivée par défaut** : PostgreSQL distant, en **deux modes** (A sauvegarde unidirectionnelle, B multi-postes). Colonnes `sync_id` (UUID), `updated_at`, `deleted_at`, `origin_device_id` sur les 30 tables métier + 5 tables locales | Rend la synchronisation possible **sans réécrire** le modèle. Le mode A est un prérequis du mode B. Détail complet en [§23](#23-synchronisation-avec-postgresql-option-en-ligne) |
+| **Synchronisation en ligne** | **Option désactivée par défaut** : PostgreSQL distant, en **deux modes** (A sauvegarde unidirectionnelle, B multi-postes). Colonnes `sync_id` (UUID), `updated_at`, `deleted_at`, `origin_device_id` sur les 32 tables métier + 5 tables locales | Rend la synchronisation possible **sans réécrire** le modèle. Le mode A est un prérequis du mode B. Détail complet en [§23](#23-synchronisation-avec-postgresql-option-en-ligne) |
 
 ### 6.2 Correspondance schéma client → schéma cible
 
@@ -610,7 +610,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | `rapports_envoyes` | `report_deliveries` | + `from_date` / `to_date` (quelle période a été envoyée), `triggered_by` (`auto` / `manual`), `error`, `user_id` |
 | `parametres` (clé/valeur) | `settings` (clé/valeur) | Structure conservée · + `updated_at` · + couche typée `lib/settings.ts` |
 
-### 6.3 Tables cibles métier (30)
+### 6.3 Tables cibles métier (32)
 
 #### Utilisateurs et traçabilité
 
@@ -684,6 +684,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 | `payment_status` | text | `paid` \| `partial` \| `unpaid` |
 | `payment_method` | text | Moyen **principal** — le détail est dans `payments` |
 | `status` | text | `active` \| `cancelled` (§6 annulation selon autorisation) |
+| `channel` | text | **`general` \| `brick`** (§20) — un module, une liste : `/ventes` ne montre que `general`, la briqueterie que `brick` |
 | `cancel_reason`, `cancelled_by`, `cancelled_at` | text / int / timestamp | Traçabilité de l'annulation |
 | `notes` | text | |
 | `created_at`, `updated_at` | timestamp | |
@@ -699,8 +700,9 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 `id`, `invoice_id`, `product_id`, `product_name`, `unit`, `quantity` (real), `unit_price`, `amount`
 
 **`payments`** — encaissements, décaissements et reçus (§7)
-`id`, `receipt_number` (**unique**, préfixe configurable), `type` (`sale` \| `purchase` \| `service_job`), `reference_id`, `amount`, `payment_method`, `payment_label` (`deposit` \| `balance` \| `full` — acompte / solde / intégral, §7), `date`, `notes`, `user_id`, `created_at`
+`id`, `receipt_number` (**unique**, préfixe configurable), `type` (`sale` \| `purchase` \| `service_job` \| **`brick_order`**), `reference_id`, `amount`, `payment_method`, `payment_label` (`deposit` \| `balance` \| `full` — acompte / solde / intégral, §7), `date`, `notes`, `user_id`, `created_at`
 > Alimente l'**échéancier de crédit** et permet la **réimpression du reçu** après chaque paiement. ⚠️ `reference_id` n'est pas une clé étrangère : l'intégrité est assurée dans `lib/payments.ts`.
+> `brick_order` (§20) : l'acompte d'une **commande de briques**. À la facturation de la commande, ces lignes sont **repointées** vers la facture de vente (`type = 'sale'`, `reference_id` = facture) : même reçu, même mouvement de caisse, jamais comptés deux fois. La colonne étant un `text` sans contrainte `CHECK`, cette valeur n'a demandé **aucune migration**.
 
 #### Caisse et dépenses
 
@@ -714,6 +716,7 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 **`expenses`** (§9)
 `id`, `category` (transport, loyer, salaire, carburant, électricité… — **liste fermée** dans les paramètres), `amount`, `description`, `payment_method`, `reference_type` / `reference_id`, `date`, `user_id`, `created_at`
 > Une dépense **sort de la caisse** (`cash_movements`) et **n'affecte pas le stock** — contrairement à un achat (§5).
+> **Deux portées depuis la v5 (§20)** : `reference_type = 'expense'` (ou `null`) = **dépense générale** (frais de fonctionnement, `/depenses`) ; `reference_type = 'brick_production'` + `reference_id` = **dépense rattachée à un lot de briqueterie**, validée contre la liste fermée métier (`PRODUCTION_EXPENSE_CATEGORIES`) et sommée dans le coût de production. Les filtres `?scope=general|production` séparent les deux.
 
 #### Prestations et main-d'œuvre
 
@@ -737,15 +740,25 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 **`brick_types`**
 `id`, `product_id` (FK → `products` : **c'est lui qui porte le stock et le prix de vente**), `name`, `shape` (`solid` \| `hollow` \| `block`), `dimensions`, `is_active`
 
-**`brick_productions`**
-`id`, `batch_number` (unique), `brick_type_id`, `planned_quantity`, `produced_quantity`, `broken_quantity`, `start_date`, `end_date`, `stage` (`molding` \| `drying` \| `firing` \| `stored`), `material_cost`, `labor_cost`, `total_cost`, `user_id`, `notes`, `created_at`
-> **Coût de revient unitaire** = `total_cost ÷ (produced_quantity − broken_quantity)` — calculé par `lib/cost-calculator.ts`, jamais stocké.
+**`brick_productions`** — la fiche de fabrication
+`id`, `batch_number` (unique), `brick_type_id`, `planned_quantity`, `produced_quantity`, `broken_quantity`, `start_date`, `end_date`, `stage` (`molding` \| `drying` \| `firing` \| `stored`), **`status`** (`registered` \| `finished` \| `cancelled`), **`team`** (équipe ou responsable), `material_cost`, `labor_cost`, **`expense_cost`**, `total_cost`, **`cancel_reason` / `cancelled_by` / `cancelled_at`**, `user_id`, `notes`, `created_at`
+> **Coût de revient unitaire** = `total_cost ÷ (produced_quantity − broken_quantity)` — calculé par `lib/brick.ts`, **jamais stocké**.
+> `total_cost` = `material_cost` (lots antérieurs) + `labor_cost` (affectations `days × daily_rate`) + **`expense_cost`** (somme des dépenses rattachées, §20). `status = 'finished'` est posé par l'entrée en stock, `cancelled` accompagne toujours le tombstone `deleted_at`.
 
-**`brick_production_materials`** — **la table qui manquait**
-`id`, `production_id`, `product_id` (argile, ciment, sable, eau, **bois de chauffe**), `quantity`, `unit_cost`, `amount`
+**`brick_production_materials`** — **héritage** (§20)
+`id`, `production_id`, `product_id`, `quantity`, `unit_cost`, `amount`
+> Table conservée pour les lots saisis **avant** la révision §20 : leur coût historique reste compté et la fiche les affiche en lecture seule. Les nouvelles saisies passent par les **dépenses rattachées** (`expenses.reference_type = 'brick_production'`) : il n'y a plus de module de matières premières.
 
 **`brick_production_workers`**
 `id`, `production_id`, `worker_id` (nullable), `worker_name`, `days`, `daily_rate`, `amount`
+
+**`brick_orders`** — commandes clients de briques (§20)
+`id`, `order_number` (unique, `BCM-AAAA-NNNNNN`), `customer_id`, `customer_name`, `user_id`, `date`, `due_date`, `delivery_date`, `promised_date`, `sub_total`, `discount`, `total`, `amount_paid`, `remaining_amount`, `payment_status`, `status` (`draft` \| `confirmed` \| `in_production` \| `ready` \| `partially_delivered` \| `delivered` \| `cancelled`), `sales_invoice_id` (facture née de la commande), `cancel_reason` / `cancelled_by` / `cancelled_at`, `notes`, `created_at`
+> La commande **ne touche ni le stock ni la caisse** : elle est facturée (`POST` action `invoice`), et c'est la facture du canal `brick` qui sort le stock. Les transitions de statut sont contrôlées côté serveur (`STATUS_TRANSITIONS`), pas seulement dans l'interface.
+
+**`brick_order_items`**
+`id`, `order_id`, `brick_type_id`, `product_id`, `product_name`, `unit`, `quantity`, `unit_price`, `discount`, `amount`, `delivered_quantity`
+> Instantané du nom et de l'unité (§6.5 règle 5) ; `delivered_quantity` alimente le suivi « partiellement livrée ».
 
 #### Atelier de meubles (§18)
 
@@ -790,6 +803,7 @@ Comme dans Gaz, les relations sont déclarées dans `db/schema.ts` et les requê
 - `service_jobs → customers` (1-1) + `service_job_materials` / `service_job_workers` (1-N)
 - `workers → service_job_workers` / `brick_production_workers` / `furniture_order_workers` (1-N)
 - `brick_types → products` (1-1), `brick_productions → brick_types` (1-1) + `brick_production_materials` / `brick_production_workers` (1-N)
+- `brick_orders → customers` (1-1) + `brick_order_items` (1-N) ; `brick_order_items → brick_types` / `products` (1-1)
 - `furniture_orders → furniture_models` / `customers` (1-1) + `furniture_order_materials` / `furniture_order_workers` (1-N)
 - `furniture_models → furniture_model_materials` (1-N)
 
@@ -822,7 +836,7 @@ Comme dans Gaz, les relations sont déclarées dans `db/schema.ts` et les requê
 
 ### 6.7 Colonnes de synchronisation (option PostgreSQL)
 
-Chaque table métier reçoit **quatre colonnes** dès le lot 0, même si la synchronisation reste désactivée : les ajouter plus tard obligerait à migrer 30 tables sur des postes déjà en production.
+Chaque table métier reçoit **quatre colonnes** dès le lot 0, même si la synchronisation reste désactivée : les ajouter plus tard obligerait à migrer 32 tables sur des postes déjà en production.
 
 | Colonne | Type | Rôle |
 |---|---|---|
@@ -841,6 +855,14 @@ Le mode A (sauvegarde unidirectionnelle) et le mode B (multi-postes) sont décri
 ### 7.1 Tableau de bord (§1)
 Ventes du jour / semaine / mois · Chiffre d'affaires et **bénéfice estimé** · **Montant disponible en caisse** · **Clients débiteurs** et **dettes fournisseurs** · Produits en **stock faible ou en rupture** · Produits les plus vendus · Dernières opérations.
 Reprise du composant `MetricCard` + graphiques Chart.js de Gaz, avec filtres de période `aujourd'hui / semaine / mois / année / total` (comme `/rapports`).
+
+**Le chiffre d'affaires et le bénéfice du tableau de bord sont ceux du §15** : ils viennent de `getPeriodResult()` (`lib/profit.ts`), **la même fonction que `/soldes`** — CA HT des ventes **+ prestations de chantier**, coût des marchandises (matériaux des chantiers inclus), dépenses non annulées et main-d'œuvre. Pour une même période, les deux écrans affichent donc exactement le même montant, et la comparaison « vs période précédente » porte sur la grandeur affichée.
+
+Auparavant chacun portait sa formule, et elles divergeaient : le tableau de bord ignorait entièrement les chantiers, sommait les dépenses annulées (tombstone `deleted_at` non filtré) et rapportait une marge **TTC** à des coûts **HT**. Mesuré sur la base de recette, il annonçait **−2 389 000 GNF** là où `/soldes` annonçait **+2 535 000 GNF** pour le même mois — une perte d'un côté, un bénéfice de l'autre. Un montant recalculé à deux endroits finit toujours par diverger : il n'y a plus qu'un seul calcul.
+
+⚠️ Le sélecteur de période ne s'applique qu'aux **flux** (chiffre d'affaires, bénéfice). Les **créances clients** et les **dettes fournisseurs** sont des **photos** à la date du jour : elles ne bougent pas quand on change de période, et c'est voulu — un solde n'est pas un flux de période.
+
+**Chaque pastille porte son explication.** Les cinq cartes de métriques, les six postes de la « Composition du bénéfice » et l'en-tête de chaque section sont des commandes d'infobulle : le curseur passe en main (`cursor-pointer`), et la bulle s'ouvre **immédiatement** au survol comme au focus clavier (Échap la referme) — même composant et même motif que la fiche client (§7.2). Les textes sont regroupés en tête de `app/page.tsx` dans trois constantes, clés = libellés affichés (`METRIC_TOOLTIPS`, `PROFIT_CHIP_TOOLTIPS`, `CARD_TOOLTIPS`), pour qu'on les relise tous d'un coup d'œil : une explication qui dérive du calcul est un mensonge affiché. « Bénéfice net estimé » y détaille la soustraction (CA − coût des marchandises − dépenses − main-d'œuvre), dit que les prestations de chantier sont **incluses** dans le chiffre d'affaires et leurs matériaux dans le coût, rappelle que le montant est celui de `/soldes`, et pourquoi le mot « estimé » (le coût est le prix d'achat **actuel**, pas celui du jour de la vente, Q20). Les trois pastilles « photo » (caisse, créances, dettes) précisent qu'elles ne dépendent pas de la période choisie.
 
 ### 7.2 Clients (§2)
 Ajouter, modifier, rechercher · Nom, téléphone, adresse, informations utiles · **Historique complet des achats** · **Montant payé et restant à payer** · **Ventes à crédit** · **Enregistrement des paiements** · **Liste des clients débiteurs** · **Export de la fiche client (PDF, image, WhatsApp)**.
@@ -1367,6 +1389,8 @@ Les deux alimentent le **bénéfice net** (§10) et les **rapports par période*
 
 **Confidentialité du bénéfice** : coût et bénéfice sont des **données financières sensibles**. Le serveur ne les renseigne que pour un utilisateur détenant `balances.view` (`canViewSalesProfit()` dans `lib/sales.ts`) : sans ce droit, `cost` et `profit` valent `null` dans `GET /api/ventes` et `GET /api/ventes/[id]`, la colonne « Bénéfice » et le bloc de la fiche facture disparaissent. Masquer ne suffit pas — le serveur reste seul juge (§9). À noter : dans la matrice livrée, le rôle **Vendeur/Caissier** détient déjà `balances.view` (il voit `/soldes`), il voit donc aussi le bénéfice.
 
+**Un seul foyer de calcul.** Le tableau de bord (§7.1) et `/soldes` (§7.10) appellent tous deux `getPeriodResult()` de **`lib/profit.ts`** : il n'existe qu'**une** définition du bénéfice net dans l'application. Le même module porte le COGS, `calculateSalesProfitMetrics()` et `getProductMargins()`, utilisés par `/rapports` et par la colonne « Bénéfice » des ventes. Toute variante locale est un défaut, pas une optimisation : elle a déjà produit deux bénéfices contradictoires pour la même période.
+
 Reprise de `calculateSalesProfitMetrics()` (Gaz) et de la structure `RapportData` (`lib/rapports-types.ts`) : `summary`, `comparison`, `monthlyData`, `soldByProduct`, `productMargins`, `topCustomers`, `receivables`, `payables`, `stockInsights`, `decisionSummary` — complétés par `expenses`, `netProfit` et `jobCosts`.
 
 ---
@@ -1529,18 +1553,86 @@ pas la donnée — c'est le périmètre retenu, et il couvre le besoin exprimé.
 
 ## 20. Gestion de la briqueterie
 
+**Révision majeure (v1.4)** : le client a demandé la suppression de tout **module
+de matières premières**. Le ciment, le sable, le carburant ou la main-d'œuvre ne
+sont plus des produits du stock : ce sont des **dépenses rattachées à une
+fabrication**, saisies dans la fiche du lot. Les dépenses qui ne concernent aucune
+fabrication restent des **dépenses générales**, dans `/depenses`.
+
+### 20.1 Les six écrans du module
+
+Le module est **un seul** point du menu latéral (`/briqueterie`, permission
+`brick.view`) ; ses écrans sont regroupés par une barre d'onglets
+(`components/briqueterie/brick-tabs.tsx`) plutôt que par six entrées de plus.
+
+| Écran | Contenu |
+|---|---|
+| `/briqueterie` | **Tableau de bord** : production du jour/semaine/mois, quantité produite par produit, stock actuel, ventes du jour/mois/année, encaissé et reste à recevoir, dépenses de production **et** générales, chiffre d'affaires et bénéfice estimé, commandes par statut, alertes de stock faible, trois graphiques sur 30 jours |
+| `/briqueterie/productions` | Liste des lots (filtres type / étape / **statut** / période), rapport fabriquées-cassées-vendues par type, création d'un lot, gestion des types de briques |
+| `/briqueterie/[id]` | **Fiche de fabrication** : dépenses rattachées, équipe, pertes, coût total et coût unitaire, avancement, historique et traçabilité |
+| `/briqueterie/stock` | Stock des produits finis, seuils, valeur, **ajustement motivé** et historique des mouvements |
+| `/briqueterie/commandes` · `/briqueterie/commandes/[id]` | Commandes clients : lignes, remise, acompte, statuts, livraisons, facturation |
+| `/briqueterie/ventes` | Ventes de briques (canal `brick`) : liste, brouillons, encaissements, annulations — mêmes écrans que `/ventes/[id]` pour le détail, le reçu et l'export |
+| `/briqueterie/rapports` | Rapports et **rentabilité** de la période, export PDF / image / WhatsApp / CSV (Excel) |
+
+### 20.2 Correspondance exigence → mise en œuvre
+
 | Exigence (§17) | Mise en œuvre |
 |---|---|
-| Stock des matières premières : argile/terre, ciment, sable, eau, **bois de chauffe** | Produits dont la catégorie porte `kind = 'raw_material'` — **un seul moteur de stock** |
-| Chaque type de brique + dimensions | `brick_types` (`shape`, `dimensions`) + `products` lié par `product_id` : c'est le produit qui porte le **prix de vente et le stock** |
-| **Lancement d'une fabrication** : date, quantité prévue, ouvriers affectés | `brick_productions` + `brick_production_workers` |
-| **Étapes** : moulage → séchage au soleil → cuisson au four → mise en stock | `stage` (`molding` \| `drying` \| `firing` \| `stored`) avec avancement visuel |
-| **Main-d'œuvre** (ouvriers journaliers, apprentis) par production | `brick_production_workers` (`days` × `daily_rate` = `amount`), ouvrier pris dans `workers` ou saisi à la volée |
-| **Matières premières consommées déduites du stock** | `brick_production_materials` → mouvements `exit` (`reference_type = 'brick_production'`) |
-| **Briques cassées / ratées** | `broken_quantity` + un mouvement `exit` avec motif explicite (`"briques cassées lot #3"`) |
-| **Coût de revient d'une brique** | `lib/cost-calculator.ts` : (`material_cost` + `labor_cost`) ÷ (`produced_quantity` − `broken_quantity`) — calculé, jamais stocké |
-| **Stock de briques prêtes à vendre, par type** | Mouvement `entry` sur `products.stock` à l'étape `stored` |
-| Rapport jour / semaine / mois : fabriquées, cassées, vendues | Section dédiée dans `/briqueterie` + `/rapports` |
+| **Pas de module de matières premières** : les dépenses sont saisies dans la production | Table `expenses` avec `reference_type = 'brick_production'` + `reference_id` = lot. Catégories **fermées** métier (`PRODUCTION_EXPENSE_CATEGORIES` : ciment, sable, argile, bois de chauffe, carburant, main-d'œuvre, électricité, eau, transport, entretien, autre) — distinctes de `settings.expenseCategories` |
+| Chaque dépense **sort de la caisse** | `lib/expenses.ts` : `createExpense` écrit un `cash_movements` ; l'annulation le contre-passe. Une dépense de production suit donc exactement le même chemin qu'une dépense générale |
+| Dépenses **hors production** | `/depenses` (mode `?scope=general`) : les frais de fonctionnement. `?scope=production` montre l'autre portée |
+| Fiche de production : numéro automatique, date, produit, quantité, équipe, observations, statut | `brick_productions` (`batch_number` `BRI-AAAA-NNNNNN`, `start_date`/`end_date`, `brick_type_id`, `produced_quantity`, `team`, `notes`, **`status`** `registered` \| `finished` \| `cancelled`) |
+| Liste des dépenses rattachées, coût total et coût unitaire automatiques | `GET /api/briqueterie/productions/[id]` renvoie `expenses` et `costs` ; le coût unitaire = `total_cost ÷ (produced − broken)` est **calculé, jamais stocké** (§6.5 règle 6) |
+| Ajout automatique de la quantité produite au stock | Étape `stored` : `advanceStage()` est la **seule** fonction qui crédite le stock, avec deux verrous (transitions strictement croissantes + absence d'un `entry` existant) — vérifié par `npm run verify:brick` |
+| Gestion des produits fabriqués (créer, modifier, désactiver, consulter) | `brick_types` + `products` lié par `product_id` : le produit porte l'unité, le prix de vente, le **stock** et le **seuil minimum** |
+| Stock de produits finis (entrée auto, sortie à la vente, ajustement motivé, historique, alertes, pertes) | `stock_movements` (moteur unique, §12) ; ajustement par `POST /api/stocks/adjust` (motif obligatoire) ; pertes par `register_broken()` (mouvement `exit` motivé, jamais un type « perte ») |
+| Commandes : plusieurs produits, remise, avance, reste, statuts, historique, facture/reçu | `brick_orders` + `brick_order_items` ; statuts `draft → confirmed → in_production → ready → partially_delivered → delivered` (transitions contrôlées côté serveur) ; l'acompte est un `payments` de type `brick_order` ; **facturer** crée la vente du canal `brick` |
+| Paiements et encaissements (comme le commerce général) | Moteur unique `lib/payments.ts` : reçu numéroté, caisse, reste recalculé depuis les paiements. À la facturation, les acomptes sont **transférés** sur la facture (mêmes reçus, même caisse) — jamais comptés deux fois |
+| Ventes de briques **invisibles** dans `/ventes` | Colonne `sales_invoices.channel` (`general` \| `brick`). `/api/ventes` ne renvoie que `general` par défaut ; la briqueterie passe `?channel=brick`. Le bouton « Nouvelle vente » du module ouvre `/ventes/nouvelle?canal=briqueterie` : **mêmes fonctionnalités** (stock, remises, TVA, acompte, reçu, brouillon, paiements, export), catalogue restreint aux produits de briques |
+| Rentabilité : coût total, coût unitaire, chiffre d'affaires, marge brute, résultat estimé | `lib/brick-analytics.ts` : tous les indicateurs sont **calculés à la lecture** depuis les lots, les dépenses, les ventes du canal `brick` et les encaissements |
+| Rapports : production, dépenses, ventes, créances, paiements, stock, pertes, rentabilité, export PDF/Excel | `/briqueterie/rapports` + `GET /api/briqueterie/rapports?from=&to=` (11 sections) ; export PDF/image/WhatsApp par `lib/export-document.ts` et **CSV (Excel)** avec BOM UTF-8 et séparateur `;` |
+| Historique et traçabilité | `audit_logs` : chaque écriture journalise auteur, date et détails. `GET /api/briqueterie/historique?entity=&entityId=` les expose sous `brick.view` (sans donner accès au journal complet, qui exige `audit.view`). Aucune suppression physique : `status = 'cancelled'` + motif + auteur + date |
+| Montants en GNF, dates locales, interface simple, confirmation des opérations sensibles | `MoneyText` / `formatCurrency`, `lib/date-format.ts`, design system (§5.3), `ConfirmDialog` sur chaque action irréversible |
+
+### 20.3 Décisions de conception à connaître
+
+1. **Pourquoi réutiliser `expenses` plutôt que créer une table de dépenses de
+   production** : un seul moteur de sortie de caisse, une seule annulation
+   motivée, une seule file de synchronisation, un seul rapport par catégorie. La
+   portée (`general` / `production`) est une **origine**, pas un type de dépense.
+2. **Le coût de production ne contient jamais les dépenses générales** : un loyer
+   ne doit pas augmenter le prix de revient d'une brique. C'est ce qui rend
+   `resultat = chiffre d'affaires − coût des briques − dépenses générales`
+   interprétable.
+3. **`material_cost` et `brick_production_materials` subsistent** pour les lots
+   saisis avant la révision : leur coût historique reste compté, et la fiche
+   affiche ces lignes en lecture seule. Les nouvelles saisies passent par les
+   dépenses.
+4. **La commande ne touche pas au stock** : c'est la **facture** qui le sort. Une
+   commande est un engagement commercial ; le choix de workflow est explicitement
+   autorisé par le cahier des charges (« sortie automatique lors d'une vente ou
+   livraison **selon le workflow choisi** »).
+5. **Une brique vendue au comptoir du commerce général reste une vente `general`**
+   : le canal est porté par la facture, pas par le produit. C'est ce qui garantit
+   qu'une liste ne « perd » jamais une vente — elle est simplement dans l'autre
+   liste.
+6. **Limite connue, à traiter hors du module** : la marge **globale** (`/`, `/soldes`,
+   `/rapports`) lit le coût des marchandises vendues sur `products.purchase_price`
+   (§15, Q20). Une brique n'étant pas achetée, elle y sort à un coût nul : ces écrans
+   présentent donc une marge de 100 % sur les ventes de briques. Le **tableau de bord et
+   les rapports de la briqueterie, eux, utilisent le vrai coût de production** (dépenses
+   rattachées ÷ briques bonnes). Faire converger les deux demande de calculer le coût des
+   briques vendues depuis les lots dans `lib/profit.ts` — hors périmètre de cette
+   révision, et à décider avec le client (impact sur la marge affichée du commerce
+   général).
+
+### 20.4 Vérification
+
+```bash
+npm run verify:brick       # 44 contrôles de bout en bout (dépenses, stock, canal, commande, acompte, refus)
+npm run verify:brick:ui    # rendu réel des écrans dans Chrome (CDP port 9333), zéro erreur console
+```
 
 ---
 
@@ -1604,7 +1696,7 @@ Le mode A est le **prérequis technique** du mode B : les deux partagent le clie
 ```
    POSTE 1 (Electron + SQLite)                                  ┌──────────────────────┐
    ┌───────────────────────────┐                                │   PostgreSQL (en ligne)│
-   │ app Next.js locale        │       HTTPS + jeton appareil   │   30 tables métier    │
+   │ app Next.js locale        │       HTTPS + jeton appareil   │   32 tables métier    │
    │  └── lib/sync-client.ts ──┼───────────────────────────────▶│   + devices           │
    │  └── lib/sync-apply.ts    │◀───────────────────────────────┤   + sync_batches      │
    │  └── SQLite (source de    │       lots JSON idempotents    │   + sync_conflicts    │
@@ -1636,7 +1728,7 @@ Chaque table métier reçoit **quatre colonnes** (c'est le coût réel de la syn
 | `deleted_at` | timestamp, nullable | **Tombstone**. Sans lui, une ligne supprimée sur un poste **ressusciterait** au prochain pull. Aucune suppression physique sur une table synchronisée |
 | `origin_device_id` | text | Traçabilité : quel poste a écrit cette ligne |
 
-> Le `id` entier **reste la clé primaire locale** (aucune réécriture des 30 tables ni de l'interface) ; `sync_id` est la clé **globale**. Une table locale `sync_refs` sert de cache de correspondance `sync_id ⇄ id`.
+> Le `id` entier **reste la clé primaire locale** (aucune réécriture des 32 tables ni de l'interface) ; `sync_id` est la clé **globale**. Une table locale `sync_refs` sert de cache de correspondance `sync_id ⇄ id`.
 
 **Bonne nouvelle structurelle** : la quasi-totalité du schéma est **append-only** — `stock_movements`, `payments`, `audit_logs`, `report_deliveries`. Ces tables ne peuvent **pas** entrer en conflit : il n'y a rien à arbitrer. Les seules tables réellement conflictuelles sont les documents modifiables (`sales_invoices`, `purchase_invoices`, `products`, `customers`, `service_jobs`, `furniture_orders`, `brick_productions`, `cash_sessions`) — une dizaine sur trente.
 
@@ -1775,7 +1867,7 @@ Toutes les autres clés de `settings` (identité de l'entreprise, logo, NIF, pr�
 
 ### 23.13 Tables, dépendances et scripts ajoutés
 
-**Tables locales (SQLite) — 30 tables métier + 5 tables de synchronisation = 35**
+**Tables locales (SQLite) — 32 tables métier + 5 tables de synchronisation = 37**
 
 | Table | Rôle |
 |---|---|
@@ -1785,7 +1877,7 @@ Toutes les autres clés de `settings` (identité de l'entreprise, logo, NIF, pr�
 | `sync_pending` | Lignes reçues en **quarantaine** (référence parente manquante) |
 | `sync_conflicts` | Conflits à trancher (table, sync_id, version locale, version distante, résolu le) |
 
-**Tables PostgreSQL (serveur) — 30 tables métier + 3 tables techniques = 33**
+**Tables PostgreSQL (serveur) — 32 tables métier + 3 tables techniques = 35**
 Table `devices`, `sync_batches` (journal des lots), `sync_conflicts`. Les tables métier sont **identiques** (mêmes noms, mêmes colonnes, `sync_id` en clé primaire, `id` local non significatif côté serveur) + `tenant_id`.
 
 **Dépendances ajoutées** (uniquement côté serveur — **le poste n'ajoute aucune dépendance**, il utilise `fetch`) :
@@ -1823,7 +1915,7 @@ npm run sync:build       # Construire l'API de synchronisation
 |---|---|---|
 | **D1** | Nommage des tables et colonnes | **Anglais**, conventions du projet Gaz → code existant réutilisable (§3.3) |
 | **D2** | Stockage des paramètres | **Clé/valeur** + couche typée `lib/settings.ts` (§9) |
-| **D3** | Schéma de base de données | **Schéma client conservé et corrigé** : 9 correctifs, 30 tables (§6) |
+| **D3** | Schéma de base de données | **Schéma client conservé et corrigé** : 9 correctifs, 32 tables (§6) |
 | **D4** | Synchronisation PostgreSQL | **Optionnelle, désactivée par défaut**, en deux modes A (sauvegarde) et B (multi-postes) ; le SQLite local reste la source de vérité (§23) |
 
 ### Questions ouvertes
@@ -1869,7 +1961,7 @@ npm run sync:build       # Construire l'API de synchronisation
 
 | Lot | Contenu | Chapitres | Livrable | État |
 |---|---|---|---|---|
-| **Lot 0 — Socle** | Projet Next.js + Electron, **design system** (jetons, composants, sidebar à 6 groupes et repliable, responsive, 5 états), **dépendances installées en dernière version** avec les 6 vérifications de compatibilité du §4.5, DB + migrations **incluant les colonnes de synchronisation** (`sync_id`, `updated_at`, `deleted_at`, `origin_device_id` — les ajouter plus tard obligerait à migrer 30 tables en production, §6.7), authentification, rôles, AppShell, modales, paramètres, thème, retour arrière, exports | 12, 13, 14 (partie) | Application installable, vide mais navigable **et déjà à la charte** | ✅ **livré** |
+| **Lot 0 — Socle** | Projet Next.js + Electron, **design system** (jetons, composants, sidebar à 6 groupes et repliable, responsive, 5 états), **dépendances installées en dernière version** avec les 6 vérifications de compatibilité du §4.5, DB + migrations **incluant les colonnes de synchronisation** (`sync_id`, `updated_at`, `deleted_at`, `origin_device_id` — les ajouter plus tard obligerait à migrer 32 tables en production, §6.7), authentification, rôles, AppShell, modales, paramètres, thème, retour arrière, exports | 12, 13, 14 (partie) | Application installable, vide mais navigable **et déjà à la charte** | ✅ **livré** |
 | **Lot 1 — Cœur commercial** | Dashboard, clients, fournisseurs, produits/catégories, stocks, achats, ventes, factures/reçus, caisse de base | 1 → 7 | **Utilisable au quotidien** | ✅ **livré** |
 | **Lot 2 — Gestion financière** | Caisse complète (ouverture/clôture), dépenses, soldes/dettes/bénéfices, rapports + export, envoi SMS/WhatsApp, utilisateurs + audit, sauvegarde/restauration | 8 → 14 | **Version 1.0 livrable** | ✅ **livré** |
 | **Lot 3 — Prestations et briqueterie** | Chantiers (devis, suivi, équipes, facturation), briqueterie (matières, lots, étapes, coût de revient, pertes) | 16, 17 | Version 1.1 | ✅ **livré** |
@@ -1939,7 +2031,12 @@ npm run sync:build       # Construire l'API de synchronisation
 | `/parametres` | Paramètres, sauvegarde, restauration | 1 → 2 |
 | `/login` | Connexion / premier administrateur | 0 |
 | `/chantiers` · `/chantiers/[id]` · `/chantiers/devis/[id]` | Prestations | 3 |
-| `/briqueterie` · `/briqueterie/[id]` | Fabrication de briques | 3 |
+| `/briqueterie` | **Tableau de bord** de la briqueterie (§20.1) | 3 → 5 |
+| `/briqueterie/productions` · `/briqueterie/[id]` | Lots de fabrication : liste, fiche (dépenses rattachées, équipe, coût de revient) | 3 → 5 |
+| `/briqueterie/stock` | Stock des produits finis, seuils, ajustement motivé, mouvements | 5 |
+| `/briqueterie/commandes` · `/briqueterie/commandes/[id]` | Commandes clients de briques, acomptes, livraisons, facturation | 5 |
+| `/briqueterie/ventes` | Ventes de briques (canal `brick`) — détail, reçu et export via `/ventes/[id]` | 5 |
+| `/briqueterie/rapports` | Rapports et rentabilité de la briqueterie, exports PDF/image/WhatsApp/CSV | 5 |
 | `/atelier` · `/atelier/modeles` · `/atelier/[id]` | Atelier de meubles | 4 |
 | `/synchronisation` | État, journal, conflits, appareils, export/import manuel ([§23.10](#2310-écran-synchronisation)) | 6 |
 
@@ -1967,12 +2064,12 @@ npm run sync:build       # Construire l'API de synchronisation
 | Ouvriers | `GET|POST /api/workers` · `GET|PUT|DELETE /api/workers/[id]` — **table unique** partagée par les chantiers, la briqueterie et l'atelier |
 | Stocks | `GET /api/stocks` · `GET /api/stocks/mouvements` · `POST /api/stocks/adjust` · `GET /api/stocks/summary` |
 | Achats | `GET|POST /api/achats` · `GET|PUT|DELETE /api/achats/[id]` · `GET /api/achats/stats` (`?supplierId=` pour la fiche fournisseur) |
-| Ventes | `GET|POST /api/ventes` · `GET|PUT|DELETE /api/ventes/[id]` · `POST /api/ventes/[id]/valider` · `POST /api/ventes/[id]/annuler` · `GET /api/ventes/stats` |
+| Ventes | `GET|POST /api/ventes` · `GET|PUT|DELETE /api/ventes/[id]` · `POST /api/ventes/[id]/valider` · `POST /api/ventes/[id]/annuler` · `GET /api/ventes/stats` — `?channel=general\|brick\|all` : sans paramètre, la liste ne renvoie que le **commerce général** (§20) |
 | Paiements | `GET|POST /api/paiements` · `GET /api/paiements/[id]` (reçu) · `GET /api/recus` (registre des reçus, document + tiers résolus) |
-| Dépenses | `GET|POST /api/depenses` · `GET|PUT|DELETE /api/depenses/[id]` · `GET /api/depenses/stats` |
+| Dépenses | `GET|POST /api/depenses` · `GET|PUT|DELETE /api/depenses/[id]` · `GET /api/depenses/stats` — `?scope=general\|production` sépare les frais de fonctionnement des dépenses rattachées à un lot (§20) |
 | Caisse | `GET|POST /api/caisse` (mouvements + résumé, mouvement manuel) · `GET /api/caisse/sessions` (session ouverte, historique, résumé) · `POST /api/caisse/sessions` (ouverture) · `PUT /api/caisse/sessions` (clôture) |
 | Chantiers | `GET|POST /api/chantiers` · `GET|PUT|DELETE /api/chantiers/[id]` · `PUT /api/chantiers/[id]/devis` · `GET|POST|DELETE /api/chantiers/[id]/materiaux` · `GET|POST|DELETE /api/chantiers/[id]/ouvriers` |
-| Briqueterie | `GET|POST /api/briqueterie/types` · `GET|PUT|DELETE /api/briqueterie/types/[id]` · `GET|POST /api/briqueterie/productions` · `GET|PUT|DELETE /api/briqueterie/productions/[id]` (étape, pertes) |
+| Briqueterie | `GET|POST /api/briqueterie/types` · `GET|PUT|DELETE /api/briqueterie/types/[id]` · `GET|POST /api/briqueterie/productions` (`?stats=1`, `?status=`) · `GET|PUT|DELETE /api/briqueterie/productions/[id]` (étape, pertes, **dépenses** `add_expense`/`update_expense`/`remove_expense`) · `GET /api/briqueterie/tableau-de-bord` · `GET /api/briqueterie/stock` · `GET /api/briqueterie/commandes` · `GET|PUT|DELETE /api/briqueterie/commandes/[id]` (`set_status`, `deliver`, `invoice`) · `GET|POST /api/briqueterie/commandes/[id]/paiements` · `GET /api/briqueterie/rapports` · `GET /api/briqueterie/historique` |
 | Atelier | `GET|POST /api/atelier/modeles` · `GET|PUT|DELETE /api/atelier/modeles/[id]` · `GET|POST /api/atelier/commandes` · `GET|PUT|DELETE /api/atelier/commandes/[id]` |
 | Rapports | `GET /api/rapports` (`from`, `to`, `previousFrom`, `previousTo`, `productId`, `customerId`, `supplierId`, `paymentStatus`) · `POST /api/rapports/envoyer` · `GET /api/rapports/envois` |
 | Dashboard | `GET /api/operations/snapshot` |
@@ -2003,6 +2100,7 @@ npm run release:major      # Release majeure
 npm run db:generate        # Générer les migrations Drizzle
 npm run db:push            # Pousser le schéma vers la base
 npm run db:studio          # Ouvrir Drizzle Studio
+npm run db:migrate         # Appliquer les migrations sans démarrer Next (avant verify:*)
 ```
 
 **Scripts de vérification** — ils interrogent une application **démarrée**
@@ -2010,11 +2108,20 @@ npm run db:studio          # Ouvrir Drizzle Studio
 (`APP_USER` / `APP_PASSWORD` pour changer les identifiants) :
 
 ```bash
-npm run verify:routes      # Découvre et appelle les 35 pages et les 72 routes d'API : aucune erreur 500 tolérée
+npm run verify:routes      # Découvre et appelle les pages et les routes d'API : aucune erreur 500 tolérée
 npm run verify:purchases   # Parcours d'achat de bout en bout (21 contrôles) : stock, caisse, dette, numérotation
 npm run verify:draft       # Politique du brouillon de vente (23 contrôles) : ni stock, ni caisse, ni sync, puis validation
 npm run verify:export      # Export PDF / image / WhatsApp dans un navigateur réel (CDP sur le port 9222)
+npm run verify:brick       # Briqueterie, 44 contrôles : dépenses rattachées, coût/unité, stock unique, canal de vente, commande → acompte → facture, refus attendus
+npm run verify:brick:ui    # Rend chaque écran du module dans Chrome (CDP port 9333) et vérifie le texte rendu + zéro erreur console
 ```
+
+> `verify:brick` et `verify:brick:ui` **fabriquent leur session** à partir d'un
+> utilisateur réel de la base locale (cookie `session_user`, voir `lib/api.ts`) :
+> ils ne dépendent donc pas d'un mot de passe que la recette aurait changé.
+> `verify:brick:ui` exige un Chrome lancé sur un port **dédié** :
+> `chrome.exe --headless=new --remote-debugging-port=9333 --user-data-dir=<unique>`
+> (voir l'avertissement CDP port 9222 dans AGENTS.md).
 
 **Scripts prévus au lot 6** — ils appartiennent au **service de synchronisation
 en ligne**, qui n'est pas livré : ils ne sont donc **pas** dans `package.json`

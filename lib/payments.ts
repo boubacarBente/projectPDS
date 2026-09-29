@@ -12,14 +12,30 @@
  */
 
 import { db, rawAll, rawGet } from '@/db';
-import { payments, salesInvoices, purchaseInvoices, serviceJobs } from '@/db/schema';
+import {
+  brickOrders,
+  payments,
+  salesInvoices,
+  purchaseInvoices,
+  serviceJobs,
+} from '@/db/schema';
 import { and, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
 import { renderDocumentNumber, getSettings, nextSequence } from '@/lib/settings';
 import { addCashMovement } from '@/lib/caisse';
 import { today } from '@/lib/format';
 
-export type PaymentType = 'sale' | 'purchase' | 'service_job';
+/**
+ * Types de document encaissables.
+ *
+ * `brick_order` (commande de briques, §20) a été ajouté sans migration : en
+ * SQLite la colonne `payments.type` est un `text` sans contrainte `CHECK`, la
+ * liste fermée vit donc dans TypeScript. L'acompte d'une commande est encaissé
+ * exactement comme celui d'une vente (reçu, caisse, recalcul du reste) ; à la
+ * facturation, il est **transféré** sur la facture de vente
+ * (`invoiceBrickOrder`), l'argent n'est donc jamais compté deux fois.
+ */
+export type PaymentType = 'sale' | 'purchase' | 'service_job' | 'brick_order';
 export type PaymentLabel = 'deposit' | 'balance' | 'full';
 
 export class PaymentError extends Error {
@@ -47,11 +63,32 @@ export type PaymentRow = {
 
 const DOCUMENT_CONFIG: Record<
   PaymentType,
-  { table: any; label: string; cashType: 'income' | 'expense' }
+  { table: any; label: string; cashType: 'income' | 'expense'; syncTable: string }
 > = {
-  sale: { table: salesInvoices, label: 'Facture de vente', cashType: 'income' },
-  purchase: { table: purchaseInvoices, label: "Facture d'achat", cashType: 'expense' },
-  service_job: { table: serviceJobs, label: 'Chantier', cashType: 'income' },
+  sale: {
+    table: salesInvoices,
+    label: 'Facture de vente',
+    cashType: 'income',
+    syncTable: 'sales_invoices',
+  },
+  purchase: {
+    table: purchaseInvoices,
+    label: "Facture d'achat",
+    cashType: 'expense',
+    syncTable: 'purchase_invoices',
+  },
+  service_job: {
+    table: serviceJobs,
+    label: 'Chantier',
+    cashType: 'income',
+    syncTable: 'service_jobs',
+  },
+  brick_order: {
+    table: brickOrders,
+    label: 'Commande de briques',
+    cashType: 'income',
+    syncTable: 'brick_orders',
+  },
 };
 
 /** Le document référencé, quel que soit son type. */
@@ -93,12 +130,11 @@ export async function recomputeDocumentPayments(
     .set({ amountPaid, remainingAmount, paymentStatus, updatedAt: new Date() })
     .where(eq(config.table.id, referenceId));
 
-  await enqueueSyncWrite(
-    type === 'sale' ? 'sales_invoices' : type === 'purchase' ? 'purchase_invoices' : 'service_jobs',
-    null,
-    'update',
-    { amount_paid: amountPaid, remaining_amount: remainingAmount, payment_status: paymentStatus },
-  );
+  await enqueueSyncWrite(config.syncTable, null, 'update', {
+    amount_paid: amountPaid,
+    remaining_amount: remainingAmount,
+    payment_status: paymentStatus,
+  });
 
   return { amountPaid, remainingAmount, paymentStatus, total };
 }
@@ -141,9 +177,17 @@ export async function createPayment(input: {
    *
    * Les prestations (`service_job`) n'ont pas de statut « brouillon » : leur
    * cycle de vie (`quote` → `pending` → `in_progress` → `completed`) reste
-   * inchangé, seul `cancelled` est refusé plus haut.
+   * inchangé, seul `cancelled` est refusé plus haut. Les **commandes de
+   * briques** ont, elles, un vrai brouillon : on refuse `draft` et `cancelled`
+   * et on accepte tout le reste du cycle (`confirmed` → … → `delivered`).
    */
-  if (input.type !== 'service_job' && document.status !== 'active') {
+  if (input.type === 'brick_order') {
+    if (document.status === 'draft' || document.status === 'cancelled') {
+      throw new PaymentError(
+        `Impossible d’encaisser la commande ${document.orderNumber ?? ''} : confirmez-la d’abord.`,
+      );
+    }
+  } else if (input.type !== 'service_job' && document.status !== 'active') {
     throw new PaymentError(
       input.type === 'sale'
         ? `Impossible d’encaisser la facture ${document.invoiceNumber ?? ''} : c’est un brouillon. Validez la vente avant d’enregistrer un encaissement.`
@@ -211,8 +255,8 @@ export async function createPayment(input: {
     const referenceNumber =
       input.type === 'sale'
         ? document.invoiceNumber
-        : input.type === 'purchase'
-          ? document.reference
+        : input.type === 'brick_order'
+          ? document.orderNumber
           : document.reference;
 
     await addCashMovement({
@@ -284,15 +328,15 @@ export async function getReceiptData(id: number) {
   const config = DOCUMENT_CONFIG[payment.type];
 
   const customerName =
-    payment.type === 'sale' || payment.type === 'service_job'
+    payment.type === 'sale' || payment.type === 'service_job' || payment.type === 'brick_order'
       ? (document.customerName ?? (await customerNameOf(document.customerId)))
       : (document.supplierId ? await supplierNameOf(document.supplierId) : 'Fournisseur');
 
   const documentNumber =
     payment.type === 'sale'
       ? document.invoiceNumber
-      : payment.type === 'purchase'
-        ? document.reference
+      : payment.type === 'brick_order'
+        ? document.orderNumber
         : document.reference;
 
   // Historique des paiements du même document : un reçu doit pouvoir montrer
@@ -477,28 +521,33 @@ export async function listReceipts(options: PaymentFilters & {
             SELECT j.id FROM service_jobs j
             LEFT JOIN customers c ON c.id = j.customer_id
             WHERE j.reference LIKE ? OR c.name LIKE ?))
+      OR (p.type = 'brick_order' AND p.reference_id IN (
+            SELECT o.id FROM brick_orders o
+            WHERE o.order_number LIKE ? OR o.customer_name LIKE ?))
     )`);
-    args.push(like, like, like, like, like, like, like, like);
+    args.push(like, like, like, like, like, like, like, like, like, like);
   }
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const documentNumberSql = `
     CASE p.type
-      WHEN 'sale'     THEN (SELECT v.invoice_number FROM sales_invoices v WHERE v.id = p.reference_id)
-      WHEN 'purchase' THEN (SELECT a.reference      FROM purchase_invoices a WHERE a.id = p.reference_id)
-      ELSE                 (SELECT j.reference      FROM service_jobs j WHERE j.id = p.reference_id)
+      WHEN 'sale'        THEN (SELECT v.invoice_number FROM sales_invoices v WHERE v.id = p.reference_id)
+      WHEN 'purchase'    THEN (SELECT a.reference      FROM purchase_invoices a WHERE a.id = p.reference_id)
+      WHEN 'brick_order' THEN (SELECT o.order_number   FROM brick_orders o WHERE o.id = p.reference_id)
+      ELSE                    (SELECT j.reference      FROM service_jobs j WHERE j.id = p.reference_id)
     END`;
 
   const partyNameSql = `
     CASE p.type
-      WHEN 'sale'     THEN (SELECT v.customer_name FROM sales_invoices v WHERE v.id = p.reference_id)
-      WHEN 'purchase' THEN (SELECT s.name FROM purchase_invoices a
-                              LEFT JOIN suppliers s ON s.id = a.supplier_id
-                              WHERE a.id = p.reference_id)
-      ELSE                 (SELECT c.name FROM service_jobs j
-                              LEFT JOIN customers c ON c.id = j.customer_id
-                              WHERE j.id = p.reference_id)
+      WHEN 'sale'        THEN (SELECT v.customer_name FROM sales_invoices v WHERE v.id = p.reference_id)
+      WHEN 'purchase'    THEN (SELECT s.name FROM purchase_invoices a
+                                  LEFT JOIN suppliers s ON s.id = a.supplier_id
+                                  WHERE a.id = p.reference_id)
+      WHEN 'brick_order' THEN (SELECT o.customer_name FROM brick_orders o WHERE o.id = p.reference_id)
+      ELSE                    (SELECT c.name FROM service_jobs j
+                                  LEFT JOIN customers c ON c.id = j.customer_id
+                                  WHERE j.id = p.reference_id)
     END`;
 
   const rows = await rawAll<any>(
@@ -543,6 +592,7 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
   sale: 'Vente',
   purchase: 'Achat',
   service_job: 'Prestation',
+  brick_order: 'Commande de briques',
 };
 
 /**

@@ -88,6 +88,7 @@ cookies.txt
 .t-*.txt
 .t-*.cjs
 .t-*.ps1
+.t-*.png
 
 # Corps de requêtes et réponses de test, écrits à la main pendant les
 # vérifications (curl a besoin d'un fichier pour un corps JSON sous Windows).

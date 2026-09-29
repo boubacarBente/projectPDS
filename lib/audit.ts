@@ -73,6 +73,12 @@ export async function listAuditLogs(options: {
   userId?: number;
   action?: string;
   entity?: string;
+  /**
+   * Restreint à **un** document précis. Utilisé par l'historique d'une fiche
+   * (lot de briqueterie, commande) : sans ce filtre, l'historique d'un lot
+   * mélangerait les modifications de tous les lots de la même entité.
+   */
+  entityId?: number;
   from?: string;
   to?: string;
   search?: string;
@@ -85,6 +91,7 @@ export async function listAuditLogs(options: {
   if (options.userId) conditions.push(eq(auditLogs.userId, options.userId));
   if (options.action) conditions.push(eq(auditLogs.action, options.action));
   if (options.entity) conditions.push(eq(auditLogs.entity, options.entity));
+  if (options.entityId) conditions.push(eq(auditLogs.entityId, options.entityId));
   if (options.from) conditions.push(gte(auditLogs.createdAt, new Date(`${options.from}T00:00:00`)));
   if (options.to) conditions.push(lte(auditLogs.createdAt, new Date(`${options.to}T23:59:59`)));
   if (options.search) {

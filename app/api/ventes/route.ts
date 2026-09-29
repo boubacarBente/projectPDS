@@ -3,6 +3,7 @@ import { fail, ok, parsePagination, readJson, requireAction, toInt } from '@/lib
 import {
   canViewSalesProfit,
   createSalesInvoice,
+  isSalesChannel,
   listSalesInvoices,
   parseSalesInput,
   withoutSalesProfit,
@@ -12,7 +13,13 @@ import {
  * GET /api/ventes — liste paginée, filtrable (§27.2).
  *
  * Filtres : `search` (numéro de facture **ou** nom du client), `customerId`,
- * `from`, `to`, `paymentStatus`, `status`.
+ * `from`, `to`, `paymentStatus`, `status`, `channel`.
+ *
+ * **Canal** (§20) : sans paramètre, la liste ne renvoie que le **commerce
+ * général** — c'est ce qui garantit qu'une vente de briqueterie, créée par
+ * `/ventes/nouvelle?canal=briqueterie`, n'apparaît jamais dans `/ventes`.
+ * `channel=brick` renvoie la briqueterie, `channel=all` les deux (usage
+ * explicite : fiche client consolidée, export global).
  *
  * Le **bénéfice** (`cost`, `profit`) n'est renvoyé qu'à un utilisateur détenant
  * `balances.view` : c'est une donnée financière sensible, et le serveur reste
@@ -26,6 +33,9 @@ export async function GET(request: NextRequest) {
     const { page, limit } = parsePagination(params);
 
     const customerId = params.get('customerId');
+    const channelParam = params.get('channel');
+    const channel =
+      channelParam === 'all' ? 'all' : isSalesChannel(channelParam) ? channelParam : 'general';
 
     const result = await listSalesInvoices({
       search: params.get('search') ?? undefined,
@@ -34,6 +44,7 @@ export async function GET(request: NextRequest) {
       to: params.get('to') ?? undefined,
       paymentStatus: params.get('paymentStatus') ?? undefined,
       status: params.get('status') ?? undefined,
+      channel,
       page,
       limit,
     });

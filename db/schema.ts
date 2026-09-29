@@ -234,6 +234,17 @@ export const salesInvoices = sqliteTable('sales_invoices', {
   paymentMethod: text('payment_method').notNull().default('Espèces'),
   /** draft | active | cancelled */
   status: text('status', { enum: ['draft', 'active', 'cancelled'] }).notNull().default('active'),
+  /**
+   * **Canal de vente** — un module, une liste (§20).
+   *
+   * `general` = commerce général (quincaillerie, décoration) : c'est ce que
+   * montre `/ventes`. `brick` = briqueterie : la vente est créée depuis
+   * `/ventes/nouvelle?canal=briqueterie`, elle gagne **toutes** les
+   * fonctionnalités existantes (stock, caisse, reçu, PDF, paiements) mais elle
+   * n'apparaît **jamais** dans `/ventes` — sa liste vit dans
+   * `/briqueterie/ventes`.
+   */
+  channel: text('channel', { enum: ['general', 'brick'] }).notNull().default('general'),
   cancelReason: text('cancel_reason'),
   cancelledBy: integer('cancelled_by').references(() => users.id),
   cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
@@ -312,8 +323,14 @@ export const purchaseInvoiceItems = sqliteTable('purchase_invoice_items', {
 export const payments = sqliteTable('payments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   receiptNumber: text('receipt_number').notNull().unique(),
-  /** sale | purchase | service_job */
-  type: text('type', { enum: ['sale', 'purchase', 'service_job'] }).notNull(),
+  /**
+   * sale | purchase | service_job | brick_order
+   *
+   * `brick_order` (acompte d'une commande de briques, §20) a été ajouté **sans
+   * migration** : en SQLite cette colonne est un `text` sans contrainte `CHECK`,
+   * la liste fermée n'existe que dans TypeScript.
+   */
+  type: text('type', { enum: ['sale', 'purchase', 'service_job', 'brick_order'] }).notNull(),
   referenceId: integer('reference_id').notNull(),
   amount: real('amount').notNull(),
   paymentMethod: text('payment_method').notNull().default('Espèces'),
@@ -523,9 +540,27 @@ export const brickProductions = sqliteTable('brick_productions', {
   stage: text('stage', { enum: ['molding', 'drying', 'firing', 'stored'] })
     .notNull()
     .default('molding'),
+  /**
+   * **Statut de la fiche de production** : `registered` (enregistrée),
+   * `finished` (terminée, c'est-à-dire mise en stock), `cancelled` (annulée).
+   *
+   * Il ne remplace pas le tombstone `deleted_at` (§6.7) : l'annulation pose
+   * **les deux** — `status = 'cancelled'` porte le motif lisible, `deleted_at`
+   * reste le marqueur de synchronisation que lisent déjà les listes.
+   */
+  status: text('status', { enum: ['registered', 'finished', 'cancelled'] })
+    .notNull()
+    .default('registered'),
+  /** Équipe ou responsable de production (texte libre : « Équipe A — Mamadou »). */
+  team: text('team'),
   materialCost: real('material_cost').notNull().default(0),
   laborCost: real('labor_cost').notNull().default(0),
+  /** Somme des **dépenses rattachées** (`expenses.reference_type = 'brick_production'`). */
+  expenseCost: real('expense_cost').notNull().default(0),
   totalCost: real('total_cost').notNull().default(0),
+  cancelReason: text('cancel_reason'),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  cancelledBy: integer('cancelled_by').references(() => users.id),
   userId: integer('user_id').references(() => users.id),
   notes: text('notes'),
   createdAt: createdAt(),
@@ -559,6 +594,80 @@ export const brickProductionWorkers = sqliteTable('brick_production_workers', {
   days: real('days').notNull().default(0),
   dailyRate: real('daily_rate').notNull().default(0),
   amount: real('amount').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+});
+
+/**
+ * **Commande client de briques** (§20, « Commandes et ventes »).
+ *
+ * Une commande engage le client sur plusieurs produits ; elle suit son état
+ * jusqu'à la livraison puis se transforme en **facture de vente** du canal
+ * `brick` (`invoiceBrickOrder()`), qui est le document qui sort le stock et fait
+ * entrer le chiffre d'affaires. L'acompte versé sur la commande est un
+ * `payments` de type `brick_order` : à la facturation, il est **transféré** sur
+ * la facture (même numéro de reçu, même mouvement de caisse) — l'argent n'est
+ * donc jamais compté deux fois.
+ */
+export const brickOrders = sqliteTable('brick_orders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderNumber: text('order_number').notNull().unique(),
+  customerId: integer('customer_id').references(() => customers.id),
+  customerName: text('customer_name').notNull(),
+  userId: integer('user_id').references(() => users.id),
+  /** Date métier YYYY-MM-DD */
+  date: text('date').notNull(),
+  dueDate: text('due_date'),
+  deliveryDate: text('delivery_date'),
+  /** Livraison promise au client (délai promis, §18 repris pour la briqueterie). */
+  promisedDate: text('promised_date'),
+  subTotal: real('sub_total').notNull().default(0),
+  discount: real('discount').notNull().default(0),
+  total: real('total').notNull().default(0),
+  /** Toujours **recalculés** depuis `payments` (§6.5 règle 2), jamais incrémentés. */
+  amountPaid: real('amount_paid').notNull().default(0),
+  remainingAmount: real('remaining_amount').notNull().default(0),
+  paymentStatus: text('payment_status').notNull().default('unpaid'),
+  /** draft | confirmed | in_production | ready | partially_delivered | delivered | cancelled */
+  status: text('status', {
+    enum: [
+      'draft',
+      'confirmed',
+      'in_production',
+      'ready',
+      'partially_delivered',
+      'delivered',
+      'cancelled',
+    ],
+  })
+    .notNull()
+    .default('draft'),
+  /** Facture de vente née de la commande (canal `brick`) — `null` tant qu'aucune. */
+  salesInvoiceId: integer('sales_invoice_id'),
+  cancelReason: text('cancel_reason'),
+  cancelledBy: integer('cancelled_by').references(() => users.id),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+});
+
+/** Lignes d'une commande : instantané du nom et de l'unité (§6.5 règle 5). */
+export const brickOrderItems = sqliteTable('brick_order_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id')
+    .notNull()
+    .references(() => brickOrders.id, { onDelete: 'cascade' }),
+  brickTypeId: integer('brick_type_id').references(() => brickTypes.id),
+  productId: integer('product_id').references(() => products.id),
+  productName: text('product_name').notNull(),
+  unit: text('unit').notNull().default('pièce'),
+  quantity: real('quantity').notNull(),
+  unitPrice: real('unit_price').notNull().default(0),
+  discount: real('discount').notNull().default(0),
+  amount: real('amount').notNull().default(0),
+  /** Quantité effectivement livrée (suivi « partiellement livrée »). */
+  deliveredQuantity: real('delivered_quantity').notNull().default(0),
   createdAt: createdAt(),
   ...syncCols(),
 });
@@ -950,6 +1059,29 @@ export const brickProductionWorkerRelations = relations(brickProductionWorkers, 
   worker: one(workers, {
     fields: [brickProductionWorkers.workerId],
     references: [workers.id],
+  }),
+}));
+
+export const brickOrderRelations = relations(brickOrders, ({ one, many }) => ({
+  customer: one(customers, {
+    fields: [brickOrders.customerId],
+    references: [customers.id],
+  }),
+  items: many(brickOrderItems),
+}));
+
+export const brickOrderItemRelations = relations(brickOrderItems, ({ one }) => ({
+  order: one(brickOrders, {
+    fields: [brickOrderItems.orderId],
+    references: [brickOrders.id],
+  }),
+  brickType: one(brickTypes, {
+    fields: [brickOrderItems.brickTypeId],
+    references: [brickTypes.id],
+  }),
+  product: one(products, {
+    fields: [brickOrderItems.productId],
+    references: [products.id],
   }),
 }));
 

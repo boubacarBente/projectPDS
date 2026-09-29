@@ -148,7 +148,7 @@ export async function nextSequence(name: string, year = new Date().getFullYear()
 
 /** Numéro de document prêt à l'emploi, selon le type de pièce. */
 export async function nextDocumentNumber(
-  kind: 'invoice' | 'purchase' | 'receipt' | 'job' | 'brick' | 'furniture',
+  kind: 'invoice' | 'purchase' | 'receipt' | 'job' | 'brick' | 'brick_order' | 'furniture',
 ): Promise<string> {
   const settings = await getSettings();
 
@@ -158,6 +158,7 @@ export async function nextDocumentNumber(
     receipt: settings.receiptPrefix,
     job: settings.jobPrefix,
     brick: settings.brickPrefix,
+    brick_order: settings.brickOrderPrefix,
     furniture: settings.furniturePrefix,
   }[kind];
 

@@ -46,6 +46,31 @@ import { getEffectivePermissions } from '@/lib/user-permissions';
  * Types exposés (contrat d'API — ne pas renommer les champs)
  * ------------------------------------------------------------------ */
 
+/**
+ * **Canaux de vente** — un module, une liste (§20).
+ *
+ * `general` : commerce général (quincaillerie, décoration) → `/ventes`.
+ * `brick`   : briqueterie → `/briqueterie/ventes`.
+ *
+ * La vente de briques est créée par `/ventes/nouvelle?canal=briqueterie` : elle
+ * réutilise **tout** le moteur de vente (contrôle de stock, numérotation,
+ * encaissement, reçu, paiements ultérieurs, export PDF) et n'en diffère que par
+ * ce discriminant — c'est ce qui la rend invisible dans `/ventes` sans
+ * dupliquer une ligne de logique.
+ */
+export type SalesChannel = 'general' | 'brick';
+
+export const SALES_CHANNELS: SalesChannel[] = ['general', 'brick'];
+
+export function isSalesChannel(value: unknown): value is SalesChannel {
+  return value === 'general' || value === 'brick';
+}
+
+export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
+  general: 'Commerce général',
+  brick: 'Briqueterie',
+};
+
 export type SalesInvoiceRow = {
   id: number;
   invoiceNumber: string;
@@ -66,6 +91,13 @@ export type SalesInvoiceRow = {
   paymentStatus: string;
   paymentMethod: string;
   status: 'draft' | 'active' | 'cancelled';
+  /**
+   * **Canal de vente** (§20) : `general` (commerce général, ce que montre
+   * `/ventes`) ou `brick` (briqueterie, liste dédiée `/briqueterie/ventes`).
+   * C'est un simple discriminant d'affichage : stock, caisse, reçus et
+   * paiements suivent exactement le même chemin pour les deux canaux.
+   */
+  channel: SalesChannel;
   cancelReason: string | null;
   notes: string | null;
   itemCount: number;
@@ -119,6 +151,8 @@ export type SalesInvoiceInput = {
   taxRate?: number;
   notes?: string | null;
   status?: 'draft' | 'active';
+  /** `general` par défaut ; `brick` pour une vente de la briqueterie (§20). */
+  channel?: SalesChannel;
   lines: SalesLineInput[];
   userId?: number | null;
 };
@@ -175,7 +209,7 @@ const INVOICE_COLUMNS = `
   v.id, v.invoice_number, v.customer_id, v.customer_name, v.user_id, v.date, v.due_date,
   v.sub_total, v.discount, v.total_ht, v.tax_rate, v.tax_amount, v.total,
   v.amount_paid, v.remaining_amount, v.payment_status, v.payment_method, v.status,
-  v.cancel_reason, v.cancelled_by, v.cancelled_at, v.notes, v.created_at, v.sync_id,
+  v.channel, v.cancel_reason, v.cancelled_by, v.cancelled_at, v.notes, v.created_at, v.sync_id,
   u.name AS user_name,
   (SELECT COUNT(*) FROM sales_invoice_items i WHERE i.invoice_id = v.id) AS item_count,
   /*
@@ -184,8 +218,9 @@ const INVOICE_COLUMNS = `
    * Le README §15 fixe la règle : le prix d'achat de la marge est lu sur la
    * colonne purchase_price de products — compromis V1 documenté en Q20,
    * l'instantané du coût sur la ligne étant l'évolution prévue. C'est
-   * exactement la source utilisée par computeCogs() de lib/dashboard.ts, donc
-   * le bénéfice par vente est réconcilié avec /soldes et /rapports.
+   * exactement la source utilisée par computeCogs() de lib/profit.ts, donc
+   * le bénéfice par vente est réconcilié avec /soldes, /rapports et le
+   * tableau de bord — tous issus de ce même module.
    *
    * Conséquence à connaître : modifier le prix d'achat d'un produit déplace la
    * marge des ventes passées. Ce n'est pas une marge historique figée.
@@ -243,6 +278,7 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
     paymentStatus: row.payment_status,
     paymentMethod: row.payment_method,
     status: row.status as SalesInvoiceRow['status'],
+    channel: isSalesChannel(row.channel) ? row.channel : 'general',
     cancelReason: row.cancel_reason ?? null,
     notes: row.notes ?? null,
     itemCount: Number(row.item_count ?? 0),
@@ -706,6 +742,12 @@ export async function listSalesInvoices(options: {
   to?: string;
   paymentStatus?: string;
   status?: string;
+  /**
+   * Canal : `general` (défaut) ne montre que le commerce général, `brick` que la
+   * briqueterie, `all` les deux. Le défaut est **volontairement restrictif** :
+   * `/ventes` ne doit jamais afficher une vente de briques (§20).
+   */
+  channel?: SalesChannel | 'all';
   page?: number;
   limit?: number;
 } = {}): Promise<{
@@ -721,6 +763,12 @@ export async function listSalesInvoices(options: {
 
   const where: string[] = [];
   const args: (string | number)[] = [];
+
+  const channel = options.channel ?? 'general';
+  if (channel !== 'all') {
+    where.push('v.channel = ?');
+    args.push(channel);
+  }
 
   if (options.search) {
     where.push('(v.invoice_number LIKE ? OR v.customer_name LIKE ?)');
@@ -844,6 +892,9 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
         : toNumber(body.taxRate, 0),
     notes: body?.notes ?? null,
     status,
+    // Canal explicite uniquement : une valeur inconnue retombe sur `general`,
+    // c'est-à-dire le commerce général — jamais sur « aucune liste ».
+    channel: isSalesChannel(body?.channel) ? body.channel : 'general',
     lines: rawLines.map((line: any) => ({
       productId: toInt(line?.productId, 0),
       quantity: toNumber(line?.quantity, 0),
@@ -865,6 +916,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
 
   const date = businessDate(input.date, 'date');
   const status = normalizeStatus(input.status, 'active');
+  const channel: SalesChannel = isSalesChannel(input.channel) ? input.channel : 'general';
   const paymentMethod = String(input.paymentMethod ?? '').trim() || 'Espèces';
   const taxRate = input.taxRate === undefined ? Number(settings.defaultTaxRate ?? 0) : Number(input.taxRate);
 
@@ -913,6 +965,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
       paymentStatus: 'unpaid',
       paymentMethod,
       status,
+      channel,
       notes: input.notes?.trim() || null,
     })
     .returning({ id: salesInvoices.id, syncId: salesInvoices.syncId });
@@ -932,6 +985,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
     total: totals.total,
     payment_method: paymentMethod,
     status,
+    channel,
     notes: input.notes ?? null,
   });
 
@@ -978,6 +1032,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
       amountPaid,
       paymentStatus: amountPaid > 0 ? (amountPaid >= totals.total - 0.01 ? 'paid' : 'partial') : 'unpaid',
       status,
+      channel,
       lines: items.length,
     },
   });
@@ -1371,9 +1426,18 @@ export async function cancelSalesInvoice(
  * ------------------------------------------------------------------ */
 
 /** Statistiques de ventes sur une période nommée (`resolvePeriod` de `lib/dashboard.ts`). */
-export async function getSalesStats(period: PeriodKey = 'month'): Promise<SalesStats> {
+export async function getSalesStats(
+  period: PeriodKey = 'month',
+  options: { channel?: SalesChannel | 'all' } = {},
+): Promise<SalesStats> {
   const key: PeriodKey = PERIOD_KEYS.includes(period) ? period : 'month';
   const bounds = resolvePeriod(key);
+
+  // Par défaut, les cartes de `/ventes` comptent **le même périmètre** que sa
+  // liste : le commerce général. La briqueterie demande `channel: 'brick'`.
+  const channel = options.channel ?? 'general';
+  const channelSql = channel === 'all' ? '' : ' AND channel = ?';
+  const channelArgs: string[] = channel === 'all' ? [] : [channel];
 
   const totals = await rawGet<any>(
     `SELECT COUNT(*) AS count,
@@ -1383,14 +1447,14 @@ export async function getSalesStats(period: PeriodKey = 'month'): Promise<SalesS
             COALESCE(SUM(amount_paid), 0)     AS collected,
             COALESCE(SUM(remaining_amount), 0) AS outstanding
      FROM sales_invoices
-     WHERE status = 'active' AND date >= ? AND date <= ?`,
-    [bounds.from, bounds.to],
+     WHERE status = 'active' AND date >= ? AND date <= ?${channelSql}`,
+    [bounds.from, bounds.to, ...channelArgs],
   );
 
   const cancelled = await rawGet<{ count: number }>(
     `SELECT COUNT(*) AS count FROM sales_invoices
-     WHERE status = 'cancelled' AND date >= ? AND date <= ?`,
-    [bounds.from, bounds.to],
+     WHERE status = 'cancelled' AND date >= ? AND date <= ?${channelSql}`,
+    [bounds.from, bounds.to, ...channelArgs],
   );
 
   const topProducts = await rawAll<{ product_name: string; quantity: number; amount: number }>(
@@ -1399,11 +1463,15 @@ export async function getSalesStats(period: PeriodKey = 'month'): Promise<SalesS
             SUM(i.amount)   AS amount
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?${
+       channel === 'all' ? '' : ' AND v.channel = ?'
+     }
      GROUP BY i.product_name
      ORDER BY amount DESC
      LIMIT ?`,
-    [bounds.from, bounds.to, MAX_TOP_PRODUCTS],
+    channel === 'all'
+      ? [bounds.from, bounds.to, MAX_TOP_PRODUCTS]
+      : [bounds.from, bounds.to, channel, MAX_TOP_PRODUCTS],
   );
 
   const byDayRows = await rawAll<{ date: string; revenue: number; count: number }>(
@@ -1411,10 +1479,10 @@ export async function getSalesStats(period: PeriodKey = 'month'): Promise<SalesS
             COALESCE(SUM(total), 0) AS revenue,
             COUNT(*)                AS count
      FROM sales_invoices
-     WHERE status = 'active' AND date >= ? AND date <= ?
+     WHERE status = 'active' AND date >= ? AND date <= ?${channelSql}
      GROUP BY date
      ORDER BY date ASC`,
-    [bounds.from, bounds.to],
+    [bounds.from, bounds.to, ...channelArgs],
   );
 
   const count = Number(totals?.count ?? 0);

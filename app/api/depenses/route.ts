@@ -9,7 +9,7 @@ import {
   toNumber,
   requireAction,
 } from '@/lib/api';
-import { createExpense, listExpenses } from '@/lib/expenses';
+import { createExpense, isExpenseScope, listExpenses } from '@/lib/expenses';
 import { writeAudit } from '@/lib/audit';
 import { today } from '@/lib/format';
 
@@ -19,15 +19,21 @@ import { today } from '@/lib/format';
  * Handler **mince** (§26.5) : permission → parsing → fonction de `lib/` →
  * réponse. Aucune requête Drizzle ici, toute la logique vit dans
  * `lib/expenses.ts` (c'est ce qui alimente la file de synchronisation).
+ *
+ * **Portée** (`?scope=general|production`, §20) : par défaut la liste renvoie
+ * **tout**. `/depenses` demande `general` (les frais de fonctionnement, sans les
+ * dépenses rattachées à un lot de briqueterie) ; la briqueterie lit la portée
+ * complémentaire depuis la fiche du lot.
  */
 
-/** GET /api/depenses — liste paginée, filtrable (recherche, catégorie, moyen, période). */
+/** GET /api/depenses — liste paginée, filtrable (recherche, catégorie, moyen, période, portée). */
 export async function GET(request: NextRequest) {
   try {
     await requireAction('expenses.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
+    const scope = params.get('scope');
 
     const result = await listExpenses({
       search: params.get('search') ?? undefined,
@@ -35,6 +41,7 @@ export async function GET(request: NextRequest) {
       paymentMethod: params.get('paymentMethod') ?? undefined,
       from: params.get('from') ?? undefined,
       to: params.get('to') ?? undefined,
+      scope: isExpenseScope(scope) ? scope : undefined,
       page,
       limit,
     });
@@ -65,6 +72,7 @@ export async function POST(request: NextRequest) {
       referenceId: body.referenceId ?? null,
       beneficiary: body.beneficiary ?? null,
       date: businessDate(body.date, 'date', today()),
+      scope: isExpenseScope(body.scope) ? body.scope : undefined,
       userId: user.id,
     });
 

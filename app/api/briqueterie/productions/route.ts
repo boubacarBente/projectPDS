@@ -1,14 +1,23 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, parsePagination, readJson, requireAction, toNumber } from '@/lib/api';
-import { createBrickProduction, getBrickSummary, isBrickStage, listBrickProductions } from '@/lib/brick';
+import {
+  createBrickProduction,
+  getBrickSummary,
+  isBrickProductionStatus,
+  isBrickStage,
+  listBrickProductions,
+} from '@/lib/brick';
 import { writeAudit } from '@/lib/audit';
 
 /**
  * GET /api/briqueterie/productions — lots de fabrication paginés.
  *
- * Filtres : `search`, `brickTypeId`, `stage`, `from`, `to`, `page`, `limit`.
- * `?stats=1` renvoie le rapport fabriquées / cassées / vendues de la période
- * (les cartes de la page ne se déduisent pas de la page courante).
+ * Filtres : `search`, `brickTypeId`, `stage`, `status`, `from`, `to`, `page`,
+ * `limit`. `?stats=1` renvoie le rapport fabriquées / cassées / vendues de la
+ * période (les cartes de la page ne se déduisent pas de la page courante).
+ *
+ * `status=cancelled` **inclut** les lots annulés, que la liste exclut par
+ * défaut : un filtre « Annulée » doit montrer quelque chose.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -25,11 +34,13 @@ export async function GET(request: NextRequest) {
     }
 
     const { page, limit } = parsePagination(params);
+    const status = params.get('status');
 
     const result = await listBrickProductions({
       search: params.get('search')?.trim() || undefined,
       brickTypeId: toNumber(params.get('brickTypeId'), 0) || undefined,
       stage: isBrickStage(params.get('stage')) ? (params.get('stage') as string) : undefined,
+      status: isBrickProductionStatus(status) ? status : undefined,
       from: params.get('from') ?? undefined,
       to: params.get('to') ?? undefined,
       page,
@@ -55,6 +66,7 @@ export async function POST(request: NextRequest) {
       brokenQuantity: toNumber(body.brokenQuantity, 0),
       startDate: body.startDate ?? null,
       endDate: body.endDate ?? null,
+      team: body.team ?? null,
       notes: body.notes ?? null,
       userId: user.id,
     });
@@ -69,6 +81,7 @@ export async function POST(request: NextRequest) {
         brickType: production.brickTypeName,
         plannedQuantity: production.plannedQuantity,
         stage: production.stage,
+        team: production.team,
       },
     });
 

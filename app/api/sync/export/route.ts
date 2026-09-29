@@ -8,7 +8,7 @@ import { rawRun } from '@/db';
 /**
  * Export manuel d'un paquet `.json` (README §23.10, « dépannage sans réseau »).
  *
- * Le paquet contient les **30 tables métier** dans l'ordre **topologique** de
+ * Le paquet contient les **32 tables métier** dans l'ordre **topologique** de
  * `SYNC_ORDER` (`lib/sync.ts`), plus les métadonnées (version de format,
  * appareil, horodatage, compteurs par table). Chaque ligne porte `sync_id`,
  * `updated_at`, `deleted_at` et `origin_device_id` (§23.4) ; les références

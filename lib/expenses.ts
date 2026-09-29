@@ -41,6 +41,54 @@ import { enqueueSyncWrite } from '@/lib/sync';
  * Types
  * ------------------------------------------------------------------ */
 
+/**
+ * **Portée d'une dépense** — la distinction qui structure tout le module (§9, §14).
+ *
+ *  - `general` : dépense de fonctionnement (transport, loyer, électricité…).
+ *    C'est ce que montre `/depenses`. Rattachée à la liste fermée
+ *    `settings.expenseCategories`.
+ *  - `production` : dépense engagée **pour une fabrication précise** (ciment,
+ *    sable, carburant, main-d'œuvre…). Elle est saisie dans la fiche du lot de
+ *    briqueterie (`/briqueterie/[id]`), rattachée par
+ *    `reference_type = 'brick_production'` + `reference_id = <lot>` et validée
+ *    contre `PRODUCTION_EXPENSE_CATEGORIES`.
+ *
+ * **Pourquoi réutiliser la table `expenses` plutôt qu'en créer une ?** Pour
+ * garder un seul moteur de sortie de caisse, une seule annulation motivée, une
+ * seule file de synchronisation et un seul rapport par catégorie. La portée
+ * n'est pas un nouveau type de dépense : c'est une **origine**.
+ */
+export type ExpenseScope = 'general' | 'production';
+
+/** Valeur de `reference_type` qui rattache une dépense à un lot de fabrication. */
+export const PRODUCTION_EXPENSE_REFERENCE = 'brick_production';
+
+/**
+ * Catégories **fermées** des dépenses de production (briqueterie).
+ *
+ * Elles sont distinctes de `settings.expenseCategories` à dessein : le client a
+ * demandé une liste métier (ciment, sable, carburant, main-d'œuvre, électricité,
+ * eau, transport, entretien…) et surtout **aucun module de matières premières** —
+ * la matière n'est plus un produit du stock, c'est une dépense rattachée à un lot.
+ */
+export const PRODUCTION_EXPENSE_CATEGORIES = [
+  'Ciment',
+  'Sable',
+  'Argile / terre',
+  'Bois de chauffe',
+  'Carburant',
+  "Main-d'œuvre",
+  'Électricité',
+  'Eau',
+  'Transport',
+  'Entretien',
+  'Autre',
+] as const;
+
+export function isExpenseScope(value: unknown): value is ExpenseScope {
+  return value === 'general' || value === 'production';
+}
+
 export type ExpenseRow = {
   id: number;
   category: string;
@@ -71,6 +119,11 @@ export type ExpenseInput = {
   date: string;
   /** Auteur de l'opération — reporté sur la dépense et sur le mouvement de caisse. */
   userId?: number | null;
+  /**
+   * Portée de validation de la catégorie. `production` = liste métier de la
+   * briqueterie, `general` (défaut) = liste des paramètres.
+   */
+  scope?: ExpenseScope;
 };
 
 export type ExpensePatch = {
@@ -94,6 +147,11 @@ export type ExpenseListOptions = {
   limit?: number;
   /** Réservé aux rapports d'audit : par défaut, une dépense annulée disparaît. */
   includeCancelled?: boolean;
+  /**
+   * Portée : `production` ne renvoie que les dépenses rattachées à un lot,
+   * `general` **exclut** ces dernières. Par défaut : tout.
+   */
+  scope?: ExpenseScope;
 };
 
 export type ExpenseListResult = {
@@ -117,13 +175,31 @@ export type ExpensesSummary = {
  * ------------------------------------------------------------------ */
 
 /**
- * Vérifie la catégorie contre la **liste fermée** `settings.expenseCategories`
- * et renvoie la casse canonique des paramètres (jamais la saisie brute).
- * Refus explicite en français si elle n'y figure pas.
+ * Vérifie la catégorie contre la **liste fermée** correspondant à la portée :
+ * `settings.expenseCategories` pour une dépense générale,
+ * `PRODUCTION_EXPENSE_CATEGORIES` pour une dépense de production.
+ *
+ * On renvoie toujours la **casse canonique** de la liste (jamais la saisie
+ * brute) : sinon « ciment » et « Ciment » créeraient deux lignes de rapport.
  */
-export async function validateExpenseCategory(value: unknown): Promise<string> {
+export async function validateExpenseCategory(
+  value: unknown,
+  scope: ExpenseScope = 'general',
+): Promise<string> {
   const category = String(value ?? '').trim();
   if (!category) throw new ValidationError('La catégorie est obligatoire');
+
+  if (scope === 'production') {
+    const canonical = PRODUCTION_EXPENSE_CATEGORIES.find(
+      (item) => item.toLocaleLowerCase('fr-FR') === category.toLocaleLowerCase('fr-FR'),
+    );
+    if (!canonical) {
+      throw new ValidationError(
+        `Catégorie de dépense de production « ${category} » inconnue. Choisissez parmi : ${PRODUCTION_EXPENSE_CATEGORIES.join(', ')}.`,
+      );
+    }
+    return canonical;
+  }
 
   const settings = await getSettings();
   const allowed = settings.expenseCategories ?? [];
@@ -140,6 +216,32 @@ export async function validateExpenseCategory(value: unknown): Promise<string> {
   }
 
   return canonical;
+}
+
+/** Portée déduite d'une dépense existante, pour les chemins de modification. */
+export function expenseScopeOf(expense: { referenceType: string | null }): ExpenseScope {
+  return expense.referenceType === PRODUCTION_EXPENSE_REFERENCE ? 'production' : 'general';
+}
+
+/** Fragment SQL de filtrage par portée, avec ses arguments. */
+function scopeCondition(
+  scope: ExpenseScope | undefined,
+  prefix = '',
+): { sql: string; args: string[] } {
+  const column = `${prefix}reference_type`;
+  if (scope === 'production') {
+    return { sql: `${column} = ?`, args: [PRODUCTION_EXPENSE_REFERENCE] };
+  }
+  if (scope === 'general') {
+    // Une dépense générale est une dépense **non rattachée** à un lot. Le test
+    // `IS NULL` est indispensable : `<> ?` seul écarterait les lignes à
+    // `reference_type` nul, c'est-à-dire l'essentiel des dépenses générales.
+    return {
+      sql: `(${column} IS NULL OR ${column} <> ?)`,
+      args: [PRODUCTION_EXPENSE_REFERENCE],
+    };
+  }
+  return { sql: '', args: [] };
 }
 
 function validateAmount(value: unknown): number {
@@ -203,6 +305,15 @@ export async function listExpenses(options: ExpenseListOptions = {}): Promise<Ex
 
   // Une dépense annulée n'est plus comptée : elle sort de la liste par défaut.
   if (!options.includeCancelled) where.push('e.deleted_at IS NULL');
+
+  // Portée : `/depenses` montre les dépenses **générales** par défaut, la
+  // briqueterie lit ses dépenses de production rattachées à un lot.
+  const scope = scopeCondition(options.scope, 'e.');
+  if (scope.sql) {
+    where.push(scope.sql);
+    args.push(...scope.args);
+  }
+
   if (options.category) {
     where.push('e.category = ?');
     args.push(options.category);
@@ -285,7 +396,8 @@ export async function getExpense(id: number): Promise<ExpenseRow | null> {
  * Aucune ligne de stock n'est écrite — ni ici, ni nulle part dans ce module.
  */
 export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
-  const category = await validateExpenseCategory(input.category);
+  const scope: ExpenseScope = isExpenseScope(input.scope) ? input.scope : 'general';
+  const category = await validateExpenseCategory(input.category, scope);
   const amount = validateAmount(input.amount);
   const date = validateBusinessDate(input.date);
   const paymentMethod = optionalText(input.paymentMethod) ?? 'Espèces';
@@ -410,10 +522,15 @@ export async function updateExpense(
   }
 
   // 1. Tout valider d'abord (aucune écriture partielle possible).
+  // La portée suit la dépense existante : une dépense de production se valide
+  // contre la liste métier, jamais contre celle des paramètres (§9).
+  const scope = expenseScopeOf(previous);
   const next: ExpenseRow = {
     ...previous,
     category:
-      patch.category !== undefined ? await validateExpenseCategory(patch.category) : previous.category,
+      patch.category !== undefined
+        ? await validateExpenseCategory(patch.category, scope)
+        : previous.category,
     amount: patch.amount !== undefined ? validateAmount(patch.amount) : previous.amount,
     paymentMethod:
       patch.paymentMethod !== undefined
@@ -578,10 +695,16 @@ export async function cancelExpense(
  * et par mois (`YYYY-MM`). Les dépenses annulées sont exclues.
  */
 export async function getExpensesSummary(
-  options: { from?: string; to?: string } = {},
+  options: { from?: string; to?: string; scope?: ExpenseScope } = {},
 ): Promise<ExpensesSummary> {
   const where: string[] = ['deleted_at IS NULL'];
   const args: (string | number)[] = [];
+
+  const scope = scopeCondition(options.scope);
+  if (scope.sql) {
+    where.push(scope.sql);
+    args.push(...scope.args);
+  }
 
   if (options.from) {
     where.push('date >= ?');

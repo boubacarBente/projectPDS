@@ -9,7 +9,9 @@ import {
   NotFoundError,
   ValidationError,
 } from '@/lib/api';
+import { today } from '@/lib/format';
 import {
+  addProductionExpense,
   addProductionMaterial,
   addProductionWorker,
   advanceStage,
@@ -17,9 +19,11 @@ import {
   getBrickProduction,
   isBrickStage,
   registerBroken,
+  removeProductionExpense,
   removeProductionMaterial,
   removeProductionWorker,
   updateBrickProduction,
+  updateProductionExpense,
 } from '@/lib/brick';
 import { writeAudit } from '@/lib/audit';
 
@@ -48,13 +52,21 @@ export async function GET(_request: NextRequest, { params }: Params) {
  *
  * | `action`           | Effet                                                    |
  * |--------------------|----------------------------------------------------------|
- * | *(absent)*         | mise à jour des quantités / coûts / dates / notes        |
+ * | *(absent)*         | mise à jour des quantités / dates / équipe / notes       |
  * | `advance_stage`    | étape suivante (mouvements de stock gérés, voir §20)     |
  * | `register_broken`  | pertes : `broken_quantity` + `exit` motivé               |
- * | `add_material`     | matière première → `exit` (contrôle de stock)            |
+ * | `add_expense`      | **dépense rattachée** au lot (ciment, sable, carburant…) |
+ * | `update_expense`   | correction d'une dépense du lot                          |
+ * | `remove_expense`   | annulation motivée d'une dépense (retour en caisse)      |
+ * | `add_material`     | matière première **historique** → `exit` (contrôle stock)|
  * | `remove_material`  | retrait d'une ligne → `entry` (matière rendue)           |
  * | `add_worker`       | affectation `days × daily_rate`                          |
  * | `remove_worker`    | retrait d'une affectation                                |
+ *
+ * ⚠️ **Il n'y a pas de module de matières premières** (§20 révisé) : les
+ * matières sont des **dépenses** (`add_expense`). Les actions `*_material`
+ * subsistent pour les lots saisis avant la révision, dont le coût historique
+ * reste compté.
  *
  * Ce module n'a pas de sous-routes `materiaux` / `ouvriers` (contrairement aux
  * chantiers) : les écritures de lignes passent donc par cette route unique,
@@ -70,6 +82,76 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const action = typeof body.action === 'string' ? body.action : '';
 
     switch (action) {
+      case 'add_expense': {
+        const expense = await addProductionExpense(productionId, {
+          category: String(body.category ?? ''),
+          amount: toNumber(body.amount, 0),
+          description: body.description ?? null,
+          paymentMethod: body.paymentMethod ?? undefined,
+          beneficiary: body.beneficiary ?? null,
+          date: typeof body.date === 'string' && body.date ? body.date : today(),
+          userId: user.id,
+        });
+        await writeAudit({
+          user,
+          action: 'create',
+          entity: 'brick_production',
+          entityId: productionId,
+          details: {
+            addedExpense: expense.category,
+            amount: expense.amount,
+            paymentMethod: expense.paymentMethod,
+            date: expense.date,
+          },
+        });
+        return ok(expense, 201);
+      }
+
+      case 'update_expense': {
+        const expenseId = toNumber(body.expenseId, 0);
+        if (!expenseId) throw new ValidationError('La dépense à modifier est obligatoire');
+        const expense = await updateProductionExpense(
+          productionId,
+          expenseId,
+          {
+            category: body.category === undefined ? undefined : String(body.category),
+            amount: body.amount === undefined ? undefined : toNumber(body.amount, 0),
+            description: body.description === undefined ? undefined : body.description,
+            paymentMethod: body.paymentMethod === undefined ? undefined : body.paymentMethod,
+            beneficiary: body.beneficiary === undefined ? undefined : body.beneficiary,
+            date: body.date === undefined ? undefined : body.date,
+          },
+          { userId: user.id },
+        );
+        await writeAudit({
+          user,
+          action: 'update',
+          entity: 'brick_production',
+          entityId: productionId,
+          details: { updatedExpenseId: expenseId, category: expense.category, amount: expense.amount },
+        });
+        return ok(expense);
+      }
+
+      case 'remove_expense': {
+        const expenseId = toNumber(body.expenseId, 0);
+        if (!expenseId) throw new ValidationError('La dépense à retirer est obligatoire');
+        const production = await removeProductionExpense(
+          productionId,
+          expenseId,
+          String(body.reason ?? ''),
+          { userId: user.id },
+        );
+        await writeAudit({
+          user,
+          action: 'cancel',
+          entity: 'brick_production',
+          entityId: productionId,
+          details: { removedExpenseId: expenseId, reason: body.reason ?? null, cashReturned: true },
+        });
+        return ok(production);
+      }
+
       case 'advance_stage': {
         if (!isBrickStage(body.stage)) throw new ValidationError('Étape de fabrication invalide');
         const production = await advanceStage(productionId, body.stage);
@@ -202,6 +284,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
         }
         if (body.startDate !== undefined) patch.startDate = body.startDate;
         if (body.endDate !== undefined) patch.endDate = body.endDate;
+        if (body.team !== undefined) patch.team = body.team;
         if (body.notes !== undefined) patch.notes = body.notes;
 
         if (Object.keys(patch).length === 0) {

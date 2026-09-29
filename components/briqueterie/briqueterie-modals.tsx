@@ -50,6 +50,9 @@ import { formatNumber, formatPercent, formatQuantity, today } from '@/lib/format
 export type BrickStage = 'molding' | 'drying' | 'firing' | 'stored';
 export type BrickShape = 'solid' | 'hollow' | 'block';
 
+/** Statut de la fiche de production : enregistrée, terminée (en stock) ou annulée. */
+export type BrickProductionStatus = 'registered' | 'finished' | 'cancelled';
+
 export type BrickTypeRow = {
   id: number;
   productId: number;
@@ -84,8 +87,13 @@ export type BrickProductionRow = {
   startDate: string | null;
   endDate: string | null;
   stage: BrickStage;
+  status: BrickProductionStatus;
+  /** Équipe ou responsable de production (texte libre). */
+  team: string | null;
   materialCost: number;
   laborCost: number;
+  /** Somme des dépenses rattachées au lot. */
+  expenseCost: number;
   totalCost: number;
   /** Calculé : `total_cost ÷ (produced − broken)` — jamais stocké. */
   unitCost: number;
@@ -93,10 +101,14 @@ export type BrickProductionRow = {
   stored: boolean;
   materialsCount: number;
   workersCount: number;
+  /** Nombre de dépenses rattachées. */
+  expensesCount: number;
   userId: number | null;
   userName: string | null;
   notes: string | null;
   isCancelled: boolean;
+  cancelReason: string | null;
+  cancelledAt: string | null;
   createdAt: string | null;
 };
 
@@ -112,6 +124,44 @@ export type BrickProductionMaterialRow = {
   createdAt: string | null;
 };
 
+/**
+ * Dépense rattachée à un lot — vue « production » de la table `expenses`.
+ *
+ * Depuis la révision §20, **il n'y a plus de module de matières premières** : le
+ * ciment, le sable, le carburant, l'électricité ou la main-d'œuvre ponctuelle sont
+ * des dépenses rattachées à la fabrication, avec une catégorie métier fermée.
+ */
+export type BrickProductionExpenseRow = {
+  id: number;
+  productionId: number;
+  category: string;
+  description: string | null;
+  amount: number;
+  paymentMethod: string;
+  beneficiary: string | null;
+  /** Date métier `YYYY-MM-DD`. */
+  date: string;
+  userId: number | null;
+  userName: string | null;
+  cancelled: boolean;
+  createdAt: string | null;
+};
+
+/** Catégories fermées des dépenses de production (miroir de `lib/expenses.ts`). */
+export const PRODUCTION_EXPENSE_CATEGORIES = [
+  'Ciment',
+  'Sable',
+  'Argile / terre',
+  'Bois de chauffe',
+  'Carburant',
+  "Main-d'œuvre",
+  'Électricité',
+  'Eau',
+  'Transport',
+  'Entretien',
+  'Autre',
+] as const;
+
 export type BrickProductionWorkerRow = {
   id: number;
   productionId: number;
@@ -125,8 +175,11 @@ export type BrickProductionWorkerRow = {
 };
 
 export type ProductionCosts = {
+  /** Matières premières **historiques** (lots antérieurs à la révision §20). */
   materialCost: number;
   laborCost: number;
+  /** Dépenses rattachées au lot — la source de coût de la fiche. */
+  expenseCost: number;
   totalCost: number;
   producedQuantity: number;
   brokenQuantity: number;
@@ -139,7 +192,6 @@ export type BrickProductionDetail = {
   brickType: BrickTypeRow | null;
   product: {
     id: number;
-    code: string;
     name: string;
     unit: string;
     stock: number;
@@ -147,6 +199,7 @@ export type BrickProductionDetail = {
   } | null;
   materials: BrickProductionMaterialRow[];
   workers: BrickProductionWorkerRow[];
+  expenses: BrickProductionExpenseRow[];
   costs: ProductionCosts;
 };
 
@@ -161,6 +214,7 @@ export type BrickSummary = {
   soldRevenue: number;
   materialsCost: number;
   laborCost: number;
+  expensesCost: number;
   totalCost: number;
   averageUnitCost: number;
   byType: {
@@ -219,6 +273,27 @@ export function brickStageLabel(stage: string | null | undefined): string {
   if (!stage) return '—';
   return BRICK_STAGE_LABELS[stage as BrickStage] ?? stage;
 }
+
+export const BRICK_PRODUCTION_STATUS_LABELS: Record<BrickProductionStatus, string> = {
+  registered: 'Enregistrée',
+  finished: 'Terminée',
+  cancelled: 'Annulée',
+};
+
+export const BRICK_PRODUCTION_STATUS_TONES: Record<BrickProductionStatus, BadgeTone> = {
+  registered: 'info',
+  finished: 'success',
+  cancelled: 'error',
+};
+
+export function brickProductionStatusLabel(status: string | null | undefined): string {
+  if (!status) return '—';
+  return BRICK_PRODUCTION_STATUS_LABELS[status as BrickProductionStatus] ?? status;
+}
+
+export const BRICK_PRODUCTION_STATUS_OPTIONS: { value: BrickProductionStatus; label: string }[] = (
+  ['registered', 'finished', 'cancelled'] as BrickProductionStatus[]
+).map((value) => ({ value, label: BRICK_PRODUCTION_STATUS_LABELS[value] }));
 
 export function brickShapeLabel(shape: string | null | undefined): string {
   if (!shape) return '—';
@@ -369,6 +444,25 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
         </Badge>
         {production.stored && <span className="text-[11px] text-success">Stock crédité</span>}
       </div>
+    ),
+  },
+  {
+    // Le statut est une information métier (« enregistrée / terminée / annulée »),
+    // distincte de l'étape : un lot annulé garde son étape d'origine.
+    key: 'status',
+    label: 'Statut',
+    render: (production) => (
+      <Badge tone={BRICK_PRODUCTION_STATUS_TONES[production.status]}>
+        {brickProductionStatusLabel(production.status)}
+      </Badge>
+    ),
+  },
+  {
+    key: 'team',
+    label: 'Équipe',
+    hideOnMobile: true,
+    render: (production) => (
+      <span className="text-sm text-base-content/70">{production.team || '—'}</span>
     ),
   },
   {
@@ -534,6 +628,61 @@ export const productionWorkerColumns: Column<BrickProductionWorkerRow>[] = [
   },
 ];
 
+/**
+ * Colonnes des **dépenses rattachées à un lot**.
+ *
+ * L'ordre suit la règle du dépôt (§8) : la date propre de la ligne d'abord, puis
+ * la catégorie (information principale), le libellé, le moyen de paiement et le
+ * montant.
+ */
+export const productionExpenseColumns: Column<BrickProductionExpenseRow>[] = [
+  {
+    key: 'date',
+    label: 'Date',
+    className: 'whitespace-nowrap',
+    render: (expense) => (
+      <span className="tabular text-base-content/70">{formatDateShort(expense.date)}</span>
+    ),
+  },
+  {
+    key: 'category',
+    label: 'Catégorie',
+    primary: true,
+    render: (expense) => (
+      <div className="min-w-0">
+        <div className="truncate font-medium">{expense.category}</div>
+        {expense.description && (
+          <div className="truncate text-xs text-base-content/50">{expense.description}</div>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: 'beneficiary',
+    label: 'Bénéficiaire',
+    hideOnMobile: true,
+    render: (expense) => <span className="text-sm">{expense.beneficiary || '—'}</span>,
+  },
+  {
+    key: 'paymentMethod',
+    label: 'Moyen',
+    hideOnMobile: true,
+    render: (expense) => <Badge tone="neutral">{expense.paymentMethod}</Badge>,
+  },
+  {
+    key: 'userName',
+    label: 'Saisie par',
+    hideOnMobile: true,
+    render: (expense) => <span className="text-sm text-base-content/70">{expense.userName || '—'}</span>,
+  },
+  {
+    key: 'amount',
+    label: 'Montant',
+    className: 'text-right whitespace-nowrap',
+    render: (expense) => <MoneyText value={expense.amount} bold />,
+  },
+];
+
 /* ------------------------------------------------------------------ *
  * Modale — nouveau lot de fabrication
  * ------------------------------------------------------------------ */
@@ -554,6 +703,7 @@ export function BrickProductionModal({
   const [brickTypeId, setBrickTypeId] = useState('');
   const [plannedQuantity, setPlannedQuantity] = useState('');
   const [startDate, setStartDate] = useState(today());
+  const [team, setTeam] = useState('');
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -563,6 +713,7 @@ export function BrickProductionModal({
     setBrickTypeId('');
     setPlannedQuantity('');
     setStartDate(today());
+    setTeam('');
     setNotes('');
     setFormError(null);
     setIsSubmitting(false);
@@ -593,6 +744,7 @@ export function BrickProductionModal({
           brickTypeId: selected.id,
           plannedQuantity: Number(String(plannedQuantity).replace(',', '.')) || 0,
           startDate: startDate || null,
+          team: team.trim() || null,
           notes: notes.trim() || null,
         }),
       });
@@ -632,9 +784,9 @@ export function BrickProductionModal({
         }}
       >
         <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
-          Le lot naît à l’étape <strong>moulage</strong>. Les matières premières et l’équipe
-          s’ajoutent depuis sa fiche : chaque matière consommée sort du stock par un mouvement
-          « sortie », et les briques finies n’entrent en stock qu’à l’étape{' '}
+          Le lot naît à l’étape <strong>moulage</strong>. Les <strong>dépenses de fabrication</strong>{' '}
+          (ciment, sable, carburant, main-d’œuvre…) et l’équipe s’ajoutent depuis sa fiche : chaque
+          dépense sort de la caisse, et les briques finies n’entrent en stock qu’à l’étape{' '}
           <strong>mise en stock</strong> — une seule fois.
         </p>
 
@@ -704,6 +856,23 @@ export function BrickProductionModal({
             <DatePicker value={startDate} onChange={setStartDate} placeholder="Date de début" />
           </FormField>
         </div>
+
+        <FormField
+          label="Équipe ou responsable de production"
+          htmlFor="brick-team"
+          hint="Qui fabrique ce lot (ex. « Équipe A — Mamadou »)."
+        >
+          <input
+            id="brick-team"
+            type="text"
+            maxLength={120}
+            className="input input-bordered min-h-11 w-full"
+            value={team}
+            onChange={(event) => setTeam(event.target.value)}
+            disabled={isSubmitting}
+            placeholder="Équipe A — Mamadou"
+          />
+        </FormField>
 
         <FormField label="Notes de fabrication" htmlFor="brick-notes">
           <textarea
@@ -1571,6 +1740,366 @@ export function RemoveWorkerDialog({
 }
 
 /* ------------------------------------------------------------------ *
+ * Modale — dépense rattachée au lot
+ * ------------------------------------------------------------------ */
+
+/**
+ * Saisie rapide d'une dépense de fabrication.
+ *
+ * C'est le cœur de la révision §20 : **plus de module de matières premières**.
+ * Le ciment, le sable, le carburant, l'électricité ou la main-d'œuvre ponctuelle
+ * se saisissent ici, rattachés au lot ; la catégorie est une liste fermée métier
+ * (miroir de `PRODUCTION_EXPENSE_CATEGORIES`) et non la liste des paramètres.
+ *
+ * La dépense **sort de la caisse** (côté serveur, `lib/expenses.ts`) : le lot
+ * n'est pas un simple carnet de notes, l'argent réellement dépensé est tracé.
+ */
+export function ProductionExpenseModal({
+  isOpen,
+  onClose,
+  productionId,
+  batchNumber,
+  paymentMethods,
+  expense = null,
+  onSaved,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  productionId: number;
+  batchNumber: string;
+  paymentMethods: string[];
+  /** Dépense à corriger ; `null` = nouvelle dépense. */
+  expense?: BrickProductionExpenseRow | null;
+  onSaved: () => void;
+}) {
+  const isEdit = expense !== null;
+
+  const [category, setCategory] = useState('');
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [beneficiary, setBeneficiary] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [date, setDate] = useState(today());
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setCategory(expense?.category ?? '');
+    setAmount(expense ? String(expense.amount) : '');
+    setDescription(expense?.description ?? '');
+    setBeneficiary(expense?.beneficiary ?? '');
+    setPaymentMethod(expense?.paymentMethod ?? paymentMethods[0] ?? 'Espèces');
+    setDate(expense?.date ?? today());
+    setFormError(null);
+    setIsSubmitting(false);
+  }, [isOpen, expense, paymentMethods]);
+
+  const parsedAmount = Number(String(amount).replace(',', '.'));
+  const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const canSubmit = Boolean(category) && amountValid && /^\d{4}-\d{2}-\d{2}$/.test(date);
+
+  async function submit() {
+    if (isSubmitting) return;
+
+    if (!category) {
+      setFormError('Choisissez la catégorie de la dépense.');
+      return;
+    }
+    if (!amountValid) {
+      setFormError('Saisissez un montant strictement supérieur à zéro.');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setFormError('La date est obligatoire.');
+      return;
+    }
+
+    setFormError(null);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(
+        `/api/briqueterie/productions/${productionId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(
+            isEdit
+              ? {
+                  action: 'update_expense',
+                  expenseId: expense!.id,
+                  category,
+                  amount: parsedAmount,
+                  description: description.trim() || null,
+                  beneficiary: beneficiary.trim() || null,
+                  paymentMethod,
+                  date,
+                }
+              : {
+                  action: 'add_expense',
+                  category,
+                  amount: parsedAmount,
+                  description: description.trim() || null,
+                  beneficiary: beneficiary.trim() || null,
+                  paymentMethod,
+                  date,
+                },
+          ),
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'La dépense n’a pas pu être enregistrée.'));
+      }
+
+      toast.success(
+        isEdit
+          ? `Dépense « ${category} » corrigée : le coût du lot ${batchNumber} est recalculé.`
+          : `Dépense « ${category} » rattachée au lot ${batchNumber} : sortie de caisse enregistrée.`,
+      );
+      onSaved();
+      onClose();
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : 'La dépense n’a pas pu être enregistrée.';
+      setFormError(message);
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={() => {
+        if (!isSubmitting) onClose();
+      }}
+      title={isEdit ? `Corriger une dépense — ${batchNumber}` : `Nouvelle dépense — ${batchNumber}`}
+      size="lg"
+      fullScreenMobile
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
+          La dépense est rattachée à <strong>ce lot</strong> et <strong>sort de la caisse</strong> au
+          moment de l’enregistrement. Elle entre dans le coût total de production, donc dans le coût
+          de revient unitaire.
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Catégorie" required>
+            <select
+              className="select select-bordered h-11 w-full sm:h-9"
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              aria-label="Catégorie de la dépense"
+            >
+              <option value="">Choisir une catégorie…</option>
+              {PRODUCTION_EXPENSE_CATEGORIES.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </FormField>
+
+          <FormField label="Montant" required>
+            <label className="relative block">
+              <input
+                type="number"
+                min={0}
+                step="any"
+                inputMode="decimal"
+                className="input input-bordered h-11 w-full pr-14 text-right tabular sm:h-9"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                placeholder="0"
+                aria-label="Montant de la dépense"
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] font-medium text-base-content/45">
+                GNF
+              </span>
+            </label>
+          </FormField>
+
+          <FormField label="Date" required>
+            <DatePicker value={date} onChange={setDate} placeholder="jj mois aaaa" />
+          </FormField>
+
+          <FormField label="Moyen de paiement">
+            <select
+              className="select select-bordered h-11 w-full sm:h-9"
+              value={paymentMethod}
+              onChange={(event) => setPaymentMethod(event.target.value)}
+              aria-label="Moyen de paiement de la dépense"
+            >
+              {paymentMethods.map((method) => (
+                <option key={method} value={method}>
+                  {method}
+                </option>
+              ))}
+            </select>
+          </FormField>
+
+          <FormField label="Libellé / description">
+            <input
+              type="text"
+              className="input input-bordered h-11 w-full sm:h-9"
+              value={description}
+              maxLength={200}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Ex. 20 sacs de ciment"
+              aria-label="Libellé de la dépense"
+            />
+          </FormField>
+
+          <FormField label="Bénéficiaire (facultatif)">
+            <input
+              type="text"
+              className="input input-bordered h-11 w-full sm:h-9"
+              value={beneficiary}
+              maxLength={120}
+              onChange={(event) => setBeneficiary(event.target.value)}
+              placeholder="Fournisseur, ouvrier…"
+              aria-label="Bénéficiaire de la dépense"
+            />
+          </FormField>
+        </div>
+
+        {formError && (
+          <p className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
+            {formError}
+          </p>
+        )}
+
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            className="btn btn-ghost min-h-11"
+            onClick={onClose}
+            disabled={isSubmitting}
+          >
+            Annuler
+          </button>
+          <button type="submit" className="btn btn-primary min-h-11" disabled={!canSubmit || isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <span className="loading loading-spinner loading-sm" aria-hidden />
+                Enregistrement…
+              </>
+            ) : isEdit ? (
+              'Enregistrer la correction'
+            ) : (
+              'Enregistrer la dépense'
+            )}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Retrait d'une dépense du lot : **annulation motivée**.
+ *
+ * L'argent revient en caisse (mouvement inverse), la dépense n'est plus comptée,
+ * et rien n'est effacé — le motif et l'auteur restent dans le journal (§7).
+ */
+export function RemoveExpenseDialog({
+  isOpen,
+  onClose,
+  onConfirm,
+  expense,
+  isSubmitting,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void | Promise<void>;
+  expense: BrickProductionExpenseRow | null;
+  isSubmitting: boolean;
+}) {
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setReason('');
+    setError(null);
+  }, [isOpen]);
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={() => {
+        if (!isSubmitting) onClose();
+      }}
+      title="Retirer une dépense du lot"
+      size="md"
+      fullScreenMobile
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!reason.trim()) {
+            setError('Le motif est obligatoire : une opération validée ne disparaît jamais sans trace.');
+            return;
+          }
+          void onConfirm(reason.trim());
+        }}
+      >
+        <p className="text-sm text-base-content/70">
+          <strong>{expense?.category}</strong> — <MoneyText value={expense?.amount ?? 0} /> seront
+          annulés : la dépense n’est plus comptée dans le coût du lot et{' '}
+          <strong>l’argent revient en caisse</strong> par un mouvement inverse motivé. La ligne reste
+          consultable.
+        </p>
+
+        <FormField label="Motif du retrait" required>
+          <textarea
+            rows={3}
+            maxLength={300}
+            className="textarea textarea-bordered w-full"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Ex. dépense saisie sur le mauvais lot"
+            aria-label="Motif du retrait de la dépense"
+          />
+        </FormField>
+
+        {error && (
+          <p className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
+            {error}
+          </p>
+        )}
+
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            className="btn btn-ghost min-h-11"
+            onClick={onClose}
+            disabled={isSubmitting}
+          >
+            Conserver la dépense
+          </button>
+          <button type="submit" className="btn btn-error min-h-11" disabled={isSubmitting}>
+            {isSubmitting ? 'Annulation…' : 'Annuler la dépense'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Modale — annulation motivée du lot (§7 : jamais de suppression)
  * ------------------------------------------------------------------ */
 
@@ -2126,12 +2655,25 @@ export function ProductionCostCard({
 
   return (
     <div className="space-y-1">
-      <InfoRow label="Coût des matières premières">
-        <MoneyText value={costs.materialCost} />
+      {/*
+        Dépenses rattachées d'abord : c'est la source de coût normale depuis la
+        révision §20 (plus de module de matières premières). Les deux autres
+        lignes restent affichées pour les lots historiques, sauf si elles sont
+        nulles — un « 0 GNF » sur une fiche récente n'apprend rien.
+      */}
+      <InfoRow label="Dépenses de production (ciment, sable, carburant…)">
+        <MoneyText value={costs.expenseCost} />
       </InfoRow>
-      <InfoRow label="Main-d’œuvre">
-        <MoneyText value={costs.laborCost} />
-      </InfoRow>
+      {costs.laborCost > 0 && (
+        <InfoRow label="Main-d’œuvre de l’équipe affectée">
+          <MoneyText value={costs.laborCost} />
+        </InfoRow>
+      )}
+      {costs.materialCost > 0 && (
+        <InfoRow label="Matières premières (lots antérieurs)">
+          <MoneyText value={costs.materialCost} />
+        </InfoRow>
+      )}
       <InfoRow label="Coût de revient total">
         <MoneyText value={costs.totalCost} bold />
       </InfoRow>

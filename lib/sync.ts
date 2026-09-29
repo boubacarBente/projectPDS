@@ -12,7 +12,7 @@ import { syncOutbox, syncState, devices } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 
 /**
- * Les 30 tables métier, dans l'ordre **topologique** imposé par §23.4 :
+ * Les 32 tables métier, dans l'ordre **topologique** imposé par §23.4 :
  * un enfant ne peut pas être écrit avant son parent.
  */
 export const SYNC_ORDER = [
@@ -40,6 +40,11 @@ export const SYNC_ORDER = [
   'brick_productions',
   'brick_production_materials',
   'brick_production_workers',
+  // Les commandes de briques se placent **après** les types de briques et les
+  // ventes : leurs lignes référencent `brick_types` / `products`, et
+  // `sales_invoice_id` peut pointer une facture déjà transmise.
+  'brick_orders',
+  'brick_order_items',
   'furniture_models',
   'furniture_model_materials',
   'furniture_orders',
