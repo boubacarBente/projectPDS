@@ -138,6 +138,15 @@ const SCREENS = [
   { path: '/briqueterie/ventes', expect: ['Ventes de briques'] },
   { path: '/briqueterie/rapports', expect: ['Rapports de la briqueterie'] },
   { path: '/ventes/nouvelle?canal=briqueterie', expect: ['Nouvelle vente de briques'] },
+  {
+    // Le bouton de jeu de démonstration vit dans les paramètres (§20.5).
+    path: '/parametres',
+    expect: [
+      'Briqueterie — données de démonstration',
+      'Pré-remplir la briqueterie',
+      'Réinitialiser la briqueterie',
+    ],
+  },
   { path: '/ventes', expect: ['Ventes'], reject: ['Nouvelle vente de briques'] },
 ];
 

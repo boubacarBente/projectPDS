@@ -10,11 +10,11 @@
  * pour permettre le rapprochement caisse ↔ vente ↔ dépense (§13).
  */
 
-import { db, rawAll, rawGet } from '@/db';
+import { db, rawAll, rawGet, rawRun } from '@/db';
 import { cashMovements, cashSessions } from '@/db/schema';
 import { and, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
 import { enqueueSyncWrite } from '@/lib/sync';
-import { today } from '@/lib/format';
+import { roundMoney, today } from '@/lib/format';
 
 export type CashMovementType = 'income' | 'expense';
 export type CashReferenceType = 'sale' | 'payment' | 'purchase' | 'expense' | 'manual';
@@ -416,6 +416,54 @@ export async function getCashBalance(): Promise<number> {
     `SELECT balance_after FROM cash_movements ORDER BY id DESC LIMIT 1`,
   );
   return Number(row?.balance_after ?? 0);
+}
+
+/**
+ * **Reconstruit `balance_after` de tous les mouvements**, dans l'ordre des
+ * identifiants, en repartant de zéro à chaque session.
+ *
+ * Pourquoi cette fonction existe : `balance_after` est un **solde courant**, et
+ * le solde de caisse affiché est celui du **dernier** mouvement
+ * (`getCashBalance()`). Supprimer une partie des mouvements — ce que fait une
+ * réinitialisation partielle, par exemple celle de la briqueterie — laisse donc
+ * les soldes suivants faux : ils incluent encore l'argent d'opérations qui
+ * n'existent plus, et la caisse annonce un montant trop élevé.
+ *
+ * La règle de reconstruction est exactement celle d'`addCashMovement()` :
+ *  - chaque session repart de son solde d'ouverture (le mouvement
+ *    « Montant d'ouverture de caisse » est un `income` ordinaire) ;
+ *  - `income` ajoute, `expense` retire ;
+ *  - les mouvements sans session (imports, corrections) forment une série à
+ *    part, démarrant à zéro.
+ *
+ * Fonction de **réparation** : elle ne crée ni ne supprime aucune ligne, elle
+ * réécrit uniquement `balance_after`, et ne déclenche donc aucune écriture de
+ * synchronisation (le solde n'est pas une donnée à transmettre, il se recalcule).
+ */
+export async function recalculateCashBalances(): Promise<{ movements: number }> {
+  const rows = await rawAll<{ id: number; session_id: number | null; type: string; amount: number }>(
+    `SELECT id, session_id, type, amount FROM cash_movements ORDER BY id ASC`,
+  );
+
+  let currentSession: number | null | undefined = undefined;
+  let running = 0;
+  let updated = 0;
+
+  for (const row of rows) {
+    if (row.session_id !== currentSession) {
+      currentSession = row.session_id;
+      running = 0;
+    }
+
+    running = roundMoney(
+      row.type === 'income' ? running + Number(row.amount ?? 0) : running - Number(row.amount ?? 0),
+    );
+
+    await rawRun('UPDATE cash_movements SET balance_after = ? WHERE id = ?', [running, row.id]);
+    updated += 1;
+  }
+
+  return { movements: updated };
 }
 
 export type CashSummary = {

@@ -1630,9 +1630,50 @@ Le module est **un seul** point du menu latéral (`/briqueterie`, permission
 ### 20.4 Vérification
 
 ```bash
-npm run verify:brick       # 44 contrôles de bout en bout (dépenses, stock, canal, commande, acompte, refus)
-npm run verify:brick:ui    # rendu réel des écrans dans Chrome (CDP port 9333), zéro erreur console
+npm run verify:brick       # 58 contrôles de bout en bout (dépenses, stock, canal, commande, acompte, seed/reset, refus)
+npm run verify:brick:ui    # 36 contrôles de rendu réel dans Chrome (CDP port 9333) : 10 écrans, zéro erreur console
 ```
+
+### 20.5 Jeu de démonstration — deux boutons dans les paramètres
+
+Phase de recette : `/parametres` porte une carte **« Briqueterie — données de
+démonstration »** (permission `settings.critical`, administrateur), avec deux
+actions et le compte de ce qui existe déjà.
+
+| Bouton | Effet |
+|---|---|
+| **Pré-remplir la briqueterie** | Crée une **année d'activité** : 29 lots de fabrication, 232 dépenses rattachées, 30 ventes du canal `brick`, 6 commandes à différents stades. Les dates sont réparties sur **l'année** (un à deux lots par mois), le **mois** en cours (lots terminés, ventes, commandes) et la **semaine** en cours (lots encore en fabrication, ventes récentes) — c'est ce qui donne du contenu aux filtres, aux rapports et aux graphiques de production, de ventes et de dépenses. L'opération **ajoute** : elle ne remplace rien. |
+| **Réinitialiser la briqueterie** | Efface l'**activité** de la briqueterie : lots (+ matières historiques et affectations), dépenses rattachées, ventes du canal `brick` (+ lignes, paiements, reçus), commandes (+ lignes et acomptes), mouvements de stock et de caisse correspondants. **Conserve** les types de briques, les produits, les clients, les paramètres et le journal d'actions. Une copie de sécurité de la base est créée avant. |
+
+Trois décisions à connaître :
+
+1. **Le stock des produits de briques est remis à zéro.** Recalculer le stock ne
+   suffisait pas : constaté en recette, `/briqueterie/stock` affichait encore
+   8 850 briques après un reset, alors qu'il ne restait **aucun lot**. Ces
+   briques venaient d'autres modules — 11 048 entrées d'**achats**, 14 902
+   entrées d'**inventaire**, − 17 100 sorties de **ventes du commerce général**.
+   Leurs documents existant toujours, on ne supprime pas ces mouvements : on
+   annule le solde restant par un **ajustement motivé** (`adjustStock`), seul
+   chemin autorisé pour changer un stock. L'invariant `products.stock` = somme
+   des mouvements tient, et la remise à zéro laisse une trace datée et motivée.
+2. **Les soldes de caisse sont reconstruits** (`recalculateCashBalances`) :
+   `balance_after` est un solde courant par session, et le solde affiché est
+   celui du dernier mouvement. Supprimer des mouvements au milieu de l'historique
+   afficherait sinon un montant trop élevé — c'est exactement ce que la
+   réinitialisation partielle provoquait avant cette reconstruction.
+3. **Les compteurs de numérotation ne sont pas remis à zéro** : un numéro de
+   facture ou de lot ne se réutilise jamais, même après un effacement. Après un
+   reset suivi d'un seed, les lots reprennent donc la suite (`BRI-2026-0000xx`).
+
+Le jeu est **déterministe** (aucun tirage aléatoire) : deux exécutions produisent
+le même jeu, ce qui rend deux recettes comparables. Il passe **par les moteurs**
+(`createBrickProduction`, `addProductionExpense`, `advanceStage`,
+`createSalesInvoice`, `createBrickOrder`) : les données créées sont exactement
+celles que l'application aurait produites, invariants compris.
+
+> ⚠️ Ce sont les seules opérations de l'application qui **suppriment
+> physiquement** des lignes, avec la réinitialisation générale des paramètres.
+> Le client les retirera à la mise en production.
 
 ---
 
@@ -2074,7 +2115,7 @@ npm run sync:build       # Construire l'API de synchronisation
 | Rapports | `GET /api/rapports` (`from`, `to`, `previousFrom`, `previousTo`, `productId`, `customerId`, `supplierId`, `paymentStatus`) · `POST /api/rapports/envoyer` · `GET /api/rapports/envois` |
 | Dashboard | `GET /api/operations/snapshot` |
 | Utilisateurs | `GET|POST /api/users` · `GET|PUT|DELETE /api/users/[id]` · `PUT /api/users/[id]/password` · `GET|PUT|DELETE /api/users/[id]/permissions` (§17.4) · `GET /api/audit` |
-| Paramètres | `GET|PUT|POST /api/parametres` · `POST /api/parametres/seed-data` · `POST /api/parametres/reset-data` · `GET /api/parametres/backup` · `POST /api/parametres/restore` |
+| Paramètres | `GET|PUT|POST /api/parametres` · `POST /api/parametres/seed-data` · `POST /api/parametres/reset-data` · `GET|POST /api/parametres/briqueterie` (jeu de démonstration de la briqueterie : `seed` / `reset`, §20.5) · `GET /api/parametres/backup` · `POST /api/parametres/restore` |
 | Soldes | `GET /api/soldes` (créances clients, dettes fournisseurs, bénéfices) |
 | Synchronisation *(poste)* | `GET /api/sync/status` · `POST /api/sync/now` · `GET /api/sync/conflits` · `POST /api/sync/conflits/[id]` · `GET|POST /api/sync/export` · `POST /api/sync/import` · `POST /api/sync/reset` |
 | Synchronisation *(service en ligne)* | `GET /health` · `POST /push` (lots idempotents) · `POST /pull` (watermark) · `POST /devices` (enregistrement / révocation) |
@@ -2112,8 +2153,8 @@ npm run verify:routes      # Découvre et appelle les pages et les routes d'API 
 npm run verify:purchases   # Parcours d'achat de bout en bout (21 contrôles) : stock, caisse, dette, numérotation
 npm run verify:draft       # Politique du brouillon de vente (23 contrôles) : ni stock, ni caisse, ni sync, puis validation
 npm run verify:export      # Export PDF / image / WhatsApp dans un navigateur réel (CDP sur le port 9222)
-npm run verify:brick       # Briqueterie, 44 contrôles : dépenses rattachées, coût/unité, stock unique, canal de vente, commande → acompte → facture, refus attendus
-npm run verify:brick:ui    # Rend chaque écran du module dans Chrome (CDP port 9333) et vérifie le texte rendu + zéro erreur console
+npm run verify:brick       # Briqueterie, 58 contrôles : dépenses rattachées, coût/unité, stock unique, canal de vente, commande → acompte → facture, seed/reset, refus attendus
+npm run verify:brick:ui    # Rend chaque écran du module (dont /parametres) dans Chrome (CDP port 9333) et vérifie le texte rendu + zéro erreur console
 ```
 
 > `verify:brick` et `verify:brick:ui` **fabriquent leur session** à partir d'un

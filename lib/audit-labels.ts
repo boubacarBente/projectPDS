@@ -62,6 +62,8 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   service_job: 'Chantier',
   brick_production: 'Fabrication de briques',
   brick_type: 'Type de brique',
+  brick_order: 'Commande de briques',
+  briqueterie: 'Briqueterie (données de démonstration)',
   furniture_order: 'Commande de meuble',
   furniture_model: 'Modèle de meuble',
   worker: 'Ouvrier',

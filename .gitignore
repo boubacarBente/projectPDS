@@ -63,6 +63,7 @@ server.log
 db-error.log
 updater.log
 .dev.log
+.dev-restart.log
 
 # electron build output
 /release

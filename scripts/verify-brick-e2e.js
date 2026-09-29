@@ -80,9 +80,88 @@ async function api(method, url, body) {
   return { status: response.status, json, text };
 }
 
-/** Prépare la session : un administrateur réel de la base locale. */
-async function prepareSession() {
+/**
+ * L'invariant du §12 : `products.stock` = somme algébrique des mouvements.
+ *
+ * C'est le contrôle que la réinitialisation partielle est la plus susceptible de
+ * casser : elle supprime des mouvements de stock, et le stock doit suivre.
+ */
+async function checkStockInvariant(productId) {
   const client = createClient({ url: `file:${DB_PATH.replace(/\\/g, '/')}`, intMode: 'number' });
+  try {
+    const product = await client.execute({
+      sql: 'SELECT stock FROM products WHERE id = ?',
+      args: [productId],
+    });
+    const rows = await client.execute({
+      sql: 'SELECT type, quantity FROM stock_movements WHERE product_id = ?',
+      args: [productId],
+    });
+
+    const computed = rows.rows.reduce((sum, row) => {
+      const quantity = Number(row.quantity ?? 0);
+      return row.type === 'exit' ? sum - quantity : sum + quantity;
+    }, 0);
+
+    const stored = Number(product.rows[0]?.stock ?? 0);
+    const rounded = Math.round(computed * 1000) / 1000;
+
+    return {
+      ok: Math.abs(stored - rounded) < 0.001,
+      stored,
+      computed: rounded,
+      movements: rows.rows.length,
+    };
+  } finally {
+    client.close();
+  }
+}
+
+/**
+ * Les soldes de caisse sont-ils cohérents ?
+ *
+ * `balance_after` est un **solde courant** par session : on le reconstruit ici et
+ * on le compare à ce qui est stocké. C'est la vérification qui attrape une
+ * suppression partielle de mouvements laissée sans recalcul (le solde affiché
+ * resterait celui d'avant, donc trop élevé).
+ */
+async function checkCashBalances() {
+  const client = createClient({ url: `file:${DB_PATH.replace(/\\/g, '/')}`, intMode: 'number' });
+  try {
+    const rows = await client.execute(
+      'SELECT id, session_id, type, amount, balance_after FROM cash_movements ORDER BY id ASC',
+    );
+
+    let currentSession;
+    let running = 0;
+    const mismatches = [];
+
+    for (const row of rows.rows) {
+      if (row.session_id !== currentSession) {
+        currentSession = row.session_id;
+        running = 0;
+      }
+      running += row.type === 'income' ? Number(row.amount ?? 0) : -Number(row.amount ?? 0);
+
+      if (Math.abs(running - Number(row.balance_after ?? 0)) > 0.01) {
+        mismatches.push(`#${row.id}: stocké ${row.balance_after} ≠ calculé ${running}`);
+      }
+    }
+
+    return {
+      ok: mismatches.length === 0,
+      detail:
+        mismatches.length === 0
+          ? `${rows.rows.length} mouvement(s) cohérents`
+          : `${mismatches.length} écart(s) — ${mismatches.slice(0, 2).join(' | ')}`,
+    };
+  } finally {
+    client.close();
+  }
+}
+
+/** Prépare la session : un administrateur réel de la base locale. */
+async function prepareSession() {  const client = createClient({ url: `file:${DB_PATH.replace(/\\/g, '/')}`, intMode: 'number' });
   const rows = await client.execute(
     "SELECT id, name, username, role FROM users WHERE is_active = 1 ORDER BY (role = 'admin') DESC, id LIMIT 1",
   );
@@ -472,6 +551,129 @@ async function main() {
     'Une dépense de production est bien rattachée à un lot',
     productionRows.length > 0 && productionRows.every((row) => row.referenceType === 'brick_production'),
     `${productionRows.length} ligne(s)`,
+  );
+
+  /* ------------------------------------------------------------------ *
+   * 10 — Jeu de démonstration : réinitialiser, puis pré-remplir (§20.5)
+   * ------------------------------------------------------------------ */
+
+  const beforeReset = await api('GET', '/api/parametres/briqueterie');
+  assert(
+    'Résumé de la briqueterie : 200 et données présentes',
+    beforeReset.status === 200 && beforeReset.json?.hasData === true,
+    `${beforeReset.json?.productions} lot(s), ${beforeReset.json?.sales} vente(s)`,
+  );
+
+  const reset = await api('POST', '/api/parametres/briqueterie', { action: 'reset' });
+  assert(
+    'Réinitialisation de la briqueterie : 200 et copie de sécurité',
+    reset.status === 200 && Boolean(reset.json?.report?.safetyBackup),
+    `HTTP ${reset.status} · ${reset.json?.report?.productions ?? '?'} lot(s) effacé(s)`,
+  );
+
+  const afterReset = await api('GET', '/api/parametres/briqueterie');
+  assert(
+    'Après réinitialisation : plus aucun lot ni vente de briques',
+    afterReset.json?.productions === 0 &&
+      afterReset.json?.sales === 0 &&
+      afterReset.json?.orders === 0 &&
+      afterReset.json?.hasData === false,
+    `lots=${afterReset.json?.productions} ventes=${afterReset.json?.sales} commandes=${afterReset.json?.orders}`,
+  );
+
+  const seed = await api('POST', '/api/parametres/briqueterie', { action: 'seed' });
+  const seedCounts = seed.json?.counts ?? {};
+  assert(
+    'Pré-remplissage : 200 et volumes attendus',
+    seed.status === 200 &&
+      Number(seedCounts.productions) >= 25 &&
+      Number(seedCounts.expenses) >= 200 &&
+      Number(seedCounts.sales) >= 25 &&
+      Number(seedCounts.orders) >= 5 &&
+      Number(seedCounts.lotsStored) >= 20,
+    `HTTP ${seed.status} · ${seedCounts.productions} lot(s), ${seedCounts.expenses} dépense(s), ` +
+      `${seedCounts.sales} vente(s), ${seedCounts.orders} commande(s), ${seedCounts.lotsStored} en stock`,
+  );
+
+  const seeded = await api('GET', '/api/parametres/briqueterie');
+  assert(
+    'Le jeu couvre bien la semaine, le mois et l’année',
+    seeded.json?.hasData === true &&
+      Boolean(seeded.json?.newestProduction) &&
+      Boolean(seeded.json?.oldestProduction) &&
+      seeded.json.oldestProduction < seeded.json.newestProduction,
+    `${seeded.json?.oldestProduction} → ${seeded.json?.newestProduction}`,
+  );
+
+  const seededDashboard = await api('GET', '/api/briqueterie/tableau-de-bord');
+  const seededOrders = seededDashboard.json?.orders ?? {};
+  assert(
+    'Tableau de bord pré-rempli : production de la semaine, du mois, commandes',
+    seededDashboard.status === 200 &&
+      Number(seededDashboard.json?.production?.week ?? 0) > 0 &&
+      Number(seededDashboard.json?.production?.month ?? 0) > 0 &&
+      Object.values(seededOrders).reduce((sum, value) => sum + Number(value ?? 0), 0) >= 5,
+    `semaine=${seededDashboard.json?.production?.week} · mois=${seededDashboard.json?.production?.month} · ` +
+      `commandes=${JSON.stringify(seededOrders)}`,
+  );
+
+  assert(
+    'Rentabilité pré-remplie : chiffre d’affaires et coût de production non nuls',
+    Number(seededDashboard.json?.profitability?.revenue ?? 0) > 0 &&
+      Number(seededDashboard.json?.profitability?.productionCost ?? 0) > 0,
+    `CA=${seededDashboard.json?.profitability?.revenue} · coût=${seededDashboard.json?.profitability?.productionCost}`,
+  );
+
+  const yearFrom = new Date();
+  yearFrom.setUTCFullYear(yearFrom.getUTCFullYear() - 1);
+  const seededReports = await api(
+    'GET',
+    `/api/briqueterie/rapports?from=${yearFrom.toISOString().slice(0, 10)}&to=${new Date().toISOString().slice(0, 10)}`,
+  );
+  assert(
+    'Rapports sur un an : production, ventes, dépenses et rentabilité renseignés',
+    seededReports.status === 200 &&
+      (seededReports.json?.productionByType ?? []).length >= 3 &&
+      (seededReports.json?.salesByProduct ?? []).length >= 3 &&
+      (seededReports.json?.expensesByProduction ?? []).length > 0 &&
+      (seededReports.json?.generalExpensesByCategory ?? []).length >= 0 &&
+      (seededReports.json?.profitability?.revenue ?? 0) > 0,
+    `${seededReports.json?.productionByType?.length ?? 0} type(s), ` +
+      `${seededReports.json?.salesByProduct?.length ?? 0} produit(s) vendu(s)`,
+  );
+
+  // Invariants du stock : `products.stock` doit égaler la somme des mouvements
+  // pour **chaque** produit de briques — c'est le contrôle que la
+  // réinitialisation partielle est la plus susceptible de casser.
+  const invariants = await checkStockInvariant(activeType.productId);
+  assert(
+    'Invariant de stock respecté après réinitialisation puis pré-remplissage',
+    invariants.ok,
+    `stock=${invariants.stored} · mouvements=${invariants.computed}`,
+  );
+
+  const cash = await checkCashBalances();
+  assert(
+    'Soldes de caisse reconstruits : le dernier `balance_after` suit les mouvements',
+    cash.ok,
+    cash.detail,
+  );
+
+  const seedAgain = await api('POST', '/api/parametres/briqueterie', { action: 'seed' });
+  assert(
+    'Pré-remplir deux fois ajoute (ne casse rien)',
+    seedAgain.status === 200 && Number(seedAgain.json?.counts?.productions ?? 0) >= 25,
+    `HTTP ${seedAgain.status} · ${seedAgain.json?.counts?.productions} lot(s) ajouté(s)`,
+  );
+
+  // On repart d'un jeu **unique** : deux années empilées fausseraient la
+  // démonstration que le client va regarder.
+  await api('POST', '/api/parametres/briqueterie', { action: 'reset' });
+  const finalSeed = await api('POST', '/api/parametres/briqueterie', { action: 'seed' });
+  assert(
+    'Jeu de démonstration final : une seule année, propre',
+    finalSeed.status === 200 && Number(finalSeed.json?.counts?.productions ?? 0) >= 25,
+    `${finalSeed.json?.counts?.productions} lot(s)`,
   );
 
   /* ------------------------------------------------------------------ */
