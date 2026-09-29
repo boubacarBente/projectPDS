@@ -249,7 +249,15 @@ function MetricCard({
         )}
       </span>
       <p className="mt-3 truncate text-sm text-base-content/60">{label}</p>
-      <p className="mt-1 truncate text-xl font-bold tabular sm:text-2xl">{value}</p>
+      {/*
+       * La somme se lit **en entier** : `truncate` la coupait (« 301 900 00… »
+       * en `text-2xl` sur cinq cartes à 1366 px). `.metric-amount` fait de la
+       * ligne un conteneur de requête, `.metric-value` en déduit la taille du
+       * chiffre — voir `app/globals.css`.
+       */}
+      <div className="metric-amount mt-1">
+        <p className="metric-value font-bold tabular">{value}</p>
+      </div>
       {hint && <p className="mt-1.5 truncate text-xs text-base-content/50">{hint}</p>}
     </div>
   );
@@ -883,9 +891,15 @@ export default function ClientDetailPage() {
       {!isLoading && !error && stats && customer && (
         <>
           {/* ── Cartes de métriques : uniquement des valeurs déjà calculées ── */}
+          {/*
+            * Cinq cartes par rangée seulement à partir de `2xl` (1536 px) : à
+            * 1366 px, cinq colonnes ne laissent que ~145 px par carte, moins
+            * que « 301 900 000 GNF » au format des autres cartes. À quatre
+            * colonnes, le montant garde sa taille et se lit en entier.
+            */}
           <div
             className={`grid gap-4 sm:grid-cols-2 ${
-              canViewProfit && stats.profit !== null ? 'xl:grid-cols-5' : 'xl:grid-cols-4'
+              canViewProfit && stats.profit !== null ? 'xl:grid-cols-4 2xl:grid-cols-5' : 'xl:grid-cols-4'
             }`}
           >
             {/*

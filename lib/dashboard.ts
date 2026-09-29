@@ -8,11 +8,21 @@
  * Le chiffre d'affaires est la somme de deux **documents facturables
  * autonomes** : `sales_invoices` (ventes) **et** `service_jobs` (prestations de
  * chantier). Ils ne sont jamais comptés deux fois (§6.1).
+ *
+ * ⚠️ **Le bloc `profit` ne se calcule plus ici.** Il vient de
+ * `getPeriodResult()` (`lib/profit.ts`), la **même** fonction que `/soldes`.
+ * Avant, le tableau de bord portait sa propre formule et annonçait donc un
+ * autre « bénéfice net » que `/soldes` pour la même période — mesuré sur la
+ * base de recette : **−2 389 000 GNF** contre **+2 535 000 GNF** sur le même
+ * mois, parce qu'il ignorait les prestations de chantier, sommait les dépenses
+ * annulées et rapportait une marge TTC à des coûts HT. Un montant recalculé à
+ * deux endroits finit toujours par diverger : il n'y a plus qu'un seul calcul.
  */
 
 import { rawAll, rawGet } from '@/db';
 import { getCashBalance, getCashSummary, getOpenSession } from '@/lib/caisse';
 import { previousPeriod, startOfMonth, startOfWeek, today, endOfMonth } from '@/lib/format';
+import { getPeriodResult } from '@/lib/profit';
 
 export type PeriodKey = 'day' | 'week' | 'month' | 'year' | 'total';
 
@@ -116,27 +126,13 @@ export type DashboardSnapshot = {
 };
 
 /**
- * Coût des marchandises vendues (COGS).
+ * Instantané complet du tableau de bord pour une période nommée.
  *
- * Le README §15 précise que le prix d'achat utilisé pour la marge est celui **du
- * jour de la vente**, lu sur `products.purchase_price` — et non celui du jour de
- * l'édition du rapport. Comme les lignes de facture figent le prix de vente mais
- * pas le prix d'achat, on interroge `products` : c'est le compromis retenu en
- * V1 (Q20 : l'instantané du coût pourra être ajouté si les marges historiques
- * doivent être figées).
+ * Le calcul de marge et de bénéfice (COGS, dépenses, main-d'œuvre) n'est **pas**
+ * fait ici : il vient de `getPeriodResult()` (`lib/profit.ts`), comme pour
+ * `/soldes`. Ce module ne porte que ce qui est propre au tableau de bord —
+ * caisse, créances, dettes, stock, dernières ventes, courbes.
  */
-async function computeCogs(from: string, to: string): Promise<number> {
-  const row = await rawGet<{ cogs: number | null }>(
-    `SELECT SUM(i.quantity * COALESCE(p.purchase_price, 0)) AS cogs
-     FROM sales_invoice_items i
-     JOIN sales_invoices v ON v.id = i.invoice_id
-     LEFT JOIN products p ON p.id = i.product_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?`,
-    [from, to],
-  );
-  return Number(row?.cogs ?? 0);
-}
-
 export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<DashboardSnapshot> {
   const period = resolvePeriod(periodKey);
   const { from, to } = period;
@@ -170,56 +166,44 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
     [from, to],
   );
 
-  /* ------------------------------ Comparaison ----------------------------- */
+  /* ------------------- Comparaison et résultat de la période -------------- */
+  /*
+   * Le résultat de la période sort de `getPeriodResult()` — la **même**
+   * fonction que `/soldes` : CA HT des ventes + prestations de chantier, coût
+   * des marchandises, dépenses non annulées et main-d'œuvre. La comparaison
+   * porte donc sur exactement la grandeur affichée dans la carte « Chiffre
+   * d'affaires » : un écart « vs période précédente » calculé sur une autre
+   * base serait un faux signal.
+   *
+   * `activeRevenue` reste, lui, le CA **des ventes** (TTC, factures actives) :
+   * il sert au compteur de ventes et au panier moyen, pas au bénéfice.
+   */
   const previous = previousPeriod(from, to);
-  const previousRow = await rawGet<{ revenue: number | null }>(
-    `SELECT COALESCE(SUM(total), 0) AS revenue
-     FROM sales_invoices
-     WHERE status = 'active' AND date >= ? AND date <= ?`,
-    [previous.from, previous.to],
-  );
-  const previousRevenue = Number(previousRow?.revenue ?? 0);
+  const [result, previousResult, activeRow] = await Promise.all([
+    getPeriodResult(from, to),
+    getPeriodResult(previous.from, previous.to),
+    rawGet<{ revenue: number | null }>(
+      `SELECT COALESCE(SUM(total), 0) AS revenue
+       FROM sales_invoices
+       WHERE status = 'active' AND date >= ? AND date <= ?`,
+      [from, to],
+    ),
+  ]);
 
-  const activeRow = await rawGet<{ revenue: number | null }>(
-    `SELECT COALESCE(SUM(total), 0) AS revenue
-     FROM sales_invoices
-     WHERE status = 'active' AND date >= ? AND date <= ?`,
-    [from, to],
-  );
   const activeRevenue = Number(activeRow?.revenue ?? 0);
+  const previousRevenue = previousResult.revenue;
 
   const deltaPercent =
     previousRevenue > 0
-      ? Math.round(((activeRevenue - previousRevenue) / previousRevenue) * 1000) / 10
+      ? Math.round(((result.revenue - previousRevenue) / previousRevenue) * 1000) / 10
       : null;
 
   /* -------------------------------- Bénéfice ------------------------------ */
-  const cogs = await computeCogs(from, to);
-
-  const expensesRow = await rawGet<{ total: number | null }>(
-    `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE date >= ? AND date <= ?`,
-    [from, to],
-  );
-  const expensesTotal = Number(expensesRow?.total ?? 0);
-
-  // La main-d'œuvre des chantiers et des fabrications entre dans le bénéfice
-  // net (§15), en plus des dépenses de fonctionnement.
-  const laborRow = await rawGet<any>(
-    `SELECT
-       (SELECT COALESCE(SUM(labor_cost), 0) FROM brick_productions
-         WHERE date(start_date) >= date(?) AND date(start_date) <= date(?)) +
-       (SELECT COALESCE(SUM(labor_cost), 0) FROM furniture_orders
-         WHERE date(start_date) >= date(?) AND date(start_date) <= date(?)) +
-       (SELECT COALESCE(SUM(amount), 0) FROM service_job_workers w
-          JOIN service_jobs j ON j.id = w.job_id
-         WHERE date(j.start_date) >= date(?) AND date(j.start_date) <= date(?))
-       AS labor`,
-    [from, to, from, to, from, to],
-  );
-  const laborCost = Number(laborRow?.labor ?? 0);
-
-  const grossProfit = activeRevenue - cogs;
-  const netProfit = grossProfit - expensesTotal - laborCost;
+  /*
+   * Plus aucun calcul de bénéfice ici : `result` (ci-dessus) porte déjà le CA,
+   * le coût des marchandises, la marge, les dépenses, la main-d'œuvre et le
+   * bénéfice net du §15 — même définition que `/soldes`.
+   */
 
   /* --------------------------------- Caisse ------------------------------- */
   const [cashBalance, cashSummary, openSession] = await Promise.all([
@@ -370,13 +354,17 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
       deltaPercent,
     },
     profit: {
-      revenue: activeRevenue,
-      cogs,
-      grossProfit,
-      grossMarginPercent: activeRevenue > 0 ? Math.round((grossProfit / activeRevenue) * 1000) / 10 : 0,
-      expenses: expensesTotal,
-      laborCost,
-      netProfit,
+      // §15, via `getPeriodResult()` : CA HT + prestations de chantier, coût
+      // des marchandises (matériaux des chantiers inclus), dépenses non
+      // annulées et main-d'œuvre. Exactement le chiffre de la carte
+      // « Bénéfice net » de `/soldes` pour la même période.
+      revenue: result.revenue,
+      cogs: result.cogs,
+      grossProfit: result.grossProfit,
+      grossMarginPercent: result.grossMarginPercent,
+      expenses: result.expenses,
+      laborCost: result.laborCost,
+      netProfit: result.netProfit,
     },
     cash: {
       balance: cashBalance,
@@ -447,64 +435,9 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
   };
 }
 
-/**
- * Métriques de marge et de profit (reprise de `calculateSalesProfitMetrics()`
- * du projet Gaz, enrichie des dépenses — README §15).
+/*
+ * `calculateSalesProfitMetrics()` et `getProductMargins()` vivaient ici : elles
+ * sont passées dans `lib/profit.ts`, aux côtés de `getPeriodResult()`, pour que
+ * le résultat d'une période n'ait qu'un seul foyer de calcul. `lib/rapports.ts`
+ * et `lib/balances.ts` les importent désormais de là.
  */
-export async function calculateSalesProfitMetrics(from: string, to: string) {
-  const revenueRow = await rawGet<{ revenue: number | null; quantity: number | null }>(
-    `SELECT COALESCE(SUM(i.amount), 0) AS revenue, COALESCE(SUM(i.quantity), 0) AS quantity
-     FROM sales_invoice_items i
-     JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?`,
-    [from, to],
-  );
-
-  const cogs = await computeCogs(from, to);
-  const revenue = Number(revenueRow?.revenue ?? 0);
-
-  return {
-    from,
-    to,
-    revenue,
-    quantity: Number(revenueRow?.quantity ?? 0),
-    cogs,
-    grossProfit: revenue - cogs,
-    grossMarginPercent: revenue > 0 ? Math.round(((revenue - cogs) / revenue) * 1000) / 10 : 0,
-  };
-}
-
-/** Marge par produit, triée par marge cumulée (README §15). */
-export async function getProductMargins(from: string, to: string, limit = 20) {
-  const rows = await rawAll<any>(
-    `SELECT i.product_id,
-            i.product_name,
-            SUM(i.quantity)                                AS quantity,
-            SUM(i.amount)                                  AS revenue,
-            SUM(i.quantity * COALESCE(p.purchase_price, 0)) AS cost
-     FROM sales_invoice_items i
-     JOIN sales_invoices v ON v.id = i.invoice_id
-     LEFT JOIN products p ON p.id = i.product_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?
-     GROUP BY i.product_id, i.product_name
-     ORDER BY (SUM(i.amount) - SUM(i.quantity * COALESCE(p.purchase_price, 0))) DESC
-     LIMIT ?`,
-    [from, to, limit],
-  );
-
-  return rows.map((r) => {
-    const revenue = Number(r.revenue ?? 0);
-    const cost = Number(r.cost ?? 0);
-    const quantity = Number(r.quantity ?? 0);
-    return {
-      productId: r.product_id == null ? null : Number(r.product_id),
-      productName: r.product_name,
-      quantity,
-      revenue,
-      cost,
-      margin: revenue - cost,
-      marginPercent: revenue > 0 ? Math.round(((revenue - cost) / revenue) * 1000) / 10 : 0,
-      unitMargin: quantity > 0 ? (revenue - cost) / quantity : 0,
-    };
-  });
-}

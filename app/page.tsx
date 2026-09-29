@@ -42,6 +42,7 @@ import {
   TopProductsChart,
 } from '@/components/dashboard/dashboard-charts';
 import { RoleGate } from '@/components/role-gate';
+import { Tooltip } from '@/components/tooltip';
 import { useSettings } from '@/app/parametres/page';
 import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
 import { formatDateShort, formatDateTime } from '@/lib/date-format';
@@ -55,6 +56,97 @@ const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: 'year', label: 'Année' },
   { key: 'total', label: 'Total' },
 ];
+
+/**
+ * Textes des infobulles — regroupés ici pour être relus d'un coup d'œil
+ * ------------------------------------------------------------------ */
+
+/**
+ * Largeur des bulles du tableau de bord. Les explications font plusieurs
+ * phrases : à la largeur par défaut de `Tooltip` (20 rem) elles s'étirent en
+ * hauteur. Même valeur que les infobulles longues de la fiche client (§7.2).
+ */
+const TOOLTIP_MAX_WIDTH = 'min(26rem, calc(100vw - 1rem))';
+
+/**
+ * Explication de chaque carte de métrique, affichée au **survol de la pastille**
+ * (et au focus clavier) : la bulle s'ouvre immédiatement, et le curseur devient
+ * une main pour annoncer qu'il y a quelque chose à lire.
+ *
+ * Pourquoi les textes sont regroupés ici, et non écrits dans le JSX : sur la
+ * fiche client (§7.2) la même règle s'applique — une explication qui dérive du
+ * calcul est un mensonge affiché, et on ne la voit qu'en les relisant côte à
+ * côte. Un test en recette a montré que « bénéfice » voulait dire deux choses
+ * différentes selon l'écran ; ces phrases disent donc explicitement **d'où**
+ * vient chaque montant.
+ *
+ * ⚠️ Ces phrases doivent rester **vraies** :
+ *  - chiffre d'affaires et bénéfice viennent de `getPeriodResult()`
+ *    (`lib/profit.ts`) : montants **HT**, prestations de chantier incluses, et
+ *    c'est exactement ce qu'affiche `/soldes` pour la même période ;
+ *  - le coût retenu est le prix d'achat **actuel** du catalogue, pas celui du
+ *    jour de la vente (Q20) — c'est ce que dit le mot « estimé » ;
+ *  - caisse, créances et dettes sont des **photos** : elles ne dépendent pas de
+ *    la période choisie, contrairement au chiffre d'affaires et au bénéfice.
+ */
+const METRIC_TOOLTIPS = {
+  "Chiffre d'affaires":
+    'Tout ce qui a été facturé sur la période : ventes de marchandises hors taxes + prestations de chantier. Les brouillons et les documents annulés ne comptent pas. C’est le même montant que sur la page Soldes.',
+
+  'Bénéfice net estimé':
+    'Ce qu’il reste une fois toutes les charges payées : chiffre d’affaires − coût d’achat des marchandises vendues − dépenses de fonctionnement − main-d’œuvre. Les prestations de chantier comptent dans le chiffre d’affaires, et leurs matériaux dans le coût. C’est exactement le « Bénéfice net » de la page Soldes. « Estimé », car le coût utilisé est le prix d’achat actuel des produits, pas celui du jour de la vente.',
+
+  'Disponible en caisse':
+    'L’argent réellement présent dans la caisse : le dernier solde enregistré, toutes sessions confondues. C’est une photo du moment — ce montant ne change donc pas avec la période choisie.',
+
+  'Créances clients':
+    'Tout ce que les clients doivent encore : montant facturé − paiements déjà reçus, toutes périodes confondues. C’est une photo à la date du jour, indépendante de la période choisie.',
+
+  'Dettes fournisseurs':
+    'Tout ce que l’entreprise doit encore aux fournisseurs : montant acheté − règlements déjà effectués, toutes périodes confondues. Photo à la date du jour, indépendante de la période choisie.',
+} as const;
+
+/**
+ * Explication de chaque poste du calcul du bénéfice (« Composition du
+ * bénéfice »). C'est le cœur de la lisibilité de la carte : le bénéfice net
+ * n'est pas un chiffre tombé du ciel, c'est une soustraction qu'on peut suivre
+ * ligne à ligne.
+ */
+const PROFIT_CHIP_TOOLTIPS = {
+  "Chiffre d'affaires":
+    'Tout ce qui a été facturé sur la période : ventes hors taxes + prestations de chantier. C’est le point de départ du calcul.',
+
+  'Coût des marchandises':
+    'Ce que les marchandises vendues ont coûté : quantité vendue × prix d’achat actuel du produit, plus les matériaux consommés par les chantiers.',
+
+  'Marge brute':
+    'Chiffre d’affaires − coût des marchandises. Ce que l’activité rapporte avant de payer les dépenses de fonctionnement et la main-d’œuvre.',
+
+  Dépenses:
+    'Frais de fonctionnement de la période : transport, loyer, salaires administratifs, carburant, électricité… Une dépense annulée n’est plus comptée.',
+
+  "Main-d'œuvre":
+    'Salaires et paiements de main-d’œuvre des chantiers, de la briqueterie et de l’atelier. Un chantier annulé ne laisse pas sa main-d’œuvre dans le calcul.',
+
+  'Bénéfice net':
+    'Marge brute − dépenses − main-d’œuvre. C’est ce que l’activité a réellement rapporté sur la période, et le même montant que sur la page Soldes.',
+} as const;
+
+/** Explication de l'en-tête de chaque carte de section du tableau de bord. */
+const CARD_TOOLTIPS = {
+  'Composition du bénéfice':
+    'Le détail du calcul, du chiffre d’affaires au bénéfice net. Chaque pastille est expliquée à son survol.',
+  'Évolution sur 12 mois':
+    'Chiffre d’affaires, achats et dépenses mois par mois sur les douze derniers mois. Le coût d’achat des marchandises n’y est pas ventilé.',
+  'Produits les plus vendus':
+    'Les produits qui ont généré le plus de chiffre d’affaires sur la période choisie.',
+  'Alertes de stock':
+    'Produits en rupture (stock à zéro) ou descendus au seuil d’alerte défini sur leur fiche.',
+  'Dernières opérations':
+    'Les huit dernières ventes enregistrées, avec leur statut de paiement. Les brouillons n’y figurent pas.',
+  'Clients débiteurs':
+    'Les clients qui doivent encore de l’argent, du plus gros encours au plus petit, avec leur échéance la plus ancienne.',
+} as const;
 
 /* ------------------------------------------------------------------ *
  * Briques visuelles locales (maquette) — copiées des pages ventes et
@@ -102,6 +194,57 @@ const PASTILLE_TONES = {
 type PastilleTone = keyof typeof PASTILLE_TONES;
 
 /**
+ * Pastille d'icône (carré arrondi ~40 px) des cartes de métriques et des
+ * en-têtes de section.
+ *
+ * Quand `tooltip` est fourni, la pastille **devient la commande de l'infobulle**
+ * (motif déjà en place sur la fiche client, §7.2) :
+ *  - la bulle s'ouvre **immédiatement** au survol (`onMouseEnter`) et au focus
+ *    clavier (`tabIndex`), et se ferme à la sortie ou sur Échap ;
+ *  - le curseur passe en main (`cursor-pointer`) pour annoncer qu'il y a
+ *    quelque chose à lire ;
+ *  - `role="img"` + `aria-label` donnent un nom accessible à la pastille, qui
+ *    n'a aucun texte — sans quoi l'infobulle serait annoncée dans le vide.
+ *
+ * La commande est la pastille entière (40 px) et non l'icône seule (20 px) :
+ * même rendu, mais une cible de survol/focus deux fois plus large.
+ *
+ * `maxWidth` : ces explications sont des phrases entières (« Bénéfice net
+ * estimé » en compte 413 caractères). À la largeur par défaut de `Tooltip`
+ * (20 rem), la bulle s'étire en hauteur ; 26 rem est la valeur déjà retenue
+ * ailleurs pour un texte de plusieurs phrases (README §7.2).
+ */
+function Pastille({
+  tone,
+  tooltip,
+  ariaLabel,
+  children,
+  className = '',
+}: {
+  tone: PastilleTone;
+  /** Explication affichée au survol. Sans elle, la pastille reste inerte. */
+  tooltip?: React.ReactNode;
+  /** Nom accessible — le titre de la carte ou le libellé de la métrique. */
+  ariaLabel?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const base = `flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${PASTILLE_TONES[tone]} ${className}`;
+
+  if (!tooltip) {
+    return <span className={base}>{children}</span>;
+  }
+
+  return (
+    <Tooltip label={tooltip} maxWidth={TOOLTIP_MAX_WIDTH}>
+      <span className={`${base} cursor-pointer`} tabIndex={0} role="img" aria-label={ariaLabel}>
+        {children}
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
  * En-tête de carte : pastille d'icône carrée arrondie (~40 px) + titre gras +
  * sous-titre discret, actions éventuelles à droite (maquette).
  */
@@ -118,14 +261,15 @@ function CardTitle({
   subtitle?: string;
   actions?: React.ReactNode;
 }) {
+  // Le titre sert de clé des infobulles : une carte sans explication n'en a pas.
+  const tooltip = CARD_TOOLTIPS[title as keyof typeof CARD_TOOLTIPS];
+
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
-        <span
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${PASTILLE_TONES[tone]}`}
-        >
+        <Pastille tone={tone} tooltip={tooltip} ariaLabel={title}>
           {icon}
-        </span>
+        </Pastille>
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold leading-tight">{title}</h2>
           {subtitle && <p className="mt-0.5 text-xs text-base-content/60">{subtitle}</p>}
@@ -140,6 +284,11 @@ function CardTitle({
  * Carte de métrique : pastille colorée, libellé, valeur en gros puis ligne
  * secondaire. `delta` n'est renseigné que lorsqu'un écart existe réellement
  * dans l'instantané (chiffre d'affaires) — sinon seule l'aide est affichée.
+ *
+ * La pastille porte l'explication de la métrique (`METRIC_TOOLTIPS`), ouverte
+ * immédiatement au survol : c'est elle qui lève l'ambiguïté entre des montants
+ * qui ne se comparent pas (chiffre d'affaires de la période, caisse et soldes
+ * figés à la date du jour).
  */
 function MetricCard({
   label,
@@ -159,16 +308,23 @@ function MetricCard({
   const hasDelta = typeof delta === 'number' && Number.isFinite(delta);
   const positive = hasDelta && delta! > 0;
   const negative = hasDelta && delta! < 0;
+  // Le libellé de la carte est la clé de son explication (METRIC_TOOLTIPS).
+  const iconTooltip = METRIC_TOOLTIPS[label as keyof typeof METRIC_TOOLTIPS];
 
   return (
     <div className="surface-card min-w-0 border border-base-200 bg-base-100 p-4 shadow-sm sm:p-5">
-      <span
-        className={`flex h-10 w-10 items-center justify-center rounded-xl ${PASTILLE_TONES[tone]}`}
-      >
+      <Pastille tone={tone} tooltip={iconTooltip} ariaLabel={label}>
         {icon}
-      </span>
+      </Pastille>
       <p className="mt-3 truncate text-sm text-base-content/60">{label}</p>
-      <p className="mt-1 text-xl font-bold tabular sm:text-2xl">{value}</p>
+      {/*
+       * Même règle que sur la fiche client : le montant ne se coupe jamais.
+       * `.metric-amount` + `.metric-value` (app/globals.css) font suivre la
+       * taille du chiffre à la largeur de la carte.
+       */}
+      <div className="metric-amount mt-1">
+        <p className="metric-value font-bold tabular">{value}</p>
+      </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
         {hasDelta && (
           <span
@@ -218,13 +374,32 @@ function ProfitChip({
   value: React.ReactNode;
   tone: ChipTone;
 }) {
-  return (
-    <div className={`min-w-0 rounded-xl border px-3 py-2 ${CHIP_TONES[tone]}`}>
+  // Le libellé du chip est la clé de son explication (PROFIT_CHIP_TOOLTIPS).
+  const tooltip = PROFIT_CHIP_TOOLTIPS[label as keyof typeof PROFIT_CHIP_TOOLTIPS];
+  const className = `min-w-0 rounded-xl border px-3 py-2 ${CHIP_TONES[tone]}`;
+
+  const content = (
+    <>
       <div className="truncate text-[11px] font-semibold uppercase tracking-wide opacity-80">
         {label}
       </div>
       <div className="mt-0.5 text-sm font-semibold tabular">{value}</div>
-    </div>
+    </>
+  );
+
+  /*
+   * Sans explication, le chip reste un simple badge. Avec, il devient une
+   * commande : `tabIndex` pour le clavier, et le texte du chip (libellé +
+   * montant) sert de nom accessible — inutile de le répéter en `aria-label`.
+   */
+  if (!tooltip) return <div className={className}>{content}</div>;
+
+  return (
+    <Tooltip label={tooltip} maxWidth={TOOLTIP_MAX_WIDTH}>
+      <div className={`${className} cursor-pointer`} tabIndex={0}>
+        {content}
+      </div>
+    </Tooltip>
   );
 }
 
@@ -473,7 +648,12 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* ---------------------------- Indicateurs ---------------------------- */}
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {/*
+            * Cinq cartes par rangée à partir de `2xl` seulement : à 1366 px,
+            * cinq colonnes coupaient les montants (« 162 514 30… »). Voir la
+            * règle `.metric-amount` / `.metric-value` dans `app/globals.css`.
+            */}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
             {/* Seul le chiffre d'affaires dispose d'une comparaison de période
                 dans l'instantané : l'écart n'est donc affiché qu'ici. */}
             <MetricCard
@@ -534,7 +714,7 @@ export default function DashboardPage() {
               }
               tone="success"
               title="Composition du bénéfice"
-              subtitle="Aucun montant n’est stocké : tout est recalculé à la lecture."
+              subtitle="Chiffre d’affaires HT + prestations de chantier, coût des marchandises, dépenses et main-d’œuvre — la même définition que la page Soldes (§15). Aucun montant n’est stocké : tout est recalculé à la lecture."
             />
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -575,8 +755,9 @@ export default function DashboardPage() {
                 <Icon d={ICONS.info} className="mt-0.5 h-4 w-4 shrink-0" />
                 <p>
                   Dont <strong>{data!.jobs.count}</strong> prestation(s) de chantier pour{' '}
-                  <MoneyText value={data!.jobs.revenue} /> — document facturable autonome, jamais
-                  compté deux fois dans le chiffre d’affaires.
+                  <MoneyText value={data!.jobs.revenue} /> — <strong>incluses</strong> dans le
+                  chiffre d’affaires ci-dessus, jamais comptées deux fois : ce sont des documents
+                  facturables autonomes, comme sur la page Soldes.
                 </p>
               </div>
             )}

@@ -19,17 +19,16 @@
  *     autonomes** : `sales_invoices` (ventes, en HT) **et** `service_jobs`
  *     (prestations de chantier). Ils ne sont jamais comptés deux fois (§15).
  *
- * La marge et le bénéfice brut réutilisent `calculateSalesProfitMetrics()` et
- * `getProductMargins()` de `lib/dashboard.ts` : ce qui existe déjà n'est pas
- * recalculé ici (CONVENTIONS §2, règle de propriété).
+ * La marge et le bénéfice brut réutilisent `getPeriodResult()` et
+ * `getProductMargins()` de `lib/profit.ts` : ce qui existe déjà n'est pas
+ * recalculé ici (CONVENTIONS §2, règle de propriété). C'est la **même**
+ * fonction que celle du tableau de bord, donc les deux écrans ne peuvent plus
+ * annoncer deux bénéfices différents pour la même période.
  */
 
 import { rawAll, rawGet } from '@/db';
-import {
-  calculateSalesProfitMetrics,
-  getProductMargins,
-  type PeriodKey,
-} from '@/lib/dashboard';
+import { getPeriodResult, getProductMargins } from '@/lib/profit';
+import type { PeriodKey } from '@/lib/dashboard';
 import { today } from '@/lib/format';
 
 /** Enveloppe paginée imposée (CONVENTIONS §4). */
@@ -138,7 +137,7 @@ export type TopSupplierRow = {
   balance: number;
 };
 
-/** Marge par produit — forme exacte de `getProductMargins()` (lib/dashboard.ts). */
+/** Marge par produit — forme exacte de `getProductMargins()` (lib/profit.ts). */
 export type ProductMarginRow = Awaited<ReturnType<typeof getProductMargins>>[number];
 
 /* ------------------------------------------------------------------ *
@@ -372,27 +371,6 @@ export async function getSupplierBalances(options: {
  * ------------------------------------------------------------------ */
 
 /**
- * Main-d'œuvre de la période : chantiers, fabrications de briques et commandes
- * d'atelier — les trois sources de `labor_cost` du §15, en une seule requête.
- */
-async function sumLaborCost(from: string, to: string): Promise<number> {
-  const row = await rawGet<{ labor: number | null }>(
-    `SELECT
-       (SELECT COALESCE(SUM(labor_cost), 0) FROM brick_productions
-         WHERE date(start_date) >= date(?) AND date(start_date) <= date(?)) +
-       (SELECT COALESCE(SUM(labor_cost), 0) FROM furniture_orders
-         WHERE date(start_date) >= date(?) AND date(start_date) <= date(?)) +
-       (SELECT COALESCE(SUM(amount), 0) FROM service_job_workers w
-          JOIN service_jobs j ON j.id = w.job_id
-         WHERE j.status <> 'cancelled'
-           AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?))
-       AS labor`,
-    [from, to, from, to, from, to],
-  );
-  return Number(row?.labor ?? 0);
-}
-
-/**
  * Treize mois d'historique (le mois courant inclus) : chiffre d'affaires,
  * dépenses et bénéfice brut par mois. Sert la courbe de la page `/soldes`.
  */
@@ -451,6 +429,12 @@ async function getMonthlyTrend(): Promise<BalancesByMonth[]> {
 /**
  * Synthèse complète d'une période (§15).
  *
+ * Le **résultat** (CA, coût des marchandises, marge, dépenses, main-d'œuvre,
+ * bénéfice net) vient de `getPeriodResult()` (`lib/profit.ts`) : exactement la
+ * même fonction que celle du tableau de bord, donc les deux écrans ne peuvent
+ * plus annoncer deux bénéfices différents. Ne restent ici que ce qui est
+ * propre à `/soldes` : les créances, les dettes et la courbe sur douze mois.
+ *
  * Les bornes sont inclusives et portent sur la **date métier** `YYYY-MM-DD` —
  * le seul champ filtré (CONVENTIONS §6 règle 2) : un `BETWEEN` sur un
  * horodatage renverrait zéro ligne.
@@ -462,54 +446,9 @@ export async function getBalancesSummary(options: {
   const from = options.from ?? '1900-01-01';
   const to = options.to ?? '2999-12-31';
 
-  const [salesRow, jobsRow, jobsMaterialsRow, marginMetrics, expensesRow, laborCost, trend] =
-    await Promise.all([
-      rawGet<{ total: number | null }>(
-        `SELECT COALESCE(SUM(total_ht), 0) AS total
-         FROM sales_invoices
-         WHERE status = 'active' AND date >= ? AND date <= ?`,
-        [from, to],
-      ),
-      rawGet<{ count: number; total: number | null }>(
-        `SELECT COUNT(*) AS count, COALESCE(SUM(total), 0) AS total
-         FROM service_jobs
-         WHERE status <> 'cancelled'
-           AND date(start_date) >= date(?) AND date(start_date) <= date(?)`,
-        [from, to],
-      ),
-      rawGet<{ total: number | null }>(
-        `SELECT COALESCE(SUM(m.amount), 0) AS total
-         FROM service_job_materials m
-         JOIN service_jobs j ON j.id = m.job_id
-         WHERE j.status <> 'cancelled'
-           AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)`,
-        [from, to],
-      ),
-      calculateSalesProfitMetrics(from, to),
-      rawGet<{ total: number | null }>(
-        `SELECT COALESCE(SUM(amount), 0) AS total
-         FROM expenses
-         WHERE deleted_at IS NULL AND date >= ? AND date <= ?`,
-        [from, to],
-      ),
-      sumLaborCost(from, to),
-      getMonthlyTrend(),
-    ]);
-
-  const revenueHt = Number(salesRow?.total ?? 0);
-  const jobsRevenue = Number(jobsRow?.total ?? 0);
-  const jobsCount = Number(jobsRow?.count ?? 0);
-  const jobsMaterialCost = Number(jobsMaterialsRow?.total ?? 0);
-
-  const revenue = revenueHt + jobsRevenue;
-  // Coût des marchandises vendues (marchandises revendues) + matériaux
-  // consommés par les chantiers : les deux sont des coûts directs.
-  const cogs = marginMetrics.cogs + jobsMaterialCost;
-  const grossProfit = revenue - cogs;
-  const expenses = Number(expensesRow?.total ?? 0);
-  const netProfit = grossProfit - expenses - laborCost;
-
-  const [receivablesRow, payablesRow] = await Promise.all([
+  const [result, trend, receivablesRow, payablesRow] = await Promise.all([
+    getPeriodResult(from, to),
+    getMonthlyTrend(),
     rawGet<{ total: number | null; debtors: number }>(
       `SELECT COALESCE(SUM(remaining_amount), 0) AS total,
               COUNT(DISTINCT customer_id)        AS debtors
@@ -529,21 +468,18 @@ export async function getBalancesSummary(options: {
     debtorsCount: Number(receivablesRow?.debtors ?? 0),
     totalPayables: Number(payablesRow?.total ?? 0),
     creditorsCount: Number(payablesRow?.creditors ?? 0),
-    revenue,
-    revenueHt,
-    jobsRevenue,
-    cogs,
-    grossProfit,
-    // La marge est rapportée au chiffre d'affaires complet : c'est le seul
-    // pourcentage qui ne surestime pas la rentabilité réelle de l'activité.
-    grossMarginPercent:
-      revenue > 0 ? Math.round((grossProfit / revenue) * 1000) / 10 : 0,
-    expenses,
-    laborCost,
-    expensesTotal: expenses,
-    netProfit,
-    jobsMaterialCost,
-    jobsCount,
+    revenue: result.revenue,
+    revenueHt: result.revenueHt,
+    jobsRevenue: result.jobsRevenue,
+    cogs: result.cogs,
+    grossProfit: result.grossProfit,
+    grossMarginPercent: result.grossMarginPercent,
+    expenses: result.expenses,
+    laborCost: result.laborCost,
+    expensesTotal: result.expenses,
+    netProfit: result.netProfit,
+    jobsMaterialCost: result.jobsMaterialCost,
+    jobsCount: result.jobsCount,
     byMonth: trend,
   };
 }

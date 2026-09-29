@@ -118,6 +118,33 @@ table .tabular,
 }
 
 /* ------------------------------------------------------------------
+ * Montant d'une carte de métrique : la taille du chiffre suit la largeur de
+ * la carte, pour que la somme ne soit **jamais coupée**.
+ *
+ * Constat (fiche client et tableau de bord, écran de 1366 px) : cinq cartes
+ * par rangée ne laissent que ~145 px utiles, alors que « 301 900 000 GNF » en
+ * `text-2xl` en demande 180 — la carte affichait « 301 900 00… », ce qui est
+ * une faute de lecture pour un comptable. Retirer `truncate` ne suffisait pas :
+ * `.money` est `white-space: nowrap`, le montant débordait alors sur la carte
+ * voisine (défaut constaté sur le tableau de bord, dont le fond du voisin
+ * recouvrait la fin du nombre).
+ *
+ * `100 / 10,6 = 9,4 cadratins`, à comparer aux 9,15 cadratins mesurés au
+ * navigateur pour « 12 345 678 900 GNF » (11 chiffres, graisse 600, chiffres
+ * tabulaires) : la somme reste entière jusqu'aux dizaines de milliards. Le
+ * plafond `text-2xl` garde la taille d'origine sur un grand écran, le plancher
+ * `1rem` la lisibilité sur une carte étroite.
+ * ------------------------------------------------------------------ */
+.metric-amount {
+  container-type: inline-size;
+}
+
+.metric-value {
+  font-size: clamp(1rem, 10.6cqw, 1.5rem);
+  line-height: 1.25;
+}
+
+/* ------------------------------------------------------------------
  * Cartes, champs, badges — rayons cohérents sur TOUTES les pages.
  * ------------------------------------------------------------------ */
 .surface-card {

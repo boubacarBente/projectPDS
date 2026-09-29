@@ -14,12 +14,12 @@
  * `GET /api/rapports` et par les types de `lib/rapports-types.ts`.
  *
  * Réutilisation imposée : `calculateSalesProfitMetrics()`, `getProductMargins()`
- * et `previousPeriod()` ne sont pas réécrits. `lib/dashboard.ts` n'est **pas**
- * modifié — on ne fait que l'appeler.
+ * et `previousPeriod()` ne sont pas réécrits — ils viennent de `lib/profit.ts`
+ * (avec `getPeriodResult()`) et `lib/format.ts`. Aucune variante locale.
  */
 
 import { rawAll, rawGet } from '@/db';
-import { calculateSalesProfitMetrics, getProductMargins } from '@/lib/dashboard';
+import { calculateSalesProfitMetrics, getProductMargins } from '@/lib/profit';
 import { getCustomersSummary, listDebtors } from '@/lib/customers';
 import { getSuppliersSummary } from '@/lib/suppliers';
 import { getStockSummary, listStockProducts } from '@/lib/stock';
