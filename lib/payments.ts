@@ -11,31 +11,19 @@
  * peuvent donc jamais diverger de la somme réelle des encaissements.
  */
 
-import { db, rawAll, rawGet } from '@/db';
-import {
-  brickOrders,
-  payments,
-  salesInvoices,
-  purchaseInvoices,
-  serviceJobs,
-} from '@/db/schema';
-import { and, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
-import { enqueueSyncWrite } from '@/lib/sync';
-import { renderDocumentNumber, getSettings, nextSequence } from '@/lib/settings';
+import { db, rawAll, rawGet, withTransaction } from '@/db';
+import { payments, salesInvoices, purchaseInvoices, serviceJobs } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { nextDocumentNumber } from '@/lib/settings';
 import { addCashMovement } from '@/lib/caisse';
 import { today } from '@/lib/format';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /**
- * Types de document encaissables.
- *
- * `brick_order` (commande de briques, §20) a été ajouté sans migration : en
- * SQLite la colonne `payments.type` est un `text` sans contrainte `CHECK`, la
- * liste fermée vit donc dans TypeScript. L'acompte d'une commande est encaissé
- * exactement comme celui d'une vente (reçu, caisse, recalcul du reste) ; à la
- * facturation, il est **transféré** sur la facture de vente
- * (`invoiceBrickOrder`), l'argent n'est donc jamais compté deux fois.
+ * Types de document encaissables. (`brick_order` n'existe plus que dans
+ * l'historique de l'ancienne briqueterie : il n'est plus encaissable.)
  */
-export type PaymentType = 'sale' | 'purchase' | 'service_job' | 'brick_order';
+export type PaymentType = 'sale' | 'purchase' | 'service_job';
 export type PaymentLabel = 'deposit' | 'balance' | 'full';
 
 export class PaymentError extends Error {
@@ -48,6 +36,7 @@ export class PaymentError extends Error {
 
 export type PaymentRow = {
   id: number;
+  storeId: number | null;
   receiptNumber: string;
   type: PaymentType;
   referenceId: number;
@@ -82,12 +71,6 @@ const DOCUMENT_CONFIG: Record<
     label: 'Chantier',
     cashType: 'income',
     syncTable: 'service_jobs',
-  },
-  brick_order: {
-    table: brickOrders,
-    label: 'Commande de briques',
-    cashType: 'income',
-    syncTable: 'brick_orders',
   },
 };
 
@@ -130,12 +113,6 @@ export async function recomputeDocumentPayments(
     .set({ amountPaid, remainingAmount, paymentStatus, updatedAt: new Date() })
     .where(eq(config.table.id, referenceId));
 
-  await enqueueSyncWrite(config.syncTable, null, 'update', {
-    amount_paid: amountPaid,
-    remaining_amount: remainingAmount,
-    payment_status: paymentStatus,
-  });
-
   return { amountPaid, remainingAmount, paymentStatus, total };
 }
 
@@ -146,6 +123,8 @@ export async function recomputeDocumentPayments(
  * recalcul du document → mouvement de caisse (sauf paiement « Crédit »).
  */
 export async function createPayment(input: {
+  /** Magasin de l'utilisateur : le document doit lui appartenir. */
+  storeId: number;
   type: PaymentType;
   referenceId: number;
   amount: number;
@@ -157,10 +136,22 @@ export async function createPayment(input: {
   /** Évite le mouvement de caisse pour un règlement hors caisse. */
   skipCash?: boolean;
 }): Promise<PaymentRow> {
+  return withTransaction(() => createPaymentInTx(input));
+}
+
+async function createPaymentInTx(input: Parameters<typeof createPayment>[0]): Promise<PaymentRow> {
   const amount = Math.round((Number(input.amount) || 0) * 100) / 100;
   if (amount <= 0) throw new PaymentError('Le montant du paiement doit être supérieur à zéro');
+  if (!input.storeId) throw new PaymentError('Magasin obligatoire pour un paiement');
 
   const document = await loadDocument(input.type, input.referenceId);
+
+  // Cloisonnement (§5, §11) : un magasin n'encaisse que ses propres documents.
+  if (Number(document.storeId) !== Number(input.storeId)) {
+    throw new PaymentError(
+      'Ce document appartient à un autre magasin : l’encaissement doit être fait par ce magasin.',
+    );
+  }
 
   if (document.status === 'cancelled') {
     throw new PaymentError('Impossible d’encaisser un document annulé');
@@ -181,13 +172,7 @@ export async function createPayment(input: {
    * briques** ont, elles, un vrai brouillon : on refuse `draft` et `cancelled`
    * et on accepte tout le reste du cycle (`confirmed` → … → `delivered`).
    */
-  if (input.type === 'brick_order') {
-    if (document.status === 'draft' || document.status === 'cancelled') {
-      throw new PaymentError(
-        `Impossible d’encaisser la commande ${document.orderNumber ?? ''} : confirmez-la d’abord.`,
-      );
-    }
-  } else if (input.type !== 'service_job' && document.status !== 'active') {
+  if (input.type !== 'service_job' && document.status !== 'active') {
     throw new PaymentError(
       input.type === 'sale'
         ? `Impossible d’encaisser la facture ${document.invoiceNumber ?? ''} : c’est un brouillon. Validez la vente avant d’enregistrer un encaissement.`
@@ -212,10 +197,7 @@ export async function createPayment(input: {
     );
   }
 
-  const settings = await getSettings();
-  const prefix = settings.receiptPrefix || 'REC';
-  const sequence = await nextSequence('receipt');
-  const receiptNumber = renderDocumentNumber(prefix, sequence, '{PREFIX}-{YYYY}-{NNNNNN}');
+  const receiptNumber = await nextDocumentNumber('receipt', input.storeId);
 
   const paymentLabel: PaymentLabel =
     input.paymentLabel ?? (alreadyPaid > 0 ? (amount >= remaining - 0.01 ? 'balance' : 'deposit') : amount >= remaining - 0.01 ? 'full' : 'deposit');
@@ -226,6 +208,7 @@ export async function createPayment(input: {
   const inserted = await db
     .insert(payments)
     .values({
+      storeId: input.storeId,
       receiptNumber,
       type: input.type,
       referenceId: input.referenceId,
@@ -240,26 +223,15 @@ export async function createPayment(input: {
 
   const config = DOCUMENT_CONFIG[input.type];
 
-  await enqueueSyncWrite('payments', inserted[0].syncId, 'insert', {
-    receipt_number: receiptNumber,
-    type: input.type,
-    reference_id: input.referenceId,
-    amount,
-  });
-
   // Recalcul du document depuis les paiements réels.
   await recomputeDocumentPayments(input.type, input.referenceId);
 
   // Mouvement de caisse : un règlement « Crédit » ne fait pas entrer d'argent.
   if (!input.skipCash && paymentMethod.toLowerCase() !== 'crédit' && paymentMethod.toLowerCase() !== 'credit') {
-    const referenceNumber =
-      input.type === 'sale'
-        ? document.invoiceNumber
-        : input.type === 'brick_order'
-          ? document.orderNumber
-          : document.reference;
+    const referenceNumber = input.type === 'sale' ? document.invoiceNumber : document.reference;
 
     await addCashMovement({
+      storeId: input.storeId,
       type: config.cashType,
       amount,
       paymentMethod,
@@ -293,6 +265,7 @@ function mapPaymentRow(row: any): PaymentRow {
 
   return {
     id: Number(pick('id', 'id')),
+    storeId: pick('storeId', 'store_id') == null ? null : Number(pick('storeId', 'store_id')),
     receiptNumber: String(pick('receiptNumber', 'receipt_number') ?? ''),
     type: pick('type', 'type') as PaymentType,
     // `Number(undefined)` vaut NaN, et NaN passé à libSQL fait échouer la
@@ -324,24 +297,40 @@ export async function getReceiptData(id: number) {
   const payment = await getPayment(id);
   if (!payment) return null;
 
-  const document = await loadDocument(payment.type, payment.referenceId);
   const config = DOCUMENT_CONFIG[payment.type];
+  if (!config) {
+    // Reçu de l'ancienne briqueterie : le document n'existe plus.
+    return {
+      payment,
+      documentLabel: 'Commande de briques (archive)',
+      documentNumber: null,
+      customerName: '—',
+      total: payment.amount,
+      amountPaid: payment.amount,
+      remainingAmount: 0,
+      documentDate: payment.date,
+      dueDate: null,
+      payments: [payment],
+      store: payment.storeId ? await storeHeaderOf(payment.storeId) : null,
+    };
+  }
+  const document = await loadDocument(payment.type, payment.referenceId);
 
   const customerName =
-    payment.type === 'sale' || payment.type === 'service_job' || payment.type === 'brick_order'
+    payment.type === 'sale' || payment.type === 'service_job'
       ? (document.customerName ?? (await customerNameOf(document.customerId)))
       : (document.supplierId ? await supplierNameOf(document.supplierId) : 'Fournisseur');
 
-  const documentNumber =
-    payment.type === 'sale'
-      ? document.invoiceNumber
-      : payment.type === 'brick_order'
-        ? document.orderNumber
-        : document.reference;
+  const documentNumber = payment.type === 'sale' ? document.invoiceNumber : document.reference;
 
   // Historique des paiements du même document : un reçu doit pouvoir montrer
   // où en est l'échéancier (§7).
-  const allPayments = await listPayments({ type: payment.type, referenceId: payment.referenceId, limit: 200 });
+  const allPayments = await listPayments({
+    scope: payment.storeId ? [payment.storeId] : [],
+    type: payment.type,
+    referenceId: payment.referenceId,
+    limit: 200,
+  });
 
   return {
     payment,
@@ -354,6 +343,25 @@ export async function getReceiptData(id: number) {
     documentDate: document.date ?? null,
     dueDate: document.dueDate ?? null,
     payments: allPayments.data,
+    store: payment.storeId ? await storeHeaderOf(payment.storeId) : null,
+  };
+}
+
+/** Coordonnées du magasin émetteur, pour l'en-tête des reçus et factures (§9). */
+export async function storeHeaderOf(storeId: number) {
+  const row = await rawGet<any>(
+    `SELECT id, code, name, address, phone, email, receipt_footer FROM stores WHERE id = ?`,
+    [storeId],
+  );
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    code: String(row.code),
+    name: String(row.name),
+    address: row.address ?? null,
+    phone: row.phone ?? null,
+    email: row.email ?? null,
+    receiptFooter: row.receipt_footer ?? null,
   };
 }
 
@@ -371,6 +379,8 @@ async function supplierNameOf(id: number | null): Promise<string> {
 
 /** Filtres communs aux deux listes de paiements. */
 type PaymentFilters = {
+  /** Magasins visibles (obligatoire : jamais de liste non filtrée). */
+  scope: StoreScope;
   type?: PaymentType;
   referenceId?: number;
   customerId?: number;
@@ -393,7 +403,7 @@ function buildPaymentFilterSql(options: PaymentFilters): {
   conditions: string[];
   args: (string | number)[];
 } {
-  const conditions: string[] = [];
+  const conditions: string[] = [scopeSql('p.store_id', options.scope)];
   const args: (string | number)[] = [];
 
   if (options.type) {
@@ -436,7 +446,7 @@ export async function listPayments(options: PaymentFilters & {
   search?: string;
   page?: number;
   limit?: number;
-} = {}): Promise<{ data: PaymentRow[]; total: number; page: number; limit: number; totalPages: number }> {
+}): Promise<{ data: PaymentRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
@@ -499,7 +509,7 @@ export async function listReceipts(options: PaymentFilters & {
   search?: string;
   page?: number;
   limit?: number;
-} = {}): Promise<{ data: ReceiptRow[]; total: number; page: number; limit: number; totalPages: number }> {
+}): Promise<{ data: ReceiptRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
@@ -521,11 +531,8 @@ export async function listReceipts(options: PaymentFilters & {
             SELECT j.id FROM service_jobs j
             LEFT JOIN customers c ON c.id = j.customer_id
             WHERE j.reference LIKE ? OR c.name LIKE ?))
-      OR (p.type = 'brick_order' AND p.reference_id IN (
-            SELECT o.id FROM brick_orders o
-            WHERE o.order_number LIKE ? OR o.customer_name LIKE ?))
     )`);
-    args.push(like, like, like, like, like, like, like, like, like, like);
+    args.push(like, like, like, like, like, like, like, like);
   }
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -534,7 +541,7 @@ export async function listReceipts(options: PaymentFilters & {
     CASE p.type
       WHEN 'sale'        THEN (SELECT v.invoice_number FROM sales_invoices v WHERE v.id = p.reference_id)
       WHEN 'purchase'    THEN (SELECT a.reference      FROM purchase_invoices a WHERE a.id = p.reference_id)
-      WHEN 'brick_order' THEN (SELECT o.order_number   FROM brick_orders o WHERE o.id = p.reference_id)
+      WHEN 'brick_order' THEN NULL
       ELSE                    (SELECT j.reference      FROM service_jobs j WHERE j.id = p.reference_id)
     END`;
 
@@ -544,7 +551,7 @@ export async function listReceipts(options: PaymentFilters & {
       WHEN 'purchase'    THEN (SELECT s.name FROM purchase_invoices a
                                   LEFT JOIN suppliers s ON s.id = a.supplier_id
                                   WHERE a.id = p.reference_id)
-      WHEN 'brick_order' THEN (SELECT o.customer_name FROM brick_orders o WHERE o.id = p.reference_id)
+      WHEN 'brick_order' THEN NULL
       ELSE                    (SELECT c.name FROM service_jobs j
                                   LEFT JOIN customers c ON c.id = j.customer_id
                                   WHERE j.id = p.reference_id)
@@ -588,11 +595,11 @@ export const PAYMENT_LABELS: Record<PaymentLabel, string> = {
   full: 'Intégral',
 };
 
-export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
+export const PAYMENT_TYPE_LABELS: Record<string, string> = {
   sale: 'Vente',
   purchase: 'Achat',
   service_job: 'Prestation',
-  brick_order: 'Commande de briques',
+  brick_order: 'Commande de briques (archive)',
 };
 
 /**
@@ -601,7 +608,12 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
  */
 export async function getPaymentSchedule(type: PaymentType, referenceId: number) {
   const document = await loadDocument(type, referenceId);
-  const history = await listPayments({ type, referenceId, limit: 200 });
+  const history = await listPayments({
+    scope: document.storeId ? [Number(document.storeId)] : [],
+    type,
+    referenceId,
+    limit: 200,
+  });
 
   const total = Number(document.total ?? 0);
   const paid = Number(document.amountPaid ?? 0);
@@ -621,11 +633,11 @@ export async function getPaymentSchedule(type: PaymentType, referenceId: number)
 }
 
 /** Total encaissé sur une période, par moyen de paiement (§16). */
-export async function getPaymentsSummary(options: { from: string; to: string }) {
+export async function getPaymentsSummary(options: { scope: StoreScope; from: string; to: string }) {
   const rows = await rawAll<{ payment_method: string; type: string; total: number; count: number }>(
     `SELECT payment_method, type, SUM(amount) AS total, COUNT(*) AS count
      FROM payments
-     WHERE date >= ? AND date <= ?
+     WHERE ${scopeSql('store_id', options.scope)} AND date >= ? AND date <= ?
      GROUP BY payment_method, type`,
     [options.from, options.to],
   );

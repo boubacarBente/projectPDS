@@ -1,9 +1,8 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, readJson, requireAction, toInt } from '@/lib/api';
+import { fail, ok, parsePagination, readJson, requireAction, requireActiveStore, scopeFromRequest, toInt } from '@/lib/api';
 import {
   canViewSalesProfit,
   createSalesInvoice,
-  isSalesChannel,
   listSalesInvoices,
   parseSalesInput,
   withoutSalesProfit,
@@ -15,11 +14,8 @@ import {
  * Filtres : `search` (numéro de facture **ou** nom du client), `customerId`,
  * `from`, `to`, `paymentStatus`, `status`, `channel`.
  *
- * **Canal** (§20) : sans paramètre, la liste ne renvoie que le **commerce
- * général** — c'est ce qui garantit qu'une vente de briqueterie, créée par
- * `/ventes/nouvelle?canal=briqueterie`, n'apparaît jamais dans `/ventes`.
- * `channel=brick` renvoie la briqueterie, `channel=all` les deux (usage
- * explicite : fiche client consolidée, export global).
+ * **Magasin** : `?store=all|<id>` (défaut : magasin actif). Un seul canal de
+ * vente (`general`) depuis le retrait de la briqueterie.
  *
  * Le **bénéfice** (`cost`, `profit`) n'est renvoyé qu'à un utilisateur détenant
  * `balances.view` : c'est une donnée financière sensible, et le serveur reste
@@ -33,18 +29,14 @@ export async function GET(request: NextRequest) {
     const { page, limit } = parsePagination(params);
 
     const customerId = params.get('customerId');
-    const channelParam = params.get('channel');
-    const channel =
-      channelParam === 'all' ? 'all' : isSalesChannel(channelParam) ? channelParam : 'general';
-
     const result = await listSalesInvoices({
+      scope: scopeFromRequest(user, request),
       search: params.get('search') ?? undefined,
       customerId: customerId ? toInt(customerId, 0) || undefined : undefined,
       from: params.get('from') ?? undefined,
       to: params.get('to') ?? undefined,
       paymentStatus: params.get('paymentStatus') ?? undefined,
       status: params.get('status') ?? undefined,
-      channel,
       page,
       limit,
     });
@@ -71,7 +63,8 @@ export async function POST(request: NextRequest) {
     const user = await requireAction('sales.create');
     const body = await readJson<any>(request);
 
-    const invoice = await createSalesInvoice({ ...parseSalesInput(body), userId: user.id });
+    const storeId = await requireActiveStore(user);
+    const invoice = await createSalesInvoice({ ...parseSalesInput(body), userId: user.id, storeId });
 
     return ok({ invoice }, 201);
   } catch (error) {

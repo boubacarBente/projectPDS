@@ -1,43 +1,38 @@
 /**
- * Moteur de stock unique (§4, §12).
+ * Moteur de stock unique, **par magasin** (§4, §12 ; multi-magasins §7).
  *
- * Invariant non négociable : `products.stock` = **somme algébrique** des
- * mouvements de `stock_movements`. Toute correction passe par `adjustStock()`
- * et `adjustment` stocke un **écart signé**, jamais une valeur absolue — c'est
- * ce qui préserve l'invariant (README §6.1).
+ * Invariant non négociable : `product_stocks.quantity` (magasin × produit) =
+ * **somme algébrique** des mouvements de `stock_movements` de ce magasin.
+ * Toute correction passe par `adjustStock()` et `adjustment` stocke un **écart
+ * signé**, jamais une valeur absolue.
  *
- * Trois types suffisent : `entry` (achat, mise en stock d'une production),
- * `exit` (vente, matériaux de chantier, matières premières consommées, meuble
- * livré), `adjustment` (inventaire). Les briques cassées (§17) et les chutes de
- * bois (§18) sont des `exit` avec un motif explicite, pas un type dédié.
+ * Trois types suffisent : `entry` (achat, réception de transfert), `exit`
+ * (vente, matériaux de chantier, expédition de transfert), `adjustment`
+ * (inventaire, correction).
+ *
+ * Chaque mouvement s'exécute dans une transaction (`withTransaction`) : la
+ * lecture du stock et son écriture sont atomiques, deux ventes simultanées ne
+ * peuvent plus se « voler » une quantité.
  */
 
-import { db, schema } from '@/db';
-import { and, asc, desc, eq, sql, type SQL } from 'drizzle-orm';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { db, schema, rawAll, rawGet, rawRun, withTransaction } from '@/db';
+import { and, eq } from 'drizzle-orm';
 import { DEFAULT_LIST_SORT, type ListSort } from '@/lib/list-sort';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 export type StockMovementType = 'entry' | 'exit' | 'adjustment';
 
-export type StockReferenceType =
-  | 'sale'
-  | 'purchase'
-  | 'brick_production'
-  | 'furniture_order'
-  | 'service_job'
-  | 'inventory';
-
-/** Contexte d'exécution : la base, ou une transaction Drizzle. */
-type Executor = typeof db | any;
+export type StockReferenceType = 'sale' | 'purchase' | 'service_job' | 'inventory' | 'transfer';
 
 export type AddStockMovementOptions = {
+  /** Magasin concerné — obligatoire. */
+  storeId: number;
   referenceType?: StockReferenceType | null;
   referenceId?: number | null;
   motif?: string;
   userId?: number | null;
-  /** Autorise un stock négatif (inventaire d'ouverture, régularisation). */
+  /** Autorise un stock négatif (dérogation explicite, tracée dans le motif). */
   allowNegative?: boolean;
-  executor?: Executor;
 };
 
 export class InsufficientStockError extends Error {
@@ -58,21 +53,28 @@ export type StockProduct = {
   id: number;
   name: string;
   unit: string;
+  barcode: string | null;
   categoryId: number | null;
   categoryName: string | null;
   categoryKind: string | null;
   stock: number;
   stockMin: number;
+  /** Quantités en transit vers le(s) magasin(s) consulté(s). */
+  inTransit: number;
   purchasePrice: number;
   salePrice: number;
   stockValue: number;
   saleValue: number;
   isLow: boolean;
   isOut: boolean;
+  /** Détail par magasin (vue consolidée uniquement). */
+  byStore?: { storeId: number; storeName: string; stock: number }[];
 };
 
 export type StockMovementRow = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   productId: number;
   productName: string;
   unit: string;
@@ -88,19 +90,52 @@ export type StockMovementRow = {
   createdAt: Date | null;
 };
 
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
+
+/** Stock d'un produit dans un magasin (0 si la ligne n'existe pas encore). */
+export async function getStoreStock(storeId: number, productId: number): Promise<number> {
+  const row = await rawGet<{ quantity: number }>(
+    `SELECT quantity FROM product_stocks WHERE store_id = ? AND product_id = ?`,
+    [storeId, productId],
+  );
+  return Number(row?.quantity ?? 0);
+}
+
+/** Crée la ligne magasin × produit si elle manque. */
 /**
- * Insère un mouvement **et** met à jour `products.stock` dans la même
- * transaction logique, en conservant `stock_before` / `stock_after`.
+ * Crée la ligne magasin × produit si elle manque.
+ *
+ * Son `sync_id` est **déterministe** (`ps-<magasin>-<produit>`) : deux postes
+ * qui créent chacun la ligne hors ligne produisent la même identité, donc
+ * aucun doublon après synchronisation.
+ */
+export async function ensureProductStockRow(storeId: number, productId: number): Promise<void> {
+  await rawRun(
+    `INSERT INTO product_stocks (store_id, product_id, quantity, created_at, sync_id, updated_at)
+     SELECT s.id, p.id, 0, unixepoch(), 'ps-' || s.sync_id || '-' || p.sync_id, unixepoch()
+       FROM stores s, products p
+      WHERE s.id = ? AND p.id = ?
+     ON CONFLICT(store_id, product_id) DO NOTHING`,
+    [storeId, productId],
+  );
+}
+
+/**
+ * Insère un mouvement **et** met à jour le stock du magasin dans la même
+ * transaction, en conservant `stock_before` / `stock_after`.
  */
 export async function addStockMovement(
   productId: number,
   type: StockMovementType,
   quantity: number,
-  options: AddStockMovementOptions = {},
+  options: AddStockMovementOptions,
 ): Promise<{ stockBefore: number; stockAfter: number; movementId: number }> {
-  const exec: Executor = options.executor ?? db;
   const qty = Number(quantity);
+  const storeId = Number(options.storeId);
 
+  if (!Number.isInteger(storeId) || storeId <= 0) {
+    throw new Error('Magasin obligatoire pour un mouvement de stock');
+  }
   if (!Number.isFinite(qty) || qty === 0) {
     throw new Error('Quantité de mouvement invalide (zéro ou non numérique)');
   }
@@ -108,244 +143,282 @@ export async function addStockMovement(
     throw new Error(`Une quantité « ${type} » doit être positive (reçu : ${qty})`);
   }
 
-  const [product] = await exec
-    .select({
-      id: schema.products.id,
-      name: schema.products.name,
-      stock: schema.products.stock,
-      syncId: schema.products.syncId,
-    })
-    .from(schema.products)
-    .where(eq(schema.products.id, productId))
-    .limit(1);
+  return withTransaction(async () => {
+    const product = await rawGet<{ id: number; name: string }>(
+      `SELECT id, name FROM products WHERE id = ?`,
+      [productId],
+    );
+    if (!product) throw new Error('Produit introuvable');
 
-  if (!product) throw new Error('Produit introuvable');
+    await ensureProductStockRow(storeId, productId);
+    const stockBefore = await getStoreStock(storeId, productId);
 
-  const stockBefore = Number(product.stock ?? 0);
-  let stockAfter: number;
+    const stockAfter = round3(type === 'exit' ? stockBefore - qty : stockBefore + qty);
 
-  switch (type) {
-    case 'entry':
-      stockAfter = stockBefore + qty;
-      break;
-    case 'exit':
-      stockAfter = stockBefore - qty;
-      break;
-    case 'adjustment':
-      // `quantity` est un ÉCART signé, jamais la valeur absolue.
-      stockAfter = stockBefore + qty;
-      break;
-  }
+    if (stockAfter < 0 && !options.allowNegative) {
+      throw new InsufficientStockError(product.name, stockBefore, qty);
+    }
 
-  if (stockAfter < 0 && !options.allowNegative) {
-    throw new InsufficientStockError(product.name, stockBefore, qty);
-  }
+    const motif =
+      options.motif ??
+      (type === 'entry' ? 'Entrée manuelle' : type === 'exit' ? 'Sortie manuelle' : 'Ajustement');
 
-  const motif =
-    options.motif ??
-    (type === 'entry' ? 'Entrée manuelle' : type === 'exit' ? 'Sortie manuelle' : 'Ajustement');
+    const inserted = await db
+      .insert(schema.stockMovements)
+      .values({
+        storeId,
+        productId,
+        type,
+        quantity: qty,
+        motif,
+        stockBefore,
+        stockAfter,
+        referenceType: options.referenceType ?? null,
+        referenceId: options.referenceId ?? null,
+        userId: options.userId ?? null,
+      })
+      .returning({ id: schema.stockMovements.id });
 
-  const inserted = await exec
-    .insert(schema.stockMovements)
-    .values({
-      productId,
-      type,
-      quantity: qty,
-      motif,
-      stockBefore,
-      stockAfter,
-      referenceType: options.referenceType ?? null,
-      referenceId: options.referenceId ?? null,
-      userId: options.userId ?? null,
-    })
-    .returning({ id: schema.stockMovements.id, syncId: schema.stockMovements.syncId });
+    await rawRun(
+      `UPDATE product_stocks SET quantity = ?, updated_at = unixepoch() WHERE store_id = ? AND product_id = ?`,
+      [stockAfter, storeId, productId],
+    );
 
-  await exec
-    .update(schema.products)
-    .set({ stock: stockAfter, updatedAt: new Date() })
-    .where(eq(schema.products.id, productId));
-
-  await enqueueSyncWrite('stock_movements', inserted[0]?.syncId, 'insert', {
-    product_id: productId,
-    type,
-    quantity: qty,
-    stock_before: stockBefore,
-    stock_after: stockAfter,
-    motif,
+    return { stockBefore, stockAfter, movementId: inserted[0]?.id ?? 0 };
   });
-  await enqueueSyncWrite('products', product.syncId, 'update', {
-    stock: stockAfter,
-  });
-
-  return { stockBefore, stockAfter, movementId: inserted[0]?.id ?? 0 };
 }
 
 /**
- * Recalcule le stock depuis le journal des mouvements (réparation / audit).
- * Utilisé par l'écran d'inventaire pour vérifier l'invariant.
+ * Recalcule le stock d'un magasin depuis le journal des mouvements.
+ * Utilisé après réception de données synchronisées et par la vérification
+ * d'invariant.
  */
-export async function updateProductStock(productId: number): Promise<number> {
-  const movements = await db
-    .select({
-      type: schema.stockMovements.type,
-      quantity: schema.stockMovements.quantity,
-    })
-    .from(schema.stockMovements)
-    .where(eq(schema.stockMovements.productId, productId))
-    .orderBy(asc(schema.stockMovements.id));
-
-  const stock = movements.reduce((sum, m) => {
-    if (m.type === 'entry') return sum + Number(m.quantity);
-    if (m.type === 'exit') return sum - Number(m.quantity);
-    return sum + Number(m.quantity); // adjustment = écart signé
-  }, 0);
-
-  const safe = Math.max(0, Math.round(stock * 1000) / 1000);
-  await db
-    .update(schema.products)
-    .set({ stock: safe, updatedAt: new Date() })
-    .where(eq(schema.products.id, productId));
-
-  return safe;
+export async function recomputeStoreStock(storeId: number, productId: number): Promise<number> {
+  const row = await rawGet<{ total: number | null }>(
+    `SELECT SUM(CASE type WHEN 'exit' THEN -quantity ELSE quantity END) AS total
+       FROM stock_movements
+      WHERE store_id = ? AND product_id = ? AND deleted_at IS NULL`,
+    [storeId, productId],
+  );
+  const stock = round3(Number(row?.total ?? 0));
+  await ensureProductStockRow(storeId, productId);
+  await rawRun(
+    `UPDATE product_stocks SET quantity = ? WHERE store_id = ? AND product_id = ? AND quantity <> ?`,
+    [stock, storeId, productId, stock],
+  );
+  return stock;
 }
 
-/** Liste des produits avec leur état de stock, `stock_value` et `is_low`. */
+/** Recalcule tous les stocks touchés par une liste de couples magasin × produit. */
+export async function recomputeStocks(pairs: { storeId: number; productId: number }[]): Promise<void> {
+  const seen = new Set<string>();
+  for (const pair of pairs) {
+    const key = `${pair.storeId}:${pair.productId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await recomputeStoreStock(pair.storeId, pair.productId);
+  }
+}
+
+/** Expression SQL du stock d'un produit `p` sur une portée. */
+function stockExpr(scope: StoreScope): string {
+  return `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
+}
+
+/**
+ * Seuil d'alerte sur une portée : pour un magasin, son seuil local ou celui du
+ * produit ; en consolidé, la somme des seuils des magasins.
+ */
+function stockMinExpr(scope: StoreScope): string {
+  if (scope.length === 1) {
+    return `COALESCE((SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${Number(scope[0])}), p.stock_min)`;
+  }
+  return `(p.stock_min * ${Math.max(1, scope.length)})`;
+}
+
+function salePriceExpr(scope: StoreScope): string {
+  if (scope.length === 1) {
+    return `COALESCE((SELECT ps.sale_price FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${Number(scope[0])}), p.sale_price)`;
+  }
+  return 'p.sale_price';
+}
+
+function inTransitExpr(scope: StoreScope): string {
+  return `COALESCE((SELECT SUM(ti.quantity_shipped - ti.quantity_received)
+      FROM stock_transfer_items ti JOIN stock_transfers t ON t.id = ti.transfer_id
+     WHERE ti.product_id = p.id AND t.status IN ('in_transit', 'partially_received')
+       AND ${scopeSql('t.destination_store_id', scope)}), 0)`;
+}
+
+/** Liste des produits avec leur état de stock sur la portée demandée. */
 export async function listStockProducts(options: {
+  scope: StoreScope;
   search?: string;
   lowStockOnly?: boolean;
   outOfStockOnly?: boolean;
   categoryId?: number;
   page?: number;
   limit?: number;
-  /** `recent` (défaut) = dernier produit enregistré ; `name` = ordre alphabétique. */
   sort?: ListSort;
-} = {}): Promise<{ data: StockProduct[]; total: number; page: number; limit: number; totalPages: number }> {
+  withStoreDetail?: boolean;
+}): Promise<{ data: StockProduct[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
+  const scope = options.scope;
 
-  const conditions: SQL[] = [eq(schema.products.isActive, true)];
+  const stock = stockExpr(scope);
+  const stockMin = stockMinExpr(scope);
+
+  const conditions: string[] = ['p.is_active = 1', 'p.deleted_at IS NULL'];
+  const args: unknown[] = [];
   if (options.search) {
-    conditions.push(
-      sql`(${schema.products.name} LIKE ${`%${options.search}%`})`,
-    );
+    conditions.push('(p.name LIKE ? OR p.barcode = ?)');
+    args.push(`%${options.search}%`, options.search.trim());
   }
-  if (options.categoryId) conditions.push(eq(schema.products.categoryId, options.categoryId));
-  if (options.lowStockOnly) {
-    conditions.push(sql`${schema.products.stock} <= ${schema.products.stockMin}`);
+  if (options.categoryId) {
+    conditions.push('p.category_id = ?');
+    args.push(options.categoryId);
   }
-  if (options.outOfStockOnly) {
-    conditions.push(sql`${schema.products.stock} <= 0`);
-  }
+  if (options.lowStockOnly) conditions.push(`${stock} <= ${stockMin} AND ${stockMin} > 0`);
+  if (options.outOfStockOnly) conditions.push(`${stock} <= 0`);
 
-  const where = and(...conditions);
-
-  /**
-   * Par défaut : **le dernier produit enregistré en premier**
-   * (`created_at DESC, id DESC`) — l'`id` départage deux produits créés dans
-   * la même seconde, sinon l'ordre n'est pas déterministe d'une page à l'autre.
-   */
+  const where = conditions.join(' AND ');
   const sort = options.sort ?? DEFAULT_LIST_SORT;
-  const orderBy =
-    sort === 'name'
-      ? [asc(schema.products.name), asc(schema.products.id)]
-      : [desc(schema.products.createdAt), desc(schema.products.id)];
+  const orderBy = sort === 'name' ? 'p.name ASC, p.id ASC' : 'p.created_at DESC, p.id DESC';
 
-  const [rows, totalResult] = await Promise.all([
-    db.query.products.findMany({
-      where,
-      orderBy,
-      with: { category: { columns: { name: true, kind: true } } },
-      limit,
-      offset,
-    }),
-    db.select({ count: sql<number>`count(*)` }).from(schema.products).where(where),
+  const [rows, totalRow] = await Promise.all([
+    rawAll<any>(
+      `SELECT p.id, p.name, p.unit, p.barcode, p.category_id, p.purchase_price,
+              ${salePriceExpr(scope)} AS sale_price,
+              c.name AS category_name, c.kind AS category_kind,
+              ${stock} AS stock, ${stockMin} AS stock_min, ${inTransitExpr(scope)} AS in_transit
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+        WHERE ${where}
+        ORDER BY ${orderBy}
+        LIMIT ? OFFSET ?`,
+      [...args, limit, offset] as any,
+    ),
+    rawGet<{ n: number }>(`SELECT COUNT(*) AS n FROM products p WHERE ${where}`, args as any),
   ]);
 
-  const total = Number(totalResult[0]?.count ?? 0);
+  let detail = new Map<number, { storeId: number; storeName: string; stock: number }[]>();
+  if (options.withStoreDetail && scope.length > 1 && rows.length > 0) {
+    const ids = rows.map((r) => Number(r.id)).join(',');
+    const detailRows = await rawAll<any>(
+      `SELECT ps.product_id, ps.store_id, s.name, ps.quantity
+         FROM product_stocks ps JOIN stores s ON s.id = ps.store_id
+        WHERE ps.product_id IN (${ids}) AND ${scopeSql('ps.store_id', scope)}
+        ORDER BY s.name`,
+    );
+    detail = new Map();
+    for (const d of detailRows) {
+      const list = detail.get(Number(d.product_id)) ?? [];
+      list.push({ storeId: Number(d.store_id), storeName: String(d.name), stock: Number(d.quantity) });
+      detail.set(Number(d.product_id), list);
+    }
+  }
 
   const data: StockProduct[] = rows.map((p) => {
-    const stock = Number(p.stock ?? 0);
-    const stockMin = Number(p.stockMin ?? 0);
+    const qty = round3(Number(p.stock ?? 0));
+    const min = Number(p.stock_min ?? 0);
+    const purchasePrice = Number(p.purchase_price ?? 0);
+    const salePrice = Number(p.sale_price ?? 0);
     return {
-      id: p.id,
+      id: Number(p.id),
       name: p.name,
       unit: p.unit,
-      categoryId: p.categoryId,
-      categoryName: p.category?.name ?? null,
-      categoryKind: p.category?.kind ?? null,
-      stock,
-      stockMin,
-      purchasePrice: Number(p.purchasePrice ?? 0),
-      salePrice: Number(p.salePrice ?? 0),
-      stockValue: stock * Number(p.purchasePrice ?? 0),
-      saleValue: stock * Number(p.salePrice ?? 0),
-      isLow: stockMin > 0 && stock <= stockMin,
-      isOut: stock <= 0,
+      barcode: p.barcode ?? null,
+      categoryId: p.category_id === null ? null : Number(p.category_id),
+      categoryName: p.category_name ?? null,
+      categoryKind: p.category_kind ?? null,
+      stock: qty,
+      stockMin: min,
+      inTransit: round3(Number(p.in_transit ?? 0)),
+      purchasePrice,
+      salePrice,
+      stockValue: qty * purchasePrice,
+      saleValue: qty * salePrice,
+      isLow: min > 0 && qty <= min,
+      isOut: qty <= 0,
+      ...(options.withStoreDetail && scope.length > 1 ? { byStore: detail.get(Number(p.id)) ?? [] } : {}),
     };
   });
 
+  const total = Number(totalRow?.n ?? 0);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 }
 
-/** Historique paginé des mouvements. */
+/** Historique paginé des mouvements, sur la portée demandée. */
 export async function listStockMovements(options: {
+  scope: StoreScope;
   productId?: number;
   type?: StockMovementType;
   from?: string;
   to?: string;
   page?: number;
   limit?: number;
-} = {}): Promise<{ data: StockMovementRow[]; total: number; page: number; limit: number; totalPages: number }> {
+}): Promise<{ data: StockMovementRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(200, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const conditions: SQL[] = [];
-  if (options.productId) conditions.push(eq(schema.stockMovements.productId, options.productId));
-  if (options.type) conditions.push(eq(schema.stockMovements.type, options.type));
+  const conditions: string[] = [scopeSql('m.store_id', options.scope)];
+  const args: unknown[] = [];
+  if (options.productId) {
+    conditions.push('m.product_id = ?');
+    args.push(options.productId);
+  }
+  if (options.type) {
+    conditions.push('m.type = ?');
+    args.push(options.type);
+  }
   if (options.from) {
-    conditions.push(sql`${schema.stockMovements.createdAt} >= ${new Date(`${options.from}T00:00:00`).getTime() / 1000}`);
+    conditions.push('m.created_at >= ?');
+    args.push(Math.floor(new Date(`${options.from}T00:00:00`).getTime() / 1000));
   }
   if (options.to) {
-    conditions.push(sql`${schema.stockMovements.createdAt} <= ${new Date(`${options.to}T23:59:59`).getTime() / 1000}`);
+    conditions.push('m.created_at <= ?');
+    args.push(Math.floor(new Date(`${options.to}T23:59:59`).getTime() / 1000));
   }
+  const where = conditions.join(' AND ');
 
-  const where = conditions.length > 0 ? and(...conditions) : undefined;
-
-  const [rows, totalResult] = await Promise.all([
-    db.query.stockMovements.findMany({
-      where,
-      orderBy: [desc(schema.stockMovements.createdAt), desc(schema.stockMovements.id)],
-      with: {
-        product: { columns: { name: true, unit: true } },
-        user: { columns: { name: true } },
-      },
-      limit,
-      offset,
-    }),
-    db.select({ count: sql<number>`count(*)` }).from(schema.stockMovements).where(where),
+  const [rows, totalRow] = await Promise.all([
+    rawAll<any>(
+      `SELECT m.*, p.name AS product_name, p.unit AS product_unit, u.name AS user_name, s.name AS store_name
+         FROM stock_movements m
+         LEFT JOIN products p ON p.id = m.product_id
+         LEFT JOIN users u ON u.id = m.user_id
+         LEFT JOIN stores s ON s.id = m.store_id
+        WHERE ${where}
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT ? OFFSET ?`,
+      [...args, limit, offset] as any,
+    ),
+    rawGet<{ n: number }>(`SELECT COUNT(*) AS n FROM stock_movements m WHERE ${where}`, args as any),
   ]);
 
-  const total = Number(totalResult[0]?.count ?? 0);
-
   const data: StockMovementRow[] = rows.map((m) => ({
-    id: m.id,
-    productId: m.productId,
-    productName: m.product?.name ?? '',
-    unit: m.product?.unit ?? '',
+    id: Number(m.id),
+    storeId: m.store_id === null ? null : Number(m.store_id),
+    storeName: m.store_name ?? null,
+    productId: Number(m.product_id),
+    productName: m.product_name ?? '',
+    unit: m.product_unit ?? '',
     type: m.type as StockMovementType,
     quantity: Number(m.quantity),
     motif: m.motif,
-    stockBefore: Number(m.stockBefore),
-    stockAfter: Number(m.stockAfter),
-    referenceType: m.referenceType,
-    referenceId: m.referenceId,
-    userId: m.userId,
-    userName: m.user?.name ?? null,
-    createdAt: m.createdAt,
+    stockBefore: Number(m.stock_before),
+    stockAfter: Number(m.stock_after),
+    referenceType: m.reference_type ?? null,
+    referenceId: m.reference_id === null ? null : Number(m.reference_id),
+    userId: m.user_id === null ? null : Number(m.user_id),
+    userName: m.user_name ?? null,
+    createdAt: m.created_at ? new Date(Number(m.created_at) * 1000) : null,
   }));
 
+  const total = Number(totalRow?.n ?? 0);
   return { data, total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 }
 
@@ -356,95 +429,110 @@ export type StockSummary = {
   totalSaleValue: number;
   lowStockCount: number;
   outOfStockCount: number;
+  inTransitCount: number;
 };
 
-/** Synthèse du stock : totaux, valeur d'achat, valeur de vente, alertes. */
-export async function getStockSummary(): Promise<StockSummary> {
-  const rows = await db
-    .select({
-      stock: schema.products.stock,
-      stockMin: schema.products.stockMin,
-      purchasePrice: schema.products.purchasePrice,
-      salePrice: schema.products.salePrice,
-    })
-    .from(schema.products)
-    .where(eq(schema.products.isActive, true));
+/** Synthèse du stock sur une portée : totaux, valeurs, alertes. */
+export async function getStockSummary(scope: StoreScope): Promise<StockSummary> {
+  const rows = await rawAll<any>(
+    `SELECT ${stockExpr(scope)} AS stock, ${stockMinExpr(scope)} AS stock_min,
+            p.purchase_price, ${salePriceExpr(scope)} AS sale_price, ${inTransitExpr(scope)} AS in_transit
+       FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL`,
+  );
 
   let totalStock = 0;
   let totalStockValue = 0;
   let totalSaleValue = 0;
   let lowStockCount = 0;
   let outOfStockCount = 0;
+  let inTransitCount = 0;
 
   for (const p of rows) {
     const stock = Number(p.stock ?? 0);
-    const stockMin = Number(p.stockMin ?? 0);
+    const stockMin = Number(p.stock_min ?? 0);
     totalStock += stock;
-    totalStockValue += stock * Number(p.purchasePrice ?? 0);
-    totalSaleValue += stock * Number(p.salePrice ?? 0);
+    totalStockValue += stock * Number(p.purchase_price ?? 0);
+    totalSaleValue += stock * Number(p.sale_price ?? 0);
     if (stock <= 0) outOfStockCount += 1;
     else if (stockMin > 0 && stock <= stockMin) lowStockCount += 1;
+    if (Number(p.in_transit ?? 0) > 0) inTransitCount += 1;
   }
 
   return {
     totalProducts: rows.length,
-    totalStock: Math.round(totalStock * 1000) / 1000,
+    totalStock: round3(totalStock),
     totalStockValue,
     totalSaleValue,
     lowStockCount,
     outOfStockCount,
+    inTransitCount,
   };
 }
 
 /**
- * Inventaire / correction : enregistre un **écart signé** (`adjustment`).
+ * Correction : enregistre un **écart signé** (`adjustment`).
  * `delta > 0` = on a trouvé plus que le stock théorique, `delta < 0` = moins.
  */
 export async function adjustStock(
+  storeId: number,
   productId: number,
   delta: number,
   motif: string,
-  options: { userId?: number | null; executor?: Executor } = {},
+  options: { userId?: number | null; referenceType?: StockReferenceType; referenceId?: number | null } = {},
 ): Promise<{ stockBefore: number; stockAfter: number; movementId: number }> {
   return addStockMovement(productId, 'adjustment', delta, {
-    referenceType: 'inventory',
+    storeId,
+    referenceType: options.referenceType ?? 'inventory',
+    referenceId: options.referenceId ?? null,
     motif: motif || 'Inventaire',
     userId: options.userId ?? null,
     allowNegative: false,
-    executor: options.executor,
   });
 }
 
+/** Règle le seuil d'alerte et/ou le prix local d'un produit dans un magasin. */
+export async function setLocalProductSettings(
+  storeId: number,
+  productId: number,
+  values: { stockMin?: number | null; salePrice?: number | null },
+): Promise<void> {
+  await ensureProductStockRow(storeId, productId);
+  const updates: Record<string, unknown> = {};
+  if (values.stockMin !== undefined) updates.stockMin = values.stockMin;
+  if (values.salePrice !== undefined) updates.salePrice = values.salePrice;
+  if (Object.keys(updates).length === 0) return;
+  await db
+    .update(schema.productStocks)
+    .set(updates)
+    .where(and(eq(schema.productStocks.storeId, storeId), eq(schema.productStocks.productId, productId)));
+}
+
+/** Prix de vente effectif d'un produit dans un magasin (prix local sinon catalogue). */
+export async function getEffectiveSalePrice(storeId: number, productId: number): Promise<number> {
+  const row = await rawGet<{ price: number }>(
+    `SELECT COALESCE(ps.sale_price, p.sale_price) AS price
+       FROM products p LEFT JOIN product_stocks ps ON ps.product_id = p.id AND ps.store_id = ?
+      WHERE p.id = ?`,
+    [storeId, productId],
+  );
+  return Number(row?.price ?? 0);
+}
+
 /**
- * Vérifie l'invariant « stock = somme des mouvements » pour un produit.
- * Utilisé par l'écran d'inventaire et par les tests.
+ * Vérifie l'invariant « stock = somme des mouvements » pour un magasin.
  */
-export async function verifyStockInvariant(productId: number): Promise<{
-  productId: number;
-  stored: number;
-  computed: number;
-  ok: boolean;
-}> {
-  const [product] = await db
-    .select({ stock: schema.products.stock })
-    .from(schema.products)
-    .where(eq(schema.products.id, productId))
-    .limit(1);
-
-  const rows = await db
-    .select({ type: schema.stockMovements.type, quantity: schema.stockMovements.quantity })
-    .from(schema.stockMovements)
-    .where(eq(schema.stockMovements.productId, productId));
-
-  const computed = rows.reduce((sum, m) => {
-    if (m.type === 'exit') return sum - Number(m.quantity);
-    return sum + Number(m.quantity);
-  }, 0);
-
-  const stored = Number(product?.stock ?? 0);
-  const rounded = Math.round(computed * 1000) / 1000;
-
-  return { productId, stored, computed: rounded, ok: Math.abs(stored - rounded) < 0.001 };
+export async function verifyStockInvariant(
+  storeId: number,
+  productId: number,
+): Promise<{ productId: number; storeId: number; stored: number; computed: number; ok: boolean }> {
+  const stored = await getStoreStock(storeId, productId);
+  const row = await rawGet<{ total: number | null }>(
+    `SELECT SUM(CASE type WHEN 'exit' THEN -quantity ELSE quantity END) AS total
+       FROM stock_movements WHERE store_id = ? AND product_id = ? AND deleted_at IS NULL`,
+    [storeId, productId],
+  );
+  const computed = round3(Number(row?.total ?? 0));
+  return { productId, storeId, stored, computed, ok: Math.abs(stored - computed) < 0.001 };
 }
 
 export const STOCK_MOVEMENT_LABELS: Record<StockMovementType, string> = {
@@ -456,8 +544,9 @@ export const STOCK_MOVEMENT_LABELS: Record<StockMovementType, string> = {
 export const STOCK_REFERENCE_LABELS: Record<string, string> = {
   sale: 'Vente',
   purchase: 'Achat',
-  brick_production: 'Fabrication de briques',
-  furniture_order: 'Commande de meuble',
   service_job: 'Chantier',
   inventory: 'Inventaire',
+  transfer: 'Transfert',
+  brick_production: 'Fabrication de briques (archive)',
+  furniture_order: 'Commande de meuble (archive)',
 };

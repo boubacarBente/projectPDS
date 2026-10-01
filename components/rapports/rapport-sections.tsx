@@ -830,12 +830,6 @@ export function CashAndExpensesPanel({
         <InfoRow label="Matières chantiers">
           <MoneyText value={jobCosts.serviceJobs.materialCost} currency={currency} />
         </InfoRow>
-        <InfoRow label="Briqueterie (matières)">
-          <MoneyText value={jobCosts.brickProductions.materialCost} currency={currency} />
-        </InfoRow>
-        <InfoRow label="Atelier (matières)">
-          <MoneyText value={jobCosts.furnitureOrders.materialCost} currency={currency} />
-        </InfoRow>
         <InfoRow label="Main-d'œuvre totale">
           <MoneyText value={jobCosts.totalLaborCost} currency={currency} bold />
         </InfoRow>

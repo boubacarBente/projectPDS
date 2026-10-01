@@ -27,7 +27,6 @@ import { reportDeliveries } from '@/db/schema';
 import { getSettings, type Settings } from '@/lib/settings';
 import { getRapportData } from '@/lib/rapports';
 import { writeAudit } from '@/lib/audit';
-import { enqueueSyncWrite } from '@/lib/sync';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import { formatDateShort } from '@/lib/date-format';
 import type {
@@ -57,7 +56,7 @@ export function buildReportMessage(data: RapportData, settings: Settings): strin
 
   lines.push(`*${settings.companyName || 'Planète Déco'}*`);
   if (settings.companyBranch) lines.push(settings.companyBranch);
-  lines.push(`Rapport ${data.period.label}`);
+  lines.push(`Rapport ${data.period.label} — ${data.stores.label}`);
   lines.push(
     `Période : ${formatDateShort(data.period.from)} → ${formatDateShort(data.period.to)}`,
   );
@@ -74,6 +73,14 @@ export function buildReportMessage(data: RapportData, settings: Settings): strin
   lines.push(`• Dépenses : ${money(data.summary.expenses)}`);
   lines.push(`• Bénéfice net : ${money(data.summary.netProfit)}`);
   lines.push(`• Caisse : ${money(data.summary.cash.balance)}`);
+
+  if (data.byStore.length > 1) {
+    lines.push('');
+    lines.push('*Par magasin*');
+    for (const store of data.byStore) {
+      lines.push(`• ${store.name} : CA ${money(store.revenue)} — bénéfice ${money(store.netProfit)}`);
+    }
+  }
 
   lines.push(
     `• Clients débiteurs : ${formatNumber(data.receivables.debtorsCount)} — ${money(
@@ -129,6 +136,15 @@ type ReportProviderConfig = {
   phoneNumberId?: string;
   /** `whatsapp-cloud` | `webhook` | libre. */
   provider?: string;
+  /**
+   * WhatsApp Cloud API : nom du **modèle de message approuvé** par Meta.
+   * Indispensable hors de la fenêtre de 24 h (envoi à l'initiative de
+   * l'entreprise) : un message texte libre y est refusé. Le rapport est passé
+   * en paramètre `{{1}}` du corps du modèle.
+   */
+  templateName?: string;
+  /** Langue du modèle (`fr` par défaut). */
+  templateLanguage?: string;
 };
 
 /**
@@ -221,59 +237,84 @@ async function deliverAutomatically(
   recipients: string[],
   message: string,
 ): Promise<{ ok: boolean; error: string | null }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GATEWAY_TIMEOUT_MS);
+  const useCloudApi = !config.url && Boolean(config.phoneNumberId);
 
-  try {
-    const useCloudApi = !config.url && Boolean(config.phoneNumberId);
+  // WhatsApp Cloud : un appel **par destinataire** (l'API n'accepte qu'un
+  // numéro à la fois) ; passerelle générique : un seul appel avec la liste.
+  const targets = useCloudApi ? recipients.map(normalizePhone).filter(Boolean) : [recipients.join(',')];
+  if (targets.length === 0) return { ok: false, error: 'Aucun destinataire valide' };
 
-    const url = useCloudApi
-      ? `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`
-      : String(config.url);
+  const errors: string[] = [];
+  for (const target of targets) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GATEWAY_TIMEOUT_MS);
+    try {
+      const url = useCloudApi
+        ? `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`
+        : String(config.url);
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (config.token) headers.Authorization = `Bearer ${config.token}`;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (config.token) headers.Authorization = `Bearer ${config.token}`;
 
-    const payload = useCloudApi
-      ? {
-          messaging_product: 'whatsapp',
-          to: normalizePhone(recipients[0] ?? '').replace('+', ''),
-          type: 'text',
-          text: { body: message },
-        }
-      : {
-          channel,
-          from: config.from ?? config.sender ?? '',
-          to: recipients,
-          message,
-        };
+      const payload = useCloudApi
+        ? config.templateName
+          ? {
+              messaging_product: 'whatsapp',
+              to: target.replace('+', ''),
+              type: 'template',
+              template: {
+                name: config.templateName,
+                language: { code: config.templateLanguage || 'fr' },
+                components: [
+                  {
+                    type: 'body',
+                    // Paramètre de modèle : ni saut de ligne multiple, ni plus de 1 000 caractères.
+                    parameters: [{ type: 'text', text: message.replace(/\n+/g, ' · ').slice(0, 1000) }],
+                  },
+                ],
+              },
+            }
+          : {
+              messaging_product: 'whatsapp',
+              to: target.replace('+', ''),
+              type: 'text',
+              text: { body: message },
+            }
+        : {
+            channel,
+            from: config.from ?? config.sender ?? '',
+            to: recipients,
+            message,
+          };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      return {
-        ok: false,
-        error: `Passerelle ${response.status} ${response.statusText}${
-          detail ? ` — ${detail.slice(0, 300)}` : ''
-        }`.trim(),
-      };
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        errors.push(
+          `${useCloudApi ? `${target} : ` : ''}Passerelle ${response.status} ${response.statusText}${
+            detail ? ` — ${detail.slice(0, 300)}` : ''
+          }`.trim(),
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        errors.push(`Délai dépassé (${GATEWAY_TIMEOUT_MS / 1000} s) : passerelle injoignable`);
+      } else {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      clearTimeout(timer);
     }
-
-    return { ok: true, error: null };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { ok: false, error: `Délai dépassé (${GATEWAY_TIMEOUT_MS / 1000} s) : passerelle injoignable` };
-    }
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  } finally {
-    clearTimeout(timer);
   }
+
+  if (errors.length === 0) return { ok: true, error: null };
+  return { ok: errors.length < targets.length, error: errors.join(' | ') };
 }
 
 /* ------------------------------------------------------------------ *
@@ -289,6 +330,7 @@ function splitRecipients(raw: string | null | undefined): string[] {
 }
 
 async function recordDelivery(input: {
+  storeId: number | null;
   period: RapportPeriodKey;
   from: string;
   to: string;
@@ -306,6 +348,7 @@ async function recordDelivery(input: {
   const inserted = await db
     .insert(reportDeliveries)
     .values({
+      storeId: input.storeId,
       period: input.period,
       fromDate: input.from,
       toDate: input.to,
@@ -321,20 +364,6 @@ async function recordDelivery(input: {
     .returning({ id: reportDeliveries.id, syncId: reportDeliveries.syncId });
 
   const id = inserted[0]?.id ?? 0;
-
-  await enqueueSyncWrite('report_deliveries', inserted[0]?.syncId, 'insert', {
-    period: input.period,
-    from_date: input.from,
-    to_date: input.to,
-    channel: input.channel,
-    recipients: input.recipients.join(','),
-    content: input.content,
-    status: input.status,
-    error: input.error,
-    triggered_by: input.triggeredBy,
-    user_id: input.userId,
-    sent_at: sentAt.toISOString(),
-  });
 
   return {
     id,
@@ -358,6 +387,8 @@ async function recordDelivery(input: {
  * ------------------------------------------------------------------ */
 
 export type SendReportOptions = {
+  /** Magasins couverts par le rapport (déjà autorisés). */
+  storeIds: number[];
   period: RapportPeriodKey;
   /** Date métier `YYYY-MM-DD`. */
   from: string;
@@ -391,7 +422,8 @@ export async function sendReport(options: SendReportOptions): Promise<{
   error: string | null;
 }> {
   const settings = await getSettings();
-  const data = await getRapportData({ from: options.from, to: options.to });
+  const data = await getRapportData({ from: options.from, to: options.to, storeIds: options.storeIds });
+  const deliveryStoreId = options.storeIds.length === 1 ? options.storeIds[0] : null;
   const message = buildReportMessage(data, settings);
 
   const recipients = options.recipients.map((value) => String(value).trim()).filter(Boolean);
@@ -409,6 +441,7 @@ export async function sendReport(options: SendReportOptions): Promise<{
       options.record === false
         ? null
         : await recordDelivery({
+            storeId: deliveryStoreId,
             period: options.period,
             from: options.from,
             to: options.to,
@@ -454,6 +487,7 @@ export async function sendReport(options: SendReportOptions): Promise<{
     options.record === false
       ? null
       : await recordDelivery({
+          storeId: deliveryStoreId,
           period: options.period,
           from: options.from,
           to: options.to,
@@ -502,6 +536,9 @@ export async function sendReport(options: SendReportOptions): Promise<{
  * ------------------------------------------------------------------ */
 
 export type ReportDeliveriesQuery = {
+  /** Magasins visibles ; `includeCentral` ajoute les rapports consolidés. */
+  storeIds?: number[];
+  includeCentral?: boolean;
   period?: string;
   channel?: string;
   status?: string;
@@ -550,6 +587,12 @@ export async function listReportDeliveries(
 
   const where: string[] = [];
   const args: (string | number)[] = [];
+
+  if (options.storeIds) {
+    const ids = options.storeIds.filter((id) => Number.isInteger(id) && id > 0);
+    const storeSql = ids.length > 0 ? `d.store_id IN (${ids.join(',')})` : '0 = 1';
+    where.push(options.includeCentral ? `(${storeSql} OR d.store_id IS NULL)` : storeSql);
+  }
 
   if (options.period) {
     where.push('d.period = ?');
@@ -601,4 +644,98 @@ export async function listReportDeliveries(
     limit,
     totalPages: Math.ceil(total / limit) || 1,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Envoi automatique planifié (§16) — exécuté par le planificateur du poste
+ * ------------------------------------------------------------------ */
+
+function previousBounds(period: RapportPeriodKey, now: Date): { from: string; to: string } {
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (period === 'day') {
+    return { from: iso(now), to: iso(now) };
+  }
+  if (period === 'week') {
+    const day = (now.getDay() + 6) % 7; // lundi = 0
+    const start = new Date(now);
+    start.setDate(now.getDate() - day);
+    return { from: iso(start), to: iso(now) };
+  }
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { from: iso(start), to: iso(now) };
+}
+
+/**
+ * Envoi automatique des rapports selon `reportFrequency` et `reportSendTime`.
+ *
+ * Appelé toutes les quelques minutes par le planificateur
+ * (`instrumentation.ts`). Il envoie **au plus un** rapport par période :
+ * l'existence d'une livraison `auto` pour la même période et le même périmètre
+ * empêche les doublons. Sur un poste de magasin, le rapport couvre son
+ * magasin ; sur le siège (ou un poste autonome), il est consolidé.
+ *
+ * - quotidien : chaque jour à l'heure dite ;
+ * - hebdomadaire : le samedi à l'heure dite (semaine en cours) ;
+ * - mensuel : le dernier jour du mois à l'heure dite.
+ */
+export async function runScheduledReports(now = new Date()): Promise<{ sent: boolean; reason: string }> {
+  const settings = await getSettings();
+  const frequency = settings.reportFrequency;
+  if (!frequency || frequency === 'manual') return { sent: false, reason: 'manuel' };
+
+  const recipients = (settings.reportRecipients ?? []).map((r) => String(r).trim()).filter(Boolean);
+  if (recipients.length === 0) return { sent: false, reason: 'aucun destinataire' };
+  if (!parseProviderConfig(settings.reportProviderConfig)) return { sent: false, reason: 'passerelle absente' };
+
+  const [hour, minute] = String(settings.reportSendTime || '20:00').split(':').map((v) => Number(v) || 0);
+  if (now.getHours() * 60 + now.getMinutes() < hour * 60 + minute) return { sent: false, reason: 'trop tôt' };
+
+  const period: RapportPeriodKey = frequency === 'week' ? 'week' : frequency === 'month' ? 'month' : 'day';
+  if (period === 'week' && now.getDay() !== 6) return { sent: false, reason: 'pas samedi' };
+  if (period === 'month') {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    if (tomorrow.getMonth() === now.getMonth()) return { sent: false, reason: 'pas fin de mois' };
+  }
+
+  const { from, to } = previousBounds(period, now);
+
+  // Périmètre : magasin du poste, ou tous les magasins actifs.
+  const device = await rawGet<{ value: string | null }>(`SELECT value FROM sync_state WHERE key = 'device_mode'`);
+  const deviceStore = await rawGet<{ value: string | null }>(`SELECT value FROM sync_state WHERE key = 'device_store_id'`);
+  let storeIds: number[];
+  if (device?.value === 'store' && deviceStore?.value) {
+    storeIds = [Number(deviceStore.value)];
+  } else {
+    const rows = await rawAll<{ id: number }>(`SELECT id FROM stores WHERE status <> 'archived' ORDER BY id`);
+    storeIds = rows.map((r) => Number(r.id));
+  }
+  if (storeIds.length === 0) return { sent: false, reason: 'aucun magasin' };
+
+  const storeSql = storeIds.length === 1 ? `store_id = ${storeIds[0]}` : 'store_id IS NULL';
+  const already = await rawGet<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM report_deliveries
+      WHERE triggered_by = 'auto' AND period = ? AND from_date = ? AND to_date = ? AND ${storeSql}`,
+    [period, from, to],
+  );
+  if (Number(already?.n ?? 0) > 0) return { sent: false, reason: 'déjà envoyé' };
+
+  const channel: RapportDeliveryChannel = (settings.reportChannels ?? []).includes('sms') &&
+    !(settings.reportChannels ?? []).includes('whatsapp')
+    ? 'sms'
+    : 'whatsapp';
+
+  const result = await sendReport({
+    storeIds,
+    period,
+    from,
+    to,
+    channel,
+    recipients,
+    userId: null,
+    userName: 'Planificateur',
+    triggeredBy: 'auto',
+  });
+  return { sent: !result.error, reason: result.error ?? 'envoyé' };
 }

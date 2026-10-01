@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import {
   NotFoundError,
+  assertStoreVisible,
+  requireActiveStore,
   fail,
   ok,
   parseId,
@@ -35,6 +37,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
     const detail = await getSalesInvoice(parseId(id));
     if (!detail) throw new NotFoundError('Facture introuvable');
+    assertStoreVisible(user, detail.invoice.storeId);
 
     if (await canViewSalesProfit(user)) return ok(detail);
 
@@ -57,9 +60,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const { id } = await params;
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const invoice = await updateSalesInvoice(parseId(id), {
       ...parseSalesInput(body),
       userId: user.id,
+      storeId,
     });
 
     return ok({ invoice });
@@ -94,6 +99,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     const detail = await getSalesInvoice(invoiceId);
     if (!detail) throw new NotFoundError('Facture introuvable');
+    assertStoreVisible(user, detail.invoice.storeId);
+    await requireActiveStore(user);
 
     let reason = request.nextUrl.searchParams.get('reason') ?? '';
     try {
@@ -104,7 +111,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     }
 
     const isDraft = detail.invoice.status === 'draft';
-    requirePermission(user, isDraft ? 'sales.delete' : 'sales.cancel');
+    requirePermission(user, isDraft ? 'sales.delete' : 'sales.cancel', user.permissions);
 
     // Un brouillon n'a rien à contre-passer : un motif par défaut suffit.
     if (isDraft && !reason.trim()) reason = 'Suppression du brouillon';

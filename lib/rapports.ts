@@ -23,6 +23,8 @@ import { calculateSalesProfitMetrics, getProductMargins } from '@/lib/profit';
 import { getCustomersSummary, listDebtors } from '@/lib/customers';
 import { getSuppliersSummary } from '@/lib/suppliers';
 import { getStockSummary, listStockProducts } from '@/lib/stock';
+import { scopeSql, type StoreScope } from '@/lib/stores';
+import { getPeriodResult } from '@/lib/profit';
 import { getCashSummary } from '@/lib/caisse';
 import { getPaymentsSummary } from '@/lib/payments';
 import { getSettings } from '@/lib/settings';
@@ -64,7 +66,7 @@ function salesScope(
   range: { from: string; to: string },
   options: { includeProduct?: boolean } = {},
 ): { conditions: string[]; args: SqlArg[]; sql: string } {
-  const conditions = ["v.status = 'active'", 'v.date >= ?', 'v.date <= ?'];
+  const conditions = ["v.status = 'active'", 'v.date >= ?', 'v.date <= ?', scopeSql('v.store_id', filters.storeIds)];
   const args: SqlArg[] = [range.from, range.to];
 
   if (filters.customerId) {
@@ -90,7 +92,7 @@ function purchasesScope(
   filters: RapportFilters,
   range: { from: string; to: string },
 ): { conditions: string[]; args: SqlArg[]; sql: string } {
-  const conditions = ["p.status = 'active'", 'p.date >= ?', 'p.date <= ?'];
+  const conditions = ["p.status = 'active'", 'p.date >= ?', 'p.date <= ?', scopeSql('p.store_id', filters.storeIds)];
   const args: SqlArg[] = [range.from, range.to];
 
   if (filters.supplierId) {
@@ -110,6 +112,7 @@ function jobsScope(
     "j.status <> 'cancelled'",
     'date(j.start_date) >= date(?)',
     'date(j.start_date) <= date(?)',
+    scopeSql('j.store_id', filters.storeIds),
   ];
   const args: SqlArg[] = [range.from, range.to];
 
@@ -163,8 +166,9 @@ function buildMonthKeys(endDate: string, count = 12): string[] {
 async function getExpensesAggregate(
   from: string,
   to: string,
+  scope: StoreScope,
 ): Promise<{ total: number; count: number; average: number; byCategory: RapportExpenseCategory[] }> {
-  const where = "e.deleted_at IS NULL AND e.date >= ? AND e.date <= ?";
+  const where = `e.deleted_at IS NULL AND e.approval_status = 'approved' AND e.date >= ? AND e.date <= ? AND ${scopeSql('e.store_id', scope)}`;
 
   const [totals, byCategory] = await Promise.all([
     rawGet<{ count: number; total: number | null }>(
@@ -196,46 +200,26 @@ async function getExpensesAggregate(
   };
 }
 
-/** Main-d'œuvre et matières des chantiers, de la briqueterie et de l'atelier. */
-async function getJobCosts(from: string, to: string): Promise<RapportJobCosts> {
+/** Main-d'œuvre et matières des chantiers. */
+async function getJobCosts(from: string, to: string, scope: StoreScope): Promise<RapportJobCosts> {
+  const js = scopeSql('j.store_id', scope);
   const row = await rawGet<any>(
     `SELECT
        (SELECT COUNT(*) FROM service_jobs j
-         WHERE j.status <> 'cancelled' AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_count,
+         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_count,
        (SELECT COALESCE(SUM(j.total), 0) FROM service_jobs j
-         WHERE j.status <> 'cancelled' AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_revenue,
+         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_revenue,
        (SELECT COALESCE(SUM(j.remaining_amount), 0) FROM service_jobs j
-         WHERE j.status <> 'cancelled' AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_outstanding,
+         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_outstanding,
        (SELECT COALESCE(SUM(m.amount), 0) FROM service_job_materials m
           JOIN service_jobs j ON j.id = m.job_id
-         WHERE date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_material,
+         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_material,
        (SELECT COALESCE(SUM(w.amount), 0) FROM service_job_workers w
           JOIN service_jobs j ON j.id = w.job_id
-         WHERE date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_labor,
-       (SELECT COUNT(*) FROM brick_productions b
-         WHERE date(b.start_date) >= date(?) AND date(b.start_date) <= date(?)) AS brick_count,
-       (SELECT COALESCE(SUM(b.material_cost), 0) FROM brick_productions b
-         WHERE date(b.start_date) >= date(?) AND date(b.start_date) <= date(?)) AS brick_material,
-       (SELECT COALESCE(SUM(b.labor_cost), 0) FROM brick_productions b
-         WHERE date(b.start_date) >= date(?) AND date(b.start_date) <= date(?)) AS brick_labor,
-       (SELECT COUNT(*) FROM furniture_orders o
-         WHERE date(o.start_date) >= date(?) AND date(o.start_date) <= date(?)) AS furniture_count,
-       (SELECT COALESCE(SUM(o.material_cost), 0) FROM furniture_orders o
-         WHERE date(o.start_date) >= date(?) AND date(o.start_date) <= date(?)) AS furniture_material,
-       (SELECT COALESCE(SUM(o.labor_cost), 0) FROM furniture_orders o
-         WHERE date(o.start_date) >= date(?) AND date(o.start_date) <= date(?)) AS furniture_labor`,
-    [
-      from, to, from, to, from, to,
-      from, to, from, to,
-      from, to, from, to,
-      from, to, from, to,
-    ],
+         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_labor`,
+    [from, to, from, to, from, to, from, to, from, to],
   );
 
-  const brickMaterial = Number(row?.brick_material ?? 0);
-  const brickLabor = Number(row?.brick_labor ?? 0);
-  const furnitureMaterial = Number(row?.furniture_material ?? 0);
-  const furnitureLabor = Number(row?.furniture_labor ?? 0);
   const jobsMaterial = Number(row?.jobs_material ?? 0);
   const jobsLabor = Number(row?.jobs_labor ?? 0);
 
@@ -247,18 +231,8 @@ async function getJobCosts(from: string, to: string): Promise<RapportJobCosts> {
       materialCost: jobsMaterial,
       laborCost: jobsLabor,
     },
-    brickProductions: {
-      count: Number(row?.brick_count ?? 0),
-      materialCost: brickMaterial,
-      laborCost: brickLabor,
-    },
-    furnitureOrders: {
-      count: Number(row?.furniture_count ?? 0),
-      materialCost: furnitureMaterial,
-      laborCost: furnitureLabor,
-    },
-    totalMaterialCost: jobsMaterial + brickMaterial + furnitureMaterial,
-    totalLaborCost: jobsLabor + brickLabor + furnitureLabor,
+    totalMaterialCost: jobsMaterial,
+    totalLaborCost: jobsLabor,
   };
 }
 
@@ -269,14 +243,15 @@ async function getJobCosts(from: string, to: string): Promise<RapportJobCosts> {
  * La situation est **indépendante de la période** : une dette n'appartient pas
  * à un exercice, elle existe au jour du rapport.
  */
-async function getReceivables(): Promise<RapportReceivables> {
+async function getReceivables(scope: StoreScope): Promise<RapportReceivables> {
   const [summary, debtors, dueRows] = await Promise.all([
-    getCustomersSummary(),
-    listDebtors(),
+    getCustomersSummary(scope),
+    listDebtors(scope),
     rawAll<{ customer_id: number; oldest_due: string | null }>(
       `SELECT v.customer_id, MIN(v.due_date) AS oldest_due
        FROM sales_invoices v
        WHERE v.status = 'active' AND v.remaining_amount > 0.001 AND v.customer_id IS NOT NULL
+         AND ${scopeSql('v.store_id', scope)}
        GROUP BY v.customer_id`,
     ),
   ]);
@@ -311,9 +286,9 @@ async function getReceivables(): Promise<RapportReceivables> {
 }
 
 /** Dettes fournisseurs : totaux en SQL (`getSuppliersSummary`) + détail par fournisseur. */
-async function getPayables(): Promise<RapportPayables> {
+async function getPayables(scope: StoreScope): Promise<RapportPayables> {
   const [summary, rows] = await Promise.all([
-    getSuppliersSummary(),
+    getSuppliersSummary(scope),
     rawAll<any>(
       `SELECT a.supplier_id,
               MAX(s.name)                     AS supplier_name,
@@ -324,6 +299,7 @@ async function getPayables(): Promise<RapportPayables> {
        FROM purchase_invoices a
        LEFT JOIN suppliers s ON s.id = a.supplier_id
        WHERE a.status = 'active' AND a.remaining_amount > 0.001 AND a.supplier_id IS NOT NULL
+         AND ${scopeSql('a.store_id', scope)}
        GROUP BY a.supplier_id
        ORDER BY balance DESC
        LIMIT 12`,
@@ -351,11 +327,11 @@ async function getPayables(): Promise<RapportPayables> {
 }
 
 /** Valeur du stock, alertes et ruptures (reprend `getStockSummary` et `listStockProducts`). */
-async function getStockInsights(): Promise<RapportStockInsights> {
+async function getStockInsights(scope: StoreScope): Promise<RapportStockInsights> {
   const [summary, lowStock, outOfStock] = await Promise.all([
-    getStockSummary(),
-    listStockProducts({ lowStockOnly: true, limit: 50 }),
-    listStockProducts({ outOfStockOnly: true, limit: 50 }),
+    getStockSummary(scope),
+    listStockProducts({ scope, lowStockOnly: true, limit: 50 }),
+    listStockProducts({ scope, outOfStockOnly: true, limit: 50 }),
   ]);
 
   const mapAlert = (product: {
@@ -554,6 +530,7 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
   const previousFrom = filters.previousFrom || fallbackPrevious.from;
   const previousTo = filters.previousTo || fallbackPrevious.to;
 
+  const scope: StoreScope = filters.storeIds;
   const currentSales = salesScope(filters, { from, to });
   const previousSales = salesScope(filters, { from: previousFrom, to: previousTo });
   const currentJobs = jobsScope(filters, { from, to });
@@ -603,12 +580,12 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
        WHERE ${previousJobs.sql}`,
       previousJobs.args,
     ),
-    getCashSummary({ from, to }),
-    getPaymentsSummary({ from, to }),
-    getExpensesAggregate(from, to),
-    calculateSalesProfitMetrics(from, to),
-    calculateSalesProfitMetrics(previousFrom, previousTo),
-    getJobCosts(from, to),
+    getCashSummary({ scope, from, to }),
+    getPaymentsSummary({ scope, from, to }),
+    getExpensesAggregate(from, to, scope),
+    calculateSalesProfitMetrics(from, to, scope),
+    calculateSalesProfitMetrics(previousFrom, previousTo, scope),
+    getJobCosts(from, to, scope),
   ]);
 
   /* --------------------------- 2. Synthèse --------------------------------- */
@@ -616,7 +593,7 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
   const collectedRow = await rawGet<{ total: number | null }>(
     `SELECT COALESCE(SUM(p.amount), 0) AS total
      FROM payments p
-     WHERE p.date >= ? AND p.date <= ? AND p.type <> 'purchase'`,
+     WHERE p.date >= ? AND p.date <= ? AND p.type <> 'purchase' AND ${scopeSql('p.store_id', scope)}`,
     [from, to],
   );
 
@@ -698,7 +675,8 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
     rawAll<{ month: string; total: number | null }>(
       `SELECT substr(e.date, 1, 7) AS month, COALESCE(SUM(e.amount), 0) AS total
        FROM expenses e
-       WHERE e.deleted_at IS NULL AND e.date >= ? AND e.date <= ?
+       WHERE e.deleted_at IS NULL AND e.approval_status = 'approved' AND e.date >= ? AND e.date <= ?
+         AND ${scopeSql('e.store_id', scope)}
        GROUP BY month
        ORDER BY month`,
       [monthlyFrom, monthlyTo],
@@ -764,7 +742,7 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
 
   /* --------------------------- 5. Marges produits -------------------------- */
 
-  const margins = await getProductMargins(from, to, 50);
+  const margins = await getProductMargins(from, to, scope, 50);
   const productMargins = filters.productId
     ? margins.filter((row) => row.productId === filters.productId)
     : margins;
@@ -798,11 +776,46 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
   /* --------------------- 7. Créances, dettes, stock ------------------------ */
 
   const [receivables, payables, stockInsights, settings] = await Promise.all([
-    getReceivables(),
-    getPayables(),
-    getStockInsights(),
+    getReceivables(scope),
+    getPayables(scope),
+    getStockInsights(scope),
     getSettings(),
   ]);
+
+  /* ------------------ 7 bis. Magasins, transferts, inventaires ------------- */
+
+  const storeRows = await rawAll<any>(
+    `SELECT id, code, name, kind FROM stores WHERE ${scopeSql('id', scope)} ORDER BY kind DESC, name`,
+  );
+  const storesLabel =
+    storeRows.length === 1
+      ? String(storeRows[0].name)
+      : storeRows.length === 0
+        ? 'Aucun magasin'
+        : `Consolidé — ${storeRows.length} magasins`;
+
+  const byStore = storeRows.length > 1 ? await buildStoreComparison(storeRows, from, to, settings) : [];
+
+  const transferRows = await rawAll<any>(
+    `SELECT t.status, COUNT(DISTINCT t.id) AS count, COALESCE(SUM(ti.quantity_shipped), 0) AS quantity
+       FROM stock_transfers t LEFT JOIN stock_transfer_items ti ON ti.transfer_id = t.id
+      WHERE (${scopeSql('t.source_store_id', scope)} OR ${scopeSql('t.destination_store_id', scope)})
+        AND date(t.created_at, 'unixepoch') >= ? AND date(t.created_at, 'unixepoch') <= ?
+      GROUP BY t.status`,
+    [from, to],
+  );
+
+  const inventoryRow = await rawGet<any>(
+    `SELECT COUNT(DISTINCT i.id) AS count,
+            COUNT(ii.id) AS lines,
+            COALESCE(SUM((ii.counted_quantity - ii.expected_quantity) * COALESCE(p.purchase_price, 0)), 0) AS value
+       FROM inventories i
+       LEFT JOIN inventory_items ii ON ii.inventory_id = i.id AND ii.counted_quantity IS NOT NULL
+       LEFT JOIN products p ON p.id = ii.product_id
+      WHERE i.status = 'validated' AND ${scopeSql('i.store_id', scope)}
+        AND date(i.validated_at, 'unixepoch') >= ? AND date(i.validated_at, 'unixepoch') <= ?`,
+    [from, to],
+  );
 
   /* --------------------------- 8. Assemblage ------------------------------- */
 
@@ -870,5 +883,85 @@ export async function getRapportData(filters: RapportFilters): Promise<RapportDa
     expenses,
     netProfit: netProfitSection,
     jobCosts,
+    stores: { ids: scope, label: storesLabel },
+    byStore,
+    transfers: transferRows.map((row) => ({
+      status: String(row.status),
+      count: Number(row.count ?? 0),
+      quantity: Number(row.quantity ?? 0),
+    })),
+    inventories: {
+      count: Number(inventoryRow?.count ?? 0),
+      lines: Number(inventoryRow?.lines ?? 0),
+      adjustmentValue: Number(inventoryRow?.value ?? 0),
+    },
   };
+}
+
+/**
+ * Comparaison par magasin, avec **répartition des charges centrales** (§12) :
+ * les dépenses du siège sont imputées aux magasins selon la règle
+ * `centralChargesAllocation` des paramètres — `revenue` (au prorata du
+ * chiffre d'affaires), `equal` (parts égales) ou `none` (non réparties). La
+ * règle est documentée dans le rapport et modifiable dans les paramètres ; les
+ * dépenses ne sont jamais comptées deux fois (la ligne du siège est diminuée
+ * d'autant).
+ */
+async function buildStoreComparison(
+  storeRows: any[],
+  from: string,
+  to: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+): Promise<RapportData['byStore']> {
+  const rows: RapportData['byStore'] = [];
+  for (const store of storeRows) {
+    const storeId = Number(store.id);
+    const result = await getPeriodResult(from, to, [storeId]);
+    const extra = await rawGet<any>(
+      `SELECT
+         (SELECT COUNT(*) FROM sales_invoices WHERE store_id = ? AND status = 'active' AND date >= ? AND date <= ?) AS sales_count,
+         (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE store_id = ? AND type <> 'purchase' AND date >= ? AND date <= ?) AS collected,
+         (SELECT COALESCE(SUM(remaining_amount), 0) FROM sales_invoices WHERE store_id = ? AND status = 'active') AS receivables,
+         (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices WHERE store_id = ? AND status = 'active') AS payables,
+         (SELECT COALESCE(SUM(ps.quantity * p.purchase_price), 0) FROM product_stocks ps JOIN products p ON p.id = ps.product_id WHERE ps.store_id = ?) AS stock_value`,
+      [storeId, from, to, storeId, from, to, storeId, storeId, storeId],
+    );
+    rows.push({
+      storeId,
+      code: String(store.code),
+      name: String(store.name),
+      kind: String(store.kind),
+      revenue: result.revenue,
+      salesCount: Number(extra?.sales_count ?? 0),
+      grossProfit: result.grossProfit,
+      expenses: result.expenses,
+      allocatedCentralCharges: 0,
+      netProfit: result.netProfit,
+      collected: Number(extra?.collected ?? 0),
+      receivables: Number(extra?.receivables ?? 0),
+      payables: Number(extra?.payables ?? 0),
+      stockValue: Number(extra?.stock_value ?? 0),
+    });
+  }
+
+  const rule = settings.centralChargesAllocation ?? 'revenue';
+  const hq = rows.filter((r) => r.kind === 'headquarters');
+  const outlets = rows.filter((r) => r.kind !== 'headquarters');
+  const central = hq.reduce((sum, r) => sum + r.expenses, 0);
+  if (rule !== 'none' && central > 0 && outlets.length > 0) {
+    const totalRevenue = outlets.reduce((sum, r) => sum + Math.max(0, r.revenue), 0);
+    for (const row of outlets) {
+      const share =
+        rule === 'equal' || totalRevenue <= 0 ? 1 / outlets.length : Math.max(0, row.revenue) / totalRevenue;
+      row.allocatedCentralCharges = Math.round(central * share);
+      row.netProfit -= row.allocatedCentralCharges;
+    }
+    const allocated = outlets.reduce((sum, r) => sum + r.allocatedCentralCharges, 0);
+    for (const row of hq) {
+      const part = central > 0 ? (row.expenses / central) * allocated : 0;
+      row.allocatedCentralCharges = -Math.round(part);
+      row.netProfit += Math.round(part);
+    }
+  }
+  return rows;
 }

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, requireAction } from '@/lib/api';
+import { fail, ok, parsePagination, requireAction, scopeFromRequest } from '@/lib/api';
 import {
   getBalancesSummary,
   getClientBalances,
@@ -25,7 +25,8 @@ const PERIODS: PeriodKey[] = ['day', 'week', 'month', 'year', 'total'];
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('balances.view');
+    const user = await requireAction('balances.view');
+    const scope = scopeFromRequest(user, request);
 
     const params = request.nextUrl.searchParams;
 
@@ -52,12 +53,12 @@ export async function GET(request: NextRequest) {
     /* -------------------------------- Lecture ------------------------------- */
 
     const [summary, clients, suppliers, topCustomers, topSuppliers, margins] = await Promise.all([
-      getBalancesSummary({ from, to }),
-      getClientBalances({ search, debtorsOnly, page, limit }),
-      getSupplierBalances({ search, creditorsOnly, page, limit }),
-      getTopCustomers(from, to, 10),
-      getTopSuppliers(from, to, 10),
-      getMargins(from, to, 20),
+      getBalancesSummary({ scope, from, to }),
+      getClientBalances({ scope, search, debtorsOnly, page, limit }),
+      getSupplierBalances({ scope, search, creditorsOnly, page, limit }),
+      getTopCustomers(from, to, scope, 10),
+      getTopSuppliers(from, to, scope, 10),
+      getMargins(from, to, scope, 20),
     ]);
 
     return ok({

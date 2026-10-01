@@ -505,8 +505,6 @@ export function buildRapportCsv(report: RapportData, company: RapportExportCompa
   row('MAIN-D’ŒUVRE ET MATIÈRES');
   row('Poste', 'Nombre', 'Matières', "Main-d'œuvre");
   row('Chantiers', report.jobCosts.serviceJobs.count, report.jobCosts.serviceJobs.materialCost, report.jobCosts.serviceJobs.laborCost);
-  row('Briqueterie', report.jobCosts.brickProductions.count, report.jobCosts.brickProductions.materialCost, report.jobCosts.brickProductions.laborCost);
-  row('Atelier', report.jobCosts.furnitureOrders.count, report.jobCosts.furnitureOrders.materialCost, report.jobCosts.furnitureOrders.laborCost);
   row('Total', '', report.jobCosts.totalMaterialCost, report.jobCosts.totalLaborCost);
   lines.push('');
 

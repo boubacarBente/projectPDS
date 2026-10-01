@@ -23,6 +23,8 @@ import { rawAll, rawGet } from '@/db';
 import { getCashBalance, getCashSummary, getOpenSession } from '@/lib/caisse';
 import { previousPeriod, startOfMonth, startOfWeek, today, endOfMonth } from '@/lib/format';
 import { getPeriodResult } from '@/lib/profit';
+import { getStockSummary } from '@/lib/stock';
+import { getStoreIndicators, scopeSql, type StoreScope } from '@/lib/stores';
 
 export type PeriodKey = 'day' | 'week' | 'month' | 'year' | 'total';
 
@@ -123,6 +125,36 @@ export type DashboardSnapshot = {
     paymentStatus: string;
   }[];
   monthly: { month: string; revenue: number; purchases: number; expenses: number }[];
+  /** Comparaison entre magasins (vue consolidée, §6) — un objet par magasin. */
+  stores: {
+    storeId: number;
+    code: string;
+    name: string;
+    status: string;
+    revenue: number;
+    salesCount: number;
+    averageBasket: number;
+    purchases: number;
+    expenses: number;
+    collected: number;
+    receivables: number;
+    payables: number;
+    stockValue: number;
+    lowStock: number;
+    cashBalance: number;
+    cashOpen: boolean;
+  }[];
+  /** Points d'attention multi-magasins (§21). */
+  alerts: {
+    transfersToApprove: number;
+    transfersInTransit: number;
+    transfersDisputed: number;
+    expensesPending: number;
+    cashSessionsOpen: number;
+    inventoriesOpen: number;
+  };
+  /** Activité récente (connexions, ventes, validations, opérations sensibles). */
+  activity: { id: number; createdAt: string | null; userName: string; storeName: string | null; action: string; entity: string; entityId: number | null }[];
 };
 
 /**
@@ -133,9 +165,16 @@ export type DashboardSnapshot = {
  * `/soldes`. Ce module ne porte que ce qui est propre au tableau de bord —
  * caisse, créances, dettes, stock, dernières ventes, courbes.
  */
-export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<DashboardSnapshot> {
+export async function getDashboardSnapshot(
+  periodKey: PeriodKey,
+  scope: StoreScope,
+  options: { includeCentralActivity?: boolean } = {},
+): Promise<DashboardSnapshot> {
   const period = resolvePeriod(periodKey);
   const { from, to } = period;
+  const v = scopeSql('store_id', scope);
+  const vv = scopeSql('v.store_id', scope);
+  const aa = scopeSql('a.store_id', scope);
 
   /* -------------------------------- Ventes -------------------------------- */
   const salesRow = await rawGet<any>(
@@ -147,7 +186,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
             COALESCE(SUM(remaining_amount), 0)         AS outstanding,
             COALESCE(SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END), 0) AS cancelled_count
      FROM sales_invoices
-     WHERE date >= ? AND date <= ?`,
+     WHERE date >= ? AND date <= ? AND status <> 'draft' AND ${v}`,
     [from, to],
   );
 
@@ -162,7 +201,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
             COALESCE(SUM(total), 0)               AS revenue,
             COALESCE(SUM(remaining_amount), 0)    AS outstanding
      FROM service_jobs
-     WHERE status <> 'cancelled' AND date(start_date) >= date(?) AND date(start_date) <= date(?)`,
+     WHERE status <> 'cancelled' AND ${v} AND date(start_date) >= date(?) AND date(start_date) <= date(?)`,
     [from, to],
   );
 
@@ -180,12 +219,12 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
    */
   const previous = previousPeriod(from, to);
   const [result, previousResult, activeRow] = await Promise.all([
-    getPeriodResult(from, to),
-    getPeriodResult(previous.from, previous.to),
+    getPeriodResult(from, to, scope),
+    getPeriodResult(previous.from, previous.to, scope),
     rawGet<{ revenue: number | null }>(
       `SELECT COALESCE(SUM(total), 0) AS revenue
        FROM sales_invoices
-       WHERE status = 'active' AND date >= ? AND date <= ?`,
+       WHERE status = 'active' AND date >= ? AND date <= ? AND ${v}`,
       [from, to],
     ),
   ]);
@@ -207,9 +246,9 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
 
   /* --------------------------------- Caisse ------------------------------- */
   const [cashBalance, cashSummary, openSession] = await Promise.all([
-    getCashBalance(),
-    getCashSummary({ from, to }),
-    getOpenSession(),
+    getCashBalance(scope),
+    getCashSummary({ scope, from, to }),
+    scope.length === 1 ? getOpenSession(scope[0]) : Promise.resolve(null),
   ]);
 
   /* ------------------------- Créances et dettes --------------------------- */
@@ -217,7 +256,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
     `SELECT COALESCE(SUM(remaining_amount), 0) AS total,
             COUNT(DISTINCT customer_id)        AS debtors
      FROM sales_invoices
-     WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL`,
+     WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL AND ${v}`,
   );
 
   const receivableTop = await rawAll<any>(
@@ -226,7 +265,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
             MIN(v.due_date)         AS oldest_due
      FROM sales_invoices v
      JOIN customers c ON c.id = v.customer_id
-     WHERE v.status = 'active' AND v.remaining_amount > 0.001
+     WHERE v.status = 'active' AND v.remaining_amount > 0.001 AND ${vv}
      GROUP BY c.id, c.name, c.phone
      ORDER BY balance DESC
      LIMIT 6`,
@@ -238,33 +277,31 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
     `SELECT COALESCE(SUM(remaining_amount), 0) AS total,
             COUNT(DISTINCT supplier_id)        AS creditors
      FROM purchase_invoices
-     WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL`,
+     WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL AND ${v}`,
   );
 
   const payableTop = await rawAll<any>(
     `SELECT s.id, s.name, s.phone, SUM(a.remaining_amount) AS balance
      FROM purchase_invoices a
      JOIN suppliers s ON s.id = a.supplier_id
-     WHERE a.status = 'active' AND a.remaining_amount > 0.001
+     WHERE a.status = 'active' AND a.remaining_amount > 0.001 AND ${aa}
      GROUP BY s.id, s.name, s.phone
      ORDER BY balance DESC
      LIMIT 6`,
   );
 
   /* --------------------------------- Stock -------------------------------- */
-  const stockRow = await rawGet<any>(
-    `SELECT
-       COALESCE(SUM(CASE WHEN stock <= 0 THEN 1 ELSE 0 END), 0) AS out_of_stock,
-       COALESCE(SUM(CASE WHEN stock > 0 AND stock_min > 0 AND stock <= stock_min THEN 1 ELSE 0 END), 0) AS low_stock,
-       COALESCE(SUM(stock * purchase_price), 0) AS purchase_value,
-       COALESCE(SUM(stock * sale_price), 0)     AS sale_value
-     FROM products WHERE is_active = 1`,
-  );
-
+  const stockSummary = await getStockSummary(scope);
+  const stockExpr = `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
+  const minExpr =
+    scope.length === 1
+      ? `COALESCE((SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${Number(scope[0])}), p.stock_min)`
+      : `(p.stock_min * ${Math.max(1, scope.length)})`;
   const stockAlerts = await rawAll<any>(
-    `SELECT id, name, unit, stock, stock_min
-     FROM products
-     WHERE is_active = 1 AND (stock <= 0 OR (stock_min > 0 AND stock <= stock_min))
+    `SELECT * FROM (
+       SELECT p.id, p.name, p.unit, ${stockExpr} AS stock, ${minExpr} AS stock_min
+         FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL
+     ) WHERE stock <= 0 OR (stock_min > 0 AND stock <= stock_min)
      ORDER BY (stock <= 0) DESC, stock ASC
      LIMIT 8`,
   );
@@ -276,7 +313,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
             SUM(i.amount)   AS amount
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${vv}
      GROUP BY i.product_id, i.product_name
      ORDER BY amount DESC
      LIMIT 8`,
@@ -287,7 +324,7 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
   const recentSales = await rawAll<any>(
     `SELECT id, invoice_number, customer_name, date, total, amount_paid, remaining_amount, payment_status
      FROM sales_invoices
-     WHERE status <> 'draft'
+     WHERE status <> 'draft' AND ${v}
      ORDER BY date DESC, id DESC
      LIMIT 8`,
   );
@@ -296,21 +333,22 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
   const monthlySales = await rawAll<any>(
     `SELECT substr(date, 1, 7) AS month, SUM(total) AS revenue
      FROM sales_invoices
-     WHERE status = 'active' AND date >= date('now', '-11 months', 'start of month')
+     WHERE status = 'active' AND ${v} AND date >= date('now', '-11 months', 'start of month')
      GROUP BY month ORDER BY month`,
   );
 
   const monthlyPurchases = await rawAll<any>(
     `SELECT substr(date, 1, 7) AS month, SUM(total) AS total
      FROM purchase_invoices
-     WHERE status = 'active' AND date >= date('now', '-11 months', 'start of month')
+     WHERE status = 'active' AND ${v} AND date >= date('now', '-11 months', 'start of month')
      GROUP BY month ORDER BY month`,
   );
 
   const monthlyExpenses = await rawAll<any>(
     `SELECT substr(date, 1, 7) AS month, SUM(amount) AS total
      FROM expenses
-     WHERE date >= date('now', '-11 months', 'start of month')
+     WHERE deleted_at IS NULL AND approval_status = 'approved' AND ${v}
+       AND date >= date('now', '-11 months', 'start of month')
      GROUP BY month ORDER BY month`,
   );
 
@@ -329,6 +367,60 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
   const salesByMonth = new Map(monthlySales.map((r) => [r.month, Number(r.revenue ?? 0)]));
   const purchasesByMonth = new Map(monthlyPurchases.map((r) => [r.month, Number(r.total ?? 0)]));
   const expensesByMonth = new Map(monthlyExpenses.map((r) => [r.month, Number(r.total ?? 0)]));
+
+  /* ----------------------- Comparaison entre magasins --------------------- */
+  const storeRows = scope.length > 1
+    ? await rawAll<any>(`SELECT id, code, name, status FROM stores WHERE ${scopeSql('id', scope)} ORDER BY name`)
+    : [];
+  const stores: DashboardSnapshot['stores'] = [];
+  for (const store of storeRows) {
+    const storeId = Number(store.id);
+    const [indicators, balance, open] = await Promise.all([
+      getStoreIndicators(storeId, from, to),
+      getCashBalance([storeId]),
+      getOpenSession(storeId),
+    ]);
+    stores.push({
+      storeId,
+      code: store.code,
+      name: store.name,
+      status: store.status,
+      revenue: indicators.revenue,
+      salesCount: indicators.salesCount,
+      averageBasket: indicators.averageBasket,
+      purchases: indicators.purchases,
+      expenses: indicators.expenses,
+      collected: indicators.collected,
+      receivables: indicators.receivables,
+      payables: indicators.payables,
+      stockValue: indicators.stockValue,
+      lowStock: indicators.lowStock,
+      cashBalance: balance,
+      cashOpen: Boolean(open),
+    });
+  }
+
+  /* ------------------------- Points d'attention --------------------------- */
+  const alertRow = await rawGet<any>(
+    `SELECT
+       (SELECT COUNT(*) FROM stock_transfers WHERE status = 'pending'
+          AND (${scopeSql('source_store_id', scope)} OR ${scopeSql('destination_store_id', scope)})) AS to_approve,
+       (SELECT COUNT(*) FROM stock_transfers WHERE status IN ('in_transit', 'partially_received')
+          AND (${scopeSql('source_store_id', scope)} OR ${scopeSql('destination_store_id', scope)})) AS in_transit,
+       (SELECT COUNT(*) FROM stock_transfers WHERE status = 'disputed'
+          AND (${scopeSql('source_store_id', scope)} OR ${scopeSql('destination_store_id', scope)})) AS disputed,
+       (SELECT COUNT(*) FROM expenses WHERE deleted_at IS NULL AND approval_status IN ('pending', 'to_pay') AND ${v}) AS expenses_pending,
+       (SELECT COUNT(*) FROM cash_sessions WHERE status = 'open' AND ${v}) AS cash_open,
+       (SELECT COUNT(*) FROM inventories WHERE status = 'open' AND ${v}) AS inventories_open`,
+  );
+
+  const activityRows = await rawAll<any>(
+    `SELECT a.id, a.created_at, a.user_name, a.action, a.entity, a.entity_id, s.name AS store_name
+       FROM audit_logs a LEFT JOIN stores s ON s.id = a.store_id
+      WHERE ${options.includeCentralActivity ? `(${aa} OR a.store_id IS NULL)` : aa}
+      ORDER BY a.created_at DESC, a.id DESC
+      LIMIT 10`,
+  );
 
   return {
     period,
@@ -397,10 +489,10 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
       })),
     },
     stock: {
-      lowStockCount: Number(stockRow?.low_stock ?? 0),
-      outOfStockCount: Number(stockRow?.out_of_stock ?? 0),
-      purchaseValue: Number(stockRow?.purchase_value ?? 0),
-      saleValue: Number(stockRow?.sale_value ?? 0),
+      lowStockCount: stockSummary.lowStockCount,
+      outOfStockCount: stockSummary.outOfStockCount,
+      purchaseValue: stockSummary.totalStockValue,
+      saleValue: stockSummary.totalSaleValue,
       alerts: stockAlerts.map((r) => ({
         id: Number(r.id),
         name: r.name,
@@ -431,6 +523,24 @@ export async function getDashboardSnapshot(periodKey: PeriodKey): Promise<Dashbo
       revenue: salesByMonth.get(month) ?? 0,
       purchases: purchasesByMonth.get(month) ?? 0,
       expenses: expensesByMonth.get(month) ?? 0,
+    })),
+    stores,
+    alerts: {
+      transfersToApprove: Number(alertRow?.to_approve ?? 0),
+      transfersInTransit: Number(alertRow?.in_transit ?? 0),
+      transfersDisputed: Number(alertRow?.disputed ?? 0),
+      expensesPending: Number(alertRow?.expenses_pending ?? 0),
+      cashSessionsOpen: Number(alertRow?.cash_open ?? 0),
+      inventoriesOpen: Number(alertRow?.inventories_open ?? 0),
+    },
+    activity: activityRows.map((r) => ({
+      id: Number(r.id),
+      createdAt: r.created_at ? new Date(Number(r.created_at) * 1000).toISOString() : null,
+      userName: r.user_name,
+      storeName: r.store_name ?? null,
+      action: r.action,
+      entity: r.entity,
+      entityId: r.entity_id == null ? null : Number(r.entity_id),
     })),
   };
 }

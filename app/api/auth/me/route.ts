@@ -1,52 +1,39 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { getUserById } from '@/lib/auth';
-import { getEffectivePermissions } from '@/lib/user-permissions';
+import { getSessionUser } from '@/lib/api';
+import { listStores } from '@/lib/stores';
+import { getDeviceConfig } from '@/lib/device';
 
 /**
- * GET /api/auth/me
+ * GET /api/auth/me — utilisateur courant, permissions effectives et contexte
+ * de magasin (magasin actif + magasins accessibles sur ce poste).
  *
- * Relit l'utilisateur depuis la base plutôt que de faire confiance au cookie :
- * un compte désactivé pendant la session perd immédiatement ses accès.
- *
- * Renvoie aussi les **permissions effectives** (matrice du rôle **puis**
- * surcharges par utilisateur). Le navigateur s'en sert pour filtrer le menu et
- * masquer les actions ; le serveur applique la même règle de son côté, car
- * masquer n'est pas protéger.
+ * Tout est relu en base : le navigateur n'apporte que son jeton de session.
  */
 export async function GET() {
-  const cookieStore = await cookies();
-  const raw = cookieStore.get('session_user')?.value;
-
-  if (!raw) {
-    return NextResponse.json({ user: null, permissions: [] }, { status: 401 });
+  const user = await getSessionUser();
+  if (!user) {
+    return NextResponse.json({ user: null, permissions: [], stores: [], activeStoreId: null }, { status: 401 });
   }
 
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed?.id) {
-      return NextResponse.json({ user: null, permissions: [] }, { status: 401 });
-    }
+  const [stores, device] = await Promise.all([listStores({ ids: user.storeIds }), getDeviceConfig()]);
 
-    const fresh = await getUserById(Number(parsed.id));
-
-    if (!fresh || !fresh.isActive) {
-      return NextResponse.json({ user: null, permissions: [] }, { status: 401 });
-    }
-
-    const permissions = await getEffectivePermissions({ id: fresh.id, role: fresh.role });
-
-    return NextResponse.json({
-      user: {
-        id: fresh.id,
-        name: fresh.name,
-        username: fresh.username,
-        role: fresh.role,
-      },
-      permissions,
-    });
-  } catch (error) {
-    console.error('[auth] /me a échoué :', error);
-    return NextResponse.json({ user: null, permissions: [] }, { status: 401 });
-  }
+  return NextResponse.json({
+    user: { id: user.id, name: user.name, username: user.username, role: user.role },
+    permissions: user.permissions,
+    activeStoreId: user.storeId,
+    allStores: user.allStores,
+    stores: stores.map((s) => ({
+      id: s.id,
+      code: s.code,
+      name: s.name,
+      kind: s.kind,
+      status: s.status,
+    })),
+    device: {
+      mode: device.mode,
+      storeId: device.storeId,
+      deviceCode: device.deviceCode,
+      connected: Boolean(device.serverUrl && device.token),
+    },
+  });
 }

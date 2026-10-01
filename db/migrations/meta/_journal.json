@@ -29,6 +29,20 @@
       "when": 1790643642614,
       "tag": "0003_sparkling_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790882061737,
+      "tag": "0004_retrait_briqueterie_atelier",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790882326687,
+      "tag": "0005_multi_magasins",
+      "breakpoints": true
     }
   ]
 }

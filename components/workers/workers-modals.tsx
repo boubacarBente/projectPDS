@@ -483,8 +483,7 @@ export function WorkersManagerModal({
       >
         <div className="space-y-4">
           <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
-            Table <strong>unique</strong> de main-d’œuvre, partagée par les chantiers et la
-            briqueterie. Un journalier ponctuel non enregistré reste saisissable directement dans
+            Table <strong>unique</strong> de main-d’œuvre, utilisée par les chantiers. Un journalier ponctuel non enregistré reste saisissable directement dans
             une équipe.
           </p>
 

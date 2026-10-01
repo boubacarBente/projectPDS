@@ -27,8 +27,10 @@
  *
  *  - **aucune suppression physique** : l'annulation est un statut (`cancelled`)
  *    avec motif, auteur et date (§14, §26.13) ;
- *  - `products.stock` n'est **jamais** écrit ici : tout passe par
- *    `addStockMovement()` (§6.5 règle 4) ;
+ *  - le stock n'est **jamais** écrit ici : tout passe par `addStockMovement()`,
+ *    dans le magasin de l'achat ;
+ *  - chaque opération s'exécute dans une **transaction** (tout ou rien) ;
+ *  - un achat appartient à **un** magasin (`store_id`).
  *  - `amount_paid` / `remaining_amount` / `payment_status` sont recalculés depuis
  *    la somme réelle des `payments` (`recomputeDocumentPayments`) ;
  *  - **contrairement à une vente, on ne refuse pas l'entrée pour cause de
@@ -39,7 +41,7 @@
  *    `status = 'active'`) : ce module produit exactement ces colonnes.
  */
 
-import { db, rawAll, rawGet } from '@/db';
+import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { purchaseInvoices, purchaseInvoiceItems } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ValidationError, businessDate, toInt, toNumber } from '@/lib/api';
@@ -57,7 +59,7 @@ import {
 import { getProduct } from '@/lib/products';
 import { nextDocumentNumber } from '@/lib/settings';
 import { addStockMovement } from '@/lib/stock';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /* ------------------------------------------------------------------ *
  * Types exposés (contrat d'API — ne pas renommer les champs)
@@ -65,6 +67,8 @@ import { enqueueSyncWrite } from '@/lib/sync';
 
 export type PurchaseInvoiceRow = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   reference: string;
   supplierReference: string | null;
   supplierId: number | null;
@@ -112,6 +116,8 @@ export type PurchaseInvoiceInput = {
   notes?: string | null;
   lines: PurchaseLineInput[];
   userId?: number | null;
+  /** Magasin actif (obligatoire pour écrire). */
+  storeId?: number | null;
 };
 
 /** Ligne validée : instantanés + montant calculé (pas de remise : §6.3). */
@@ -154,7 +160,7 @@ export type PurchasesSummary = {
 };
 
 /** Référence utilisateur minimale (audit + mouvements). */
-export type PurchaseUserRef = { id: number; name?: string } | null;
+export type PurchaseUserRef = { id: number; name?: string; storeId?: number | null } | null;
 
 const STATUSES: PurchaseInvoiceRow['status'][] = ['active', 'cancelled'];
 const PERIOD_KEYS: PeriodKey[] = ['day', 'week', 'month', 'year', 'total'];
@@ -169,7 +175,7 @@ const SUPPLIER_FALLBACK = 'Fournisseur';
  * ------------------------------------------------------------------ */
 
 const INVOICE_COLUMNS = `
-  a.id, a.reference, a.supplier_reference, a.supplier_id, a.user_id, a.date, a.due_date,
+  a.id, a.store_id, st.name AS store_name, a.reference, a.supplier_reference, a.supplier_id, a.user_id, a.date, a.due_date,
   a.total, a.amount_paid, a.remaining_amount, a.payment_status, a.payment_method, a.status,
   a.cancel_reason, a.cancelled_by, a.cancelled_at, a.notes, a.created_at, a.sync_id,
   COALESCE(f.name, ?) AS supplier_name,
@@ -181,6 +187,7 @@ const INVOICE_FROM = `
   FROM purchase_invoices a
   LEFT JOIN suppliers f ON f.id = a.supplier_id
   LEFT JOIN users u ON u.id = a.user_id
+  LEFT JOIN stores st ON st.id = a.store_id
 `;
 
 function roundQty(value: number): number {
@@ -195,6 +202,8 @@ function plainNumber(value: number): string {
 function mapInvoiceRow(row: any): PurchaseInvoiceRow {
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
     reference: row.reference,
     supplierReference: row.supplier_reference ?? null,
     supplierId: row.supplier_id == null ? null : Number(row.supplier_id),
@@ -278,6 +287,7 @@ async function resolveSupplier(
 
 type InvoiceRecord = {
   id: number;
+  storeId: number | null;
   syncId: string;
   reference: string;
   status: PurchaseInvoiceRow['status'];
@@ -291,7 +301,7 @@ type InvoiceRecord = {
 
 async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
   const row = await rawGet<any>(
-    `SELECT a.id, a.sync_id, a.reference, a.status, a.supplier_id, a.amount_paid,
+    `SELECT a.id, a.store_id, a.sync_id, a.reference, a.status, a.supplier_id, a.amount_paid,
             a.payment_method, a.date, a.total, COALESCE(f.name, ?) AS supplier_name
      FROM purchase_invoices a
      LEFT JOIN suppliers f ON f.id = a.supplier_id
@@ -302,6 +312,7 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
 
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
     syncId: row.sync_id,
     reference: row.reference,
     status: row.status as PurchaseInvoiceRow['status'],
@@ -312,6 +323,17 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
     date: row.date,
     total: Number(row.total ?? 0),
   };
+}
+
+/** Cloisonnement (§5) : un achat ne se modifie que depuis son magasin. */
+function assertSameStore(record: { storeId: number | null }, storeId: number | null | undefined): number {
+  if (!storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
+  if (record.storeId !== Number(storeId)) {
+    throw new ValidationError(
+      'Cet achat appartient à un autre magasin : il ne peut être modifié que depuis ce magasin.',
+    );
+  }
+  return Number(storeId);
 }
 
 async function getItemRecords(invoiceId: number): Promise<any[]> {
@@ -423,18 +445,6 @@ export function computePurchaseTotal(items: PurchaseItemDraft[]): number {
  * Écriture des lignes (instantanés)
  * ------------------------------------------------------------------ */
 
-function itemPayload(reference: string, item: PurchaseItemDraft): Record<string, unknown> {
-  // Règle §11.3 : jamais de référence par `id` local dans un payload de synchro.
-  return {
-    reference,
-    product_name: item.productName,
-    unit: item.unit,
-    quantity: item.quantity,
-    unit_price: item.unitPrice,
-    amount: item.amount,
-  };
-}
-
 async function insertInvoiceItems(
   invoiceId: number,
   reference: string,
@@ -454,12 +464,6 @@ async function insertInvoiceItems(
       })
       .returning({ id: purchaseInvoiceItems.id, syncId: purchaseInvoiceItems.syncId });
 
-    await enqueueSyncWrite(
-      'purchase_invoice_items',
-      inserted[0]?.syncId,
-      'insert',
-      itemPayload(reference, item),
-    );
   }
 }
 
@@ -497,13 +501,6 @@ async function reconcileInvoiceItems(
           updatedAt: new Date(),
         })
         .where(eq(purchaseInvoiceItems.id, Number(previous.id)));
-
-      await enqueueSyncWrite(
-        'purchase_invoice_items',
-        previous.sync_id,
-        'update',
-        itemPayload(reference, item),
-      );
       continue;
     }
 
@@ -520,21 +517,11 @@ async function reconcileInvoiceItems(
       })
       .returning({ id: purchaseInvoiceItems.id, syncId: purchaseInvoiceItems.syncId });
 
-    await enqueueSyncWrite(
-      'purchase_invoice_items',
-      inserted[0]?.syncId,
-      'insert',
-      itemPayload(reference, item),
-    );
   }
 
   for (let index = items.length; index < existing.length; index += 1) {
     const surplus = existing[index];
     await db.delete(purchaseInvoiceItems).where(eq(purchaseInvoiceItems.id, Number(surplus.id)));
-    await enqueueSyncWrite('purchase_invoice_items', surplus.sync_id, 'delete', {
-      reference,
-      product_name: surplus.product_name,
-    });
   }
 }
 
@@ -559,7 +546,7 @@ async function applyStockDelta(
   reference: string,
   from: Map<number, number>,
   to: Map<number, number>,
-  options: { userId?: number | null },
+  options: { storeId: number; userId?: number | null },
 ): Promise<void> {
   if (areQuantityMapsEqual(from, to)) return;
 
@@ -580,6 +567,7 @@ async function applyStockDelta(
 
     if (delta > 0) {
       await addStockMovement(productId, 'entry', delta, {
+        storeId: options.storeId,
         referenceType: 'purchase',
         referenceId: invoiceId,
         motif: `achat ${reference}`,
@@ -587,6 +575,7 @@ async function applyStockDelta(
       });
     } else {
       await addStockMovement(productId, 'exit', Math.abs(delta), {
+        storeId: options.storeId,
         referenceType: 'purchase',
         referenceId: invoiceId,
         motif: `correction achat ${reference}`,
@@ -612,6 +601,8 @@ async function applyStockDelta(
  */
 export async function listPurchaseInvoices(
   options: {
+    /** Magasins visibles (obligatoire). */
+    scope: StoreScope;
     search?: string;
     supplierId?: number;
     from?: string;
@@ -620,7 +611,7 @@ export async function listPurchaseInvoices(
     status?: string;
     page?: number;
     limit?: number;
-  } = {},
+  },
 ): Promise<{
   data: PurchaseInvoiceRow[];
   total: number;
@@ -632,7 +623,7 @@ export async function listPurchaseInvoices(
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const where: string[] = [];
+  const where: string[] = [scopeSql('a.store_id', options.scope)];
   const args: (string | number)[] = [];
 
   if (options.search) {
@@ -703,7 +694,9 @@ export async function getPurchaseInvoice(id: number): Promise<PurchaseInvoiceDet
 
   const invoice = mapInvoiceRow(row);
   const items = (await getItemRecords(id)).map(mapItemRow);
-  const payments = (await listPayments({ type: 'purchase', referenceId: id, limit: 200 })).data;
+  const payments = (
+    await listPayments({ scope: invoice.storeId ? [invoice.storeId] : [], type: 'purchase', referenceId: id, limit: 200 })
+  ).data;
   const schedule = await getPaymentSchedule('purchase', id);
 
   return { invoice, items, payments, schedule };
@@ -768,6 +761,12 @@ export function parsePurchaseInput(body: any): PurchaseInvoiceInput {
  * ------------------------------------------------------------------ */
 
 export async function createPurchaseInvoice(input: PurchaseInvoiceInput): Promise<PurchaseInvoiceRow> {
+  return withTransaction(() => createPurchaseInvoiceInTx(input));
+}
+
+async function createPurchaseInvoiceInTx(input: PurchaseInvoiceInput): Promise<PurchaseInvoiceRow> {
+  const storeId = Number(input.storeId);
+  if (!storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
   // 1. Validation : fournisseur obligatoire (existence vérifiée), lignes
   //    valides, quantités > 0, prix ≥ 0. **Aucun contrôle de stock** : un achat
   //    augmente le stock.
@@ -790,12 +789,13 @@ export async function createPurchaseInvoice(input: PurchaseInvoiceInput): Promis
   }
 
   // 2. Numérotation (compteur `settings`, sans trou) → ACH-2026-000001.
-  const reference = await nextDocumentNumber('purchase');
+  const reference = await nextDocumentNumber('purchase', storeId);
 
   // 3. Facture, puis lignes avec instantanés.
   const inserted = await db
     .insert(purchaseInvoices)
     .values({
+      storeId,
       reference,
       supplierReference: input.supplierReference?.trim() || null,
       supplierId: supplier.supplierId,
@@ -814,23 +814,12 @@ export async function createPurchaseInvoice(input: PurchaseInvoiceInput): Promis
 
   const invoiceId = Number(inserted[0].id);
 
-  await enqueueSyncWrite('purchase_invoices', inserted[0].syncId, 'insert', {
-    reference,
-    supplier_reference: input.supplierReference?.trim() || null,
-    supplier_id: supplier.supplierId,
-    date,
-    due_date: dueDate,
-    total,
-    payment_method: paymentMethod,
-    status: 'active',
-    notes: input.notes ?? null,
-  });
-
   await insertInvoiceItems(invoiceId, reference, items);
 
   // 4. Entrées de stock, un `entry` par ligne (motif explicite).
   for (const item of items) {
     await addStockMovement(item.productId, 'entry', item.quantity, {
+      storeId,
       referenceType: 'purchase',
       referenceId: invoiceId,
       motif: `achat ${reference} : ${item.productName}`,
@@ -842,6 +831,7 @@ export async function createPurchaseInvoice(input: PurchaseInvoiceInput): Promis
   //    **reçu** (§13, §15). La facture doit exister avant (il lui faut son id).
   if (amountPaid > 0) {
     await createPayment({
+      storeId,
       type: 'purchase',
       referenceId: invoiceId,
       amount: amountPaid,
@@ -855,6 +845,7 @@ export async function createPurchaseInvoice(input: PurchaseInvoiceInput): Promis
   // 6. Journal d'actions — une seule fois, ici comme dans `lib/sales.ts`.
   await writeAudit({
     user: await auditUser(input.userId),
+    storeId,
     action: 'create',
     entity: 'purchase_invoice',
     entityId: invoiceId,
@@ -894,8 +885,13 @@ export async function updatePurchaseInvoice(
   id: number,
   input: PurchaseInvoiceInput,
 ): Promise<PurchaseInvoiceRow> {
+  return withTransaction(() => updatePurchaseInvoiceInTx(id, input));
+}
+
+async function updatePurchaseInvoiceInTx(id: number, input: PurchaseInvoiceInput): Promise<PurchaseInvoiceRow> {
   const existing = await getInvoiceRecord(id);
   if (!existing) throw new NotFoundError('Achat introuvable');
+  const storeId = assertSameStore(existing, input.storeId);
   if (existing.status === 'cancelled') {
     throw new ValidationError('Un achat annulé ne peut pas être modifié');
   }
@@ -940,17 +936,6 @@ export async function updatePurchaseInvoice(
     })
     .where(eq(purchaseInvoices.id, id));
 
-  await enqueueSyncWrite('purchase_invoices', existing.syncId, 'update', {
-    reference: existing.reference,
-    supplier_reference: input.supplierReference?.trim() || null,
-    supplier_id: supplier.supplierId,
-    date,
-    due_date: dueDate,
-    total,
-    payment_method: paymentMethod,
-    notes: input.notes ?? null,
-  });
-
   await reconcileInvoiceItems(id, existing.reference, items);
 
   await applyStockDelta(
@@ -963,11 +948,12 @@ export async function updatePurchaseInvoice(
       })),
     ),
     quantitiesByProduct(items),
-    { userId: input.userId ?? null },
+    { storeId, userId: input.userId ?? null },
   );
 
   if (targetPaid !== null && targetPaid > currentPaid + 0.01) {
     await createPayment({
+      storeId,
       type: 'purchase',
       referenceId: id,
       amount: roundMoney(targetPaid - currentPaid),
@@ -1041,8 +1027,10 @@ export async function cancelPurchaseInvoice(
     throw new ValidationError("Le motif d'annulation est obligatoire");
   }
 
+  return withTransaction(async () => {
   const existing = await getInvoiceRecord(id);
   if (!existing) throw new NotFoundError('Achat introuvable');
+  const storeId = assertSameStore(existing, user?.storeId);
   if (existing.status === 'cancelled') {
     throw new ValidationError('Cet achat est déjà annulé');
   }
@@ -1064,13 +1052,6 @@ export async function cancelPurchaseInvoice(
     })
     .where(eq(purchaseInvoices.id, id));
 
-  await enqueueSyncWrite('purchase_invoices', existing.syncId, 'update', {
-    reference: existing.reference,
-    status: 'cancelled',
-    cancel_reason: cleanReason,
-    cancelled_at: new Date().toISOString(),
-  });
-
   // 1. Inversion du stock : un `exit` par ligne achetée, `allowNegative` assumé
   //    (voir la décision documentée ci-dessus).
   let reversedItems = 0;
@@ -1082,6 +1063,7 @@ export async function cancelPurchaseInvoice(
     if (!productId || quantity <= 0) continue;
 
     const result = await addStockMovement(productId, 'exit', quantity, {
+      storeId,
       referenceType: 'purchase',
       referenceId: id,
       motif: `annulation achat ${existing.reference}`,
@@ -1097,6 +1079,7 @@ export async function cancelPurchaseInvoice(
   const refundedAmount = roundMoney(Number(existing.amountPaid ?? 0));
   if (refundedAmount > 0) {
     await addCashMovement({
+      storeId,
       type: 'income',
       amount: refundedAmount,
       paymentMethod: existing.paymentMethod,
@@ -1126,6 +1109,7 @@ export async function cancelPurchaseInvoice(
   const cancelled = await getPurchaseInvoice(id);
   if (!cancelled) throw new Error('Achat introuvable après annulation');
   return cancelled.invoice;
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -1133,9 +1117,10 @@ export async function cancelPurchaseInvoice(
  * ------------------------------------------------------------------ */
 
 /** Statistiques d'achats sur une période nommée (`resolvePeriod` de `lib/dashboard.ts`). */
-export async function getPurchaseStats(period: PeriodKey = 'month'): Promise<PurchaseStats> {
+export async function getPurchaseStats(period: PeriodKey = 'month', scope: StoreScope): Promise<PurchaseStats> {
   const key: PeriodKey = PERIOD_KEYS.includes(period) ? period : 'month';
   const bounds = resolvePeriod(key);
+  const storeSql = scopeSql('store_id', scope);
 
   const totals = await rawGet<any>(
     `SELECT COUNT(*) AS count,
@@ -1143,13 +1128,13 @@ export async function getPurchaseStats(period: PeriodKey = 'month'): Promise<Pur
             COALESCE(SUM(amount_paid), 0)      AS paid,
             COALESCE(SUM(remaining_amount), 0) AS outstanding
      FROM purchase_invoices
-     WHERE status = 'active' AND date >= ? AND date <= ?`,
+     WHERE status = 'active' AND date >= ? AND date <= ? AND ${storeSql}`,
     [bounds.from, bounds.to],
   );
 
   const cancelled = await rawGet<{ count: number }>(
     `SELECT COUNT(*) AS count FROM purchase_invoices
-     WHERE status = 'cancelled' AND date >= ? AND date <= ?`,
+     WHERE status = 'cancelled' AND date >= ? AND date <= ? AND ${storeSql}`,
     [bounds.from, bounds.to],
   );
 
@@ -1159,7 +1144,7 @@ export async function getPurchaseStats(period: PeriodKey = 'month'): Promise<Pur
             COALESCE(SUM(a.total), 0) AS total
      FROM purchase_invoices a
      LEFT JOIN suppliers f ON f.id = a.supplier_id
-     WHERE a.status = 'active' AND a.date >= ? AND a.date <= ?
+     WHERE a.status = 'active' AND a.date >= ? AND a.date <= ? AND ${scopeSql('a.store_id', scope)}
      GROUP BY COALESCE(f.name, ?)
      ORDER BY total DESC
      LIMIT ?`,
@@ -1186,15 +1171,16 @@ export async function getPurchaseStats(period: PeriodKey = 'month'): Promise<Pur
 }
 
 /** Synthèse globale de l'en-tête de page (tous états, toutes périodes). */
-export async function getPurchasesSummary(): Promise<PurchasesSummary> {
+export async function getPurchasesSummary(scope: StoreScope): Promise<PurchasesSummary> {
+  const s = scopeSql('store_id', scope);
   const row = await rawGet<any>(
     `SELECT
-       (SELECT COUNT(*) FROM purchase_invoices) AS total_purchases,
-       (SELECT COUNT(*) FROM purchase_invoices WHERE status = 'active')    AS active_count,
-       (SELECT COUNT(*) FROM purchase_invoices WHERE status = 'cancelled') AS cancelled_count,
-       (SELECT COALESCE(SUM(total), 0) FROM purchase_invoices WHERE status = 'active')            AS total_amount,
-       (SELECT COALESCE(SUM(amount_paid), 0) FROM purchase_invoices WHERE status = 'active')      AS total_paid,
-       (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices WHERE status = 'active') AS total_outstanding`,
+       (SELECT COUNT(*) FROM purchase_invoices WHERE ${s}) AS total_purchases,
+       (SELECT COUNT(*) FROM purchase_invoices WHERE ${s} AND status = 'active')    AS active_count,
+       (SELECT COUNT(*) FROM purchase_invoices WHERE ${s} AND status = 'cancelled') AS cancelled_count,
+       (SELECT COALESCE(SUM(total), 0) FROM purchase_invoices WHERE ${s} AND status = 'active')            AS total_amount,
+       (SELECT COALESCE(SUM(amount_paid), 0) FROM purchase_invoices WHERE ${s} AND status = 'active')      AS total_paid,
+       (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices WHERE ${s} AND status = 'active') AS total_outstanding`,
   );
 
   return {

@@ -253,16 +253,6 @@ export type RapportJobCosts = {
     materialCost: number;
     laborCost: number;
   };
-  brickProductions: {
-    count: number;
-    materialCost: number;
-    laborCost: number;
-  };
-  furnitureOrders: {
-    count: number;
-    materialCost: number;
-    laborCost: number;
-  };
   totalMaterialCost: number;
   totalLaborCost: number;
 };
@@ -288,6 +278,32 @@ export type RapportData = {
   expenses: RapportExpenses;
   netProfit: RapportNetProfit;
   jobCosts: RapportJobCosts;
+  /** Magasins couverts par le rapport (libellé et liste). */
+  stores: { ids: number[]; label: string };
+  /** Comparaison par magasin (rapport consolidé, plusieurs magasins). */
+  byStore: RapportStoreRow[];
+  /** Transferts intermagasins de la période, par statut. */
+  transfers: { status: string; count: number; quantity: number }[];
+  /** Inventaires validés sur la période et leurs écarts. */
+  inventories: { count: number; adjustmentValue: number; lines: number };
+};
+
+export type RapportStoreRow = {
+  storeId: number;
+  code: string;
+  name: string;
+  kind: string;
+  revenue: number;
+  salesCount: number;
+  grossProfit: number;
+  expenses: number;
+  /** Part des charges du siège imputée au magasin (règle `centralChargesAllocation`). */
+  allocatedCentralCharges: number;
+  netProfit: number;
+  collected: number;
+  receivables: number;
+  payables: number;
+  stockValue: number;
 };
 
 /** Filtres acceptés par `getRapportData()` et par `GET /api/rapports`. */
@@ -301,6 +317,9 @@ export type RapportFilters = {
   customerId?: number | null;
   supplierId?: number | null;
   paymentStatus?: string | null;
+  /** Magasins couverts — **déjà autorisés** par la route (jamais lus du navigateur sans contrôle). */
+  storeIds: number[];
+  userId?: number | null;
 };
 
 /* ------------------------------------------------------------------ *

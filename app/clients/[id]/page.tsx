@@ -2,8 +2,8 @@
 
 /**
  * Fiche client (README §7.2) — refonte visuelle calée sur la maquette du
- * client, adaptée à Planète Déco (quincaillerie, décoration, briqueterie,
- * atelier, chantiers : aucune notion de gaz).
+ * client, adaptée à Planète Déco (quincaillerie, décoration,
+ * chantiers : aucune notion de gaz).
  *
  * **Présentation seule** : les valeurs affichées viennent toutes de
  * `GET /api/clients/[id]` (`customer`, `invoiceCount`, `totalInvoiced`,

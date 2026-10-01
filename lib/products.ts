@@ -16,12 +16,12 @@
  * Aucune suppression physique (§26.13) : désactiver, jamais `DELETE`.
  */
 
-import { db, rawAll, rawGet } from '@/db';
+import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { categories, products } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
-import { enqueueSyncWrite } from '@/lib/sync';
-import { addStockMovement, adjustStock } from '@/lib/stock';
+import { addStockMovement, adjustStock, setLocalProductSettings } from '@/lib/stock';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 import { getSettings } from '@/lib/settings';
 import { DEFAULT_SETTINGS } from '@/lib/settings-schema';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
@@ -49,9 +49,17 @@ export type ProductRow = {
   /** Prix d'achat — base du calcul de marge. */
   purchasePrice: number;
   salePrice: number;
-  /** `real` : le m² et le kg ne sont pas entiers. */
+  /** Stock sur la portée consultée (magasin actif, ou somme en consolidé). */
   stock: number;
+  /** Seuil d'alerte effectif (local au magasin s'il est défini). */
   stockMin: number;
+  /** Seuil d'alerte par défaut du catalogue. */
+  catalogStockMin: number;
+  /** Prix de vente du catalogue (le `salePrice` peut être un prix local). */
+  catalogSalePrice: number;
+  /** Prix local défini pour le magasin consulté, sinon `null`. */
+  localSalePrice: number | null;
+  barcode: string | null;
   description: string | null;
   isActive: boolean;
   /** Agrégats **calculés**, jamais stockés. */
@@ -71,14 +79,21 @@ export type ProductInput = {
   unit?: string | null;
   purchasePrice?: number;
   salePrice?: number;
-  /** Stock initial : enregistré comme mouvement `entry`, jamais écrit en dur. */
+  /** Stock initial (magasin actif) : enregistré comme mouvement `entry`. */
   stock?: number;
   stockMin?: number;
+  barcode?: string | null;
+  /** Prix de vente local au magasin actif (`null` = prix du catalogue). */
+  localSalePrice?: number | null;
+  /** Seuil d'alerte local au magasin actif (`null` = seuil du catalogue). */
+  localStockMin?: number | null;
   description?: string | null;
   isActive?: boolean;
 };
 
 export type ProductListOptions = {
+  /** Magasins dont on lit le stock (vide = aucun stock affiché). */
+  scope?: StoreScope;
   search?: string;
   categoryId?: number;
   /** Filtre sur `categories.kind`. */
@@ -129,17 +144,32 @@ const PRODUCT_FROM = `
   LEFT JOIN categories c ON c.id = p.category_id
 `;
 
-const PRODUCT_COLUMNS = `
-  p.id, p.name, p.category_id, p.unit, p.purchase_price, p.sale_price,
-  p.stock, p.stock_min, p.description, p.is_active, p.created_at,
-  c.name AS category_name, c.kind AS category_kind
-`;
+/** Colonnes, avec stock / seuil / prix calculés pour la portée demandée. */
+function productColumns(scope: StoreScope): string {
+  const single = scope.length === 1 ? Number(scope[0]) : null;
+  const stock = `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
+  const localMin = single
+    ? `(SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${single})`
+    : 'NULL';
+  const localPrice = single
+    ? `(SELECT ps.sale_price FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${single})`
+    : 'NULL';
+  const effectiveMin = single ? `COALESCE(${localMin}, p.stock_min)` : `(p.stock_min * ${Math.max(1, scope.length)})`;
+  return `
+  p.id, p.name, p.category_id, p.unit, p.purchase_price, p.sale_price, p.barcode,
+  ${stock} AS stock, ${effectiveMin} AS stock_min, p.stock_min AS catalog_stock_min,
+  ${localPrice} AS local_sale_price,
+  p.description, p.is_active, p.created_at,
+  c.name AS category_name, c.kind AS category_kind`;
+}
 
 function mapProductRow(row: any): ProductRow {
-  const stock = Number(row.stock ?? 0);
+  const stock = Math.round(Number(row.stock ?? 0) * 1000) / 1000;
   const stockMin = Number(row.stock_min ?? 0);
   const purchasePrice = Number(row.purchase_price ?? 0);
-  const salePrice = Number(row.sale_price ?? 0);
+  const localSalePrice = row.local_sale_price == null ? null : Number(row.local_sale_price);
+  const catalogSalePrice = Number(row.sale_price ?? 0);
+  const salePrice = localSalePrice ?? catalogSalePrice;
   const margin = salePrice - purchasePrice;
 
   return {
@@ -153,6 +183,10 @@ function mapProductRow(row: any): ProductRow {
     salePrice,
     stock,
     stockMin,
+    catalogStockMin: Number(row.catalog_stock_min ?? row.stock_min ?? 0),
+    catalogSalePrice,
+    localSalePrice,
+    barcode: row.barcode ?? null,
     description: row.description ?? null,
     isActive: Boolean(row.is_active),
     stockValue: stock * purchasePrice,
@@ -181,15 +215,17 @@ function buildProductWhere(options: ProductListOptions): { whereSql: string; arg
     args.push(options.kind);
   }
   if (options.search) {
-    where.push('(p.name LIKE ? OR p.description LIKE ?)');
+    where.push('(p.name LIKE ? OR p.description LIKE ? OR p.barcode = ?)');
     const like = `%${options.search}%`;
-    args.push(like, like);
+    args.push(like, like, options.search.trim());
   }
+  const scope = options.scope ?? [];
+  const stockSql = `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
   if (options.lowStockOnly) {
-    where.push('p.stock_min > 0 AND p.stock <= p.stock_min');
+    where.push(`p.stock_min > 0 AND ${stockSql} <= p.stock_min`);
   }
   if (options.outOfStockOnly) {
-    where.push('p.stock <= 0');
+    where.push(`${stockSql} <= 0`);
   }
 
   return { whereSql: where.length > 0 ? `WHERE ${where.join(' AND ')}` : '', args };
@@ -210,7 +246,7 @@ export async function listProducts(options: ProductListOptions = {}): Promise<{
   const { whereSql, args } = buildProductWhere(options);
 
   const rows = await rawAll<any>(
-    `SELECT ${PRODUCT_COLUMNS}
+    `SELECT ${productColumns(options.scope ?? [])}
      ${PRODUCT_FROM}
      ${whereSql}
      ORDER BY ${sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'p', ['recent', 'name'])}
@@ -235,9 +271,9 @@ export async function listProducts(options: ProductListOptions = {}): Promise<{
 }
 
 /** Une ligne enrichie, ou `null` (le Route Handler traduit en 404). */
-export async function getProduct(id: number): Promise<ProductRow | null> {
+export async function getProduct(id: number, scope: StoreScope = []): Promise<ProductRow | null> {
   const row = await rawGet<any>(
-    `SELECT ${PRODUCT_COLUMNS} ${PRODUCT_FROM} WHERE p.id = ?`,
+    `SELECT ${productColumns(scope)} ${PRODUCT_FROM} WHERE p.id = ?`,
     [id],
   );
 
@@ -245,8 +281,8 @@ export async function getProduct(id: number): Promise<ProductRow | null> {
 }
 
 /** Recherche rapide pour les modales de sélection (vente, achat, chantier). */
-export async function searchProducts(term: string, limit = 20): Promise<ProductRow[]> {
-  const { data } = await listProducts({ search: term, limit: Math.max(1, Math.min(100, limit)) });
+export async function searchProducts(term: string, limit = 20, scope: StoreScope = []): Promise<ProductRow[]> {
+  const { data } = await listProducts({ search: term, scope, limit: Math.max(1, Math.min(100, limit)) });
   return data;
 }
 
@@ -256,17 +292,18 @@ export async function searchProducts(term: string, limit = 20): Promise<ProductR
  * `lowStockCount` et `outOfStockCount` sont **mutuellement exclusifs** : une
  * rupture n'est pas comptée deux fois (même convention que `lib/stock.ts`).
  */
-export async function getProductsSummary(): Promise<ProductsSummary> {
+export async function getProductsSummary(scope: StoreScope = []): Promise<ProductsSummary> {
+  const stock = `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
   const row = await rawGet<any>(
     `SELECT
        (SELECT COUNT(*) FROM products) AS total_products,
        (SELECT COUNT(*) FROM products WHERE is_active = 1) AS active_products,
        (SELECT COUNT(*) FROM categories WHERE is_active = 1) AS categories_count,
-       (SELECT COUNT(*) FROM products
-         WHERE is_active = 1 AND stock > 0 AND stock_min > 0 AND stock <= stock_min) AS low_stock_count,
-       (SELECT COUNT(*) FROM products WHERE is_active = 1 AND stock <= 0) AS out_of_stock_count,
-       (SELECT COALESCE(SUM(stock * purchase_price), 0) FROM products WHERE is_active = 1) AS stock_purchase_value,
-       (SELECT COALESCE(SUM(stock * sale_price), 0) FROM products WHERE is_active = 1) AS stock_sale_value`,
+       (SELECT COUNT(*) FROM products p
+         WHERE p.is_active = 1 AND ${stock} > 0 AND p.stock_min > 0 AND ${stock} <= p.stock_min) AS low_stock_count,
+       (SELECT COUNT(*) FROM products p WHERE p.is_active = 1 AND ${stock} <= 0) AS out_of_stock_count,
+       (SELECT COALESCE(SUM(${stock} * p.purchase_price), 0) FROM products p WHERE p.is_active = 1) AS stock_purchase_value,
+       (SELECT COALESCE(SUM(${stock} * p.sale_price), 0) FROM products p WHERE p.is_active = 1) AS stock_sale_value`,
   );
 
   return {
@@ -381,7 +418,14 @@ async function assertProductNameAvailable(name: string, exceptId?: number): Prom
 
 export async function createProduct(
   input: ProductInput,
-  options: { userId?: number | null } = {},
+  options: { userId?: number | null; storeId?: number | null } = {},
+): Promise<ProductRow> {
+  return withTransaction(() => createProductInTx(input, options));
+}
+
+async function createProductInTx(
+  input: ProductInput,
+  options: { userId?: number | null; storeId?: number | null },
 ): Promise<ProductRow> {
   const name = (input.name ?? '').trim();
   if (!name) throw new ValidationError('Le champ « Nom » est obligatoire');
@@ -403,9 +447,8 @@ export async function createProduct(
       unit,
       purchasePrice: positive(input.purchasePrice),
       salePrice: positive(input.salePrice),
-      // Toujours 0 puis mouvement `entry` : l'invariant du stock est préservé.
-      stock: 0,
       stockMin: positive(input.stockMin),
+      barcode: input.barcode?.trim() || null,
       description: input.description?.trim() || null,
       isActive: input.isActive ?? true,
     })
@@ -413,34 +456,33 @@ export async function createProduct(
 
   if (!inserted[0]) throw new Error('Produit non créé');
 
-  await enqueueSyncWrite(
-    'products',
-    inserted[0].syncId,
-    'insert',
-    toSyncPayload(
-      {
-        name,
-        categoryId: category?.id ?? null,
-        unit,
-        purchasePrice: positive(input.purchasePrice),
-        salePrice: positive(input.salePrice),
-        stockMin: positive(input.stockMin),
-        description: input.description?.trim() || null,
-        isActive: input.isActive ?? true,
-      },
-      category?.syncId,
-    ),
+  // Le produit existe dans **chaque** magasin, à stock nul.
+  await rawAll(
+    `INSERT INTO product_stocks (store_id, product_id, quantity, created_at, sync_id, updated_at)
+     SELECT s.id, p.id, 0, unixepoch(), 'ps-' || s.sync_id || '-' || p.sync_id, unixepoch()
+       FROM stores s, products p
+      WHERE p.id = ? AND NOT EXISTS (SELECT 1 FROM product_stocks ps WHERE ps.store_id = s.id AND ps.product_id = p.id)`,
+    [inserted[0].id],
   );
 
+  if (options.storeId && (input.localSalePrice !== undefined || input.localStockMin !== undefined)) {
+    await setLocalProductSettings(options.storeId, inserted[0].id, {
+      salePrice: input.localSalePrice === undefined ? undefined : input.localSalePrice,
+      stockMin: input.localStockMin === undefined ? undefined : input.localStockMin,
+    });
+  }
+
   if (initialStock > 0) {
+    if (!options.storeId) throw new ValidationError('Choisissez un magasin pour enregistrer un stock initial.');
     await addStockMovement(inserted[0].id, 'entry', round3(initialStock), {
+      storeId: options.storeId,
       motif: 'Stock initial',
       referenceType: 'inventory',
       userId: options.userId ?? null,
     });
   }
 
-  const created = await getProduct(inserted[0].id);
+  const created = await getProduct(inserted[0].id, options.storeId ? [options.storeId] : []);
   if (!created) throw new Error('Produit créé mais introuvable');
   return created;
 }
@@ -448,9 +490,18 @@ export async function createProduct(
 export async function updateProduct(
   id: number,
   patch: Partial<ProductInput>,
-  options: { userId?: number | null } = {},
+  options: { userId?: number | null; storeId?: number | null; centralEdit?: boolean } = {},
 ): Promise<ProductRow> {
-  const existing = await getProduct(id);
+  return withTransaction(() => updateProductInTx(id, patch, options));
+}
+
+async function updateProductInTx(
+  id: number,
+  patch: Partial<ProductInput>,
+  options: { userId?: number | null; storeId?: number | null; centralEdit?: boolean },
+): Promise<ProductRow> {
+  const scope = options.storeId ? [options.storeId] : [];
+  const existing = await getProduct(id, scope);
   if (!existing) throw new NotFoundError('Produit introuvable');
 
   const update: Record<string, unknown> = { updatedAt: new Date() };
@@ -473,6 +524,7 @@ export async function updateProduct(
   if (patch.purchasePrice !== undefined) update.purchasePrice = positive(patch.purchasePrice);
   if (patch.salePrice !== undefined) update.salePrice = positive(patch.salePrice);
   if (patch.stockMin !== undefined) update.stockMin = positive(patch.stockMin);
+  if (patch.barcode !== undefined) update.barcode = patch.barcode?.trim() || null;
   if (patch.description !== undefined) update.description = patch.description?.trim() || null;
   if (patch.isActive !== undefined) {
     update.isActive = patch.isActive;
@@ -490,23 +542,41 @@ export async function updateProduct(
     stockDelta = round3(target - existing.stock);
   }
 
-  const updated = await db
-    .update(products)
-    .set(update as any)
-    .where(eq(products.id, id))
-    .returning({ id: products.id, syncId: products.syncId });
+  // Catalogue central (§7) : sur un poste de magasin, seuls les réglages
+  // locaux (prix local, seuil local, stock) sont modifiables.
+  const centralKeys = Object.keys(update).filter((key) => key !== 'updatedAt');
+  if (centralKeys.length > 0 && options.centralEdit === false) {
+    throw new ValidationError(
+      'Le catalogue est géré au siège : sur ce poste, seuls le prix local, le seuil local et le stock du magasin sont modifiables.',
+    );
+  }
 
-  if (updated.length === 0) throw new NotFoundError('Produit introuvable');
+  if (centralKeys.length > 0) {
+    const updated = await db
+      .update(products)
+      .set(update as any)
+      .where(eq(products.id, id))
+      .returning({ id: products.id });
+    if (updated.length === 0) throw new NotFoundError('Produit introuvable');
+  }
 
-  await enqueueSyncWrite('products', updated[0].syncId, 'update', toSyncPayload(update, categorySyncId));
+  if (options.storeId && (patch.localSalePrice !== undefined || patch.localStockMin !== undefined)) {
+    await setLocalProductSettings(options.storeId, id, {
+      salePrice:
+        patch.localSalePrice === undefined ? undefined : patch.localSalePrice === null ? null : positive(patch.localSalePrice),
+      stockMin:
+        patch.localStockMin === undefined ? undefined : patch.localStockMin === null ? null : positive(patch.localStockMin),
+    });
+  }
 
   if (stockDelta !== 0) {
-    await adjustStock(id, stockDelta, 'Correction depuis la fiche produit', {
+    if (!options.storeId) throw new ValidationError('Choisissez un magasin pour corriger le stock.');
+    await adjustStock(options.storeId, id, stockDelta, 'Correction depuis la fiche produit', {
       userId: options.userId ?? null,
     });
   }
 
-  const result = await getProduct(id);
+  const result = await getProduct(id, scope);
   if (!result) throw new Error('Produit introuvable après modification');
   return result;
 }
@@ -528,9 +598,6 @@ export async function deactivateProduct(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Produit introuvable');
 
-  await enqueueSyncWrite('products', updated[0].syncId, 'delete', {
-    deleted_at: new Date().toISOString(),
-  });
 }
 
 export async function reactivateProduct(id: number): Promise<void> {
@@ -545,11 +612,6 @@ export async function reactivateProduct(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Produit introuvable');
 
-  await enqueueSyncWrite('products', updated[0].syncId, 'update', {
-    is_active: true,
-    deleted_at: null,
-    updated_at: new Date().toISOString(),
-  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -637,14 +699,6 @@ export async function createCategory(input: CategoryInput): Promise<CategoryRow>
 
   if (!inserted[0]) throw new Error('Catégorie non créée');
 
-  await enqueueSyncWrite('categories', inserted[0].syncId, 'insert', {
-    name,
-    kind,
-    description: input.description?.trim() || null,
-    is_active: input.isActive ?? true,
-    updated_at: new Date().toISOString(),
-  });
-
   const created = await getCategory(inserted[0].id);
   if (!created) throw new Error('Catégorie créée mais introuvable');
   return created;
@@ -688,14 +742,6 @@ export async function updateCategory(
 
   if (updated.length === 0) throw new NotFoundError('Catégorie introuvable');
 
-  await enqueueSyncWrite('categories', updated[0].syncId, 'update', {
-    name: update.name ?? existing.name,
-    kind: update.kind ?? existing.kind,
-    description: update.description !== undefined ? update.description : existing.description,
-    is_active: update.isActive ?? existing.isActive,
-    updated_at: new Date().toISOString(),
-  });
-
   const result = await getCategory(id);
   if (!result) throw new Error('Catégorie introuvable après modification');
   return result;
@@ -733,9 +779,6 @@ export async function deactivateCategory(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Catégorie introuvable');
 
-  await enqueueSyncWrite('categories', updated[0].syncId, 'delete', {
-    deleted_at: new Date().toISOString(),
-  });
 }
 
 export async function reactivateCategory(id: number): Promise<void> {
@@ -750,11 +793,6 @@ export async function reactivateCategory(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Catégorie introuvable');
 
-  await enqueueSyncWrite('categories', updated[0].syncId, 'update', {
-    is_active: true,
-    deleted_at: null,
-    updated_at: new Date().toISOString(),
-  });
 }
 
 /* ------------------------------------------------------------------ *

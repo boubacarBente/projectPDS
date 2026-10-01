@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { NotFoundError, fail, ok, parseId, readJson, requireAction } from '@/lib/api';
+import { NotFoundError, assertStoreVisible, fail, ok, parseId, readJson, requireAction, requireActiveStore } from '@/lib/api';
 import {
   cancelPurchaseInvoice,
   getPurchaseInvoice,
@@ -18,11 +18,12 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('purchases.view');
+    const user = await requireAction('purchases.view');
     const { id } = await params;
 
     const detail = await getPurchaseInvoice(parseId(id));
     if (!detail) throw new NotFoundError('Achat introuvable');
+    assertStoreVisible(user, detail.invoice.storeId);
 
     return ok(detail);
   } catch (error) {
@@ -45,9 +46,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const { id } = await params;
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const invoice = await updatePurchaseInvoice(parseId(id), {
       ...parsePurchaseInput(body),
       userId: user.id,
+      storeId,
     });
 
     return ok({ invoice });
@@ -76,6 +79,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     const detail = await getPurchaseInvoice(invoiceId);
     if (!detail) throw new NotFoundError('Achat introuvable');
+    assertStoreVisible(user, detail.invoice.storeId);
+    await requireActiveStore(user);
 
     let reason = request.nextUrl.searchParams.get('reason') ?? '';
     try {

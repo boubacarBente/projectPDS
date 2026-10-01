@@ -13,7 +13,7 @@
 import { db, rawAll, rawGet } from '@/db';
 import { customers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 import { roundMoney } from '@/lib/format';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
@@ -65,7 +65,10 @@ export type CustomerStats = {
   /** Alerte de plafond (Q18 : avertir, pas bloquer, en V1). */
   creditLimitExceeded: boolean;
   topProducts: { productName: string; quantity: number; amount: number }[];
+  /** Solde dû et facturé par magasin (§13). */
+  byStore: { storeId: number; storeName: string; balance: number; invoiced: number }[];
   recentInvoices: {
+    storeName: string | null;
     id: number;
     invoiceNumber: string;
     date: string;
@@ -84,6 +87,8 @@ export type CustomerStats = {
  * factures pour afficher 10 clients.
  */
 export async function listCustomers(options: {
+  /** Magasins dont on additionne les factures (soldes par établissement, §13). */
+  scope?: StoreScope;
   search?: string;
   page?: number;
   limit?: number;
@@ -139,7 +144,7 @@ export async function listCustomers(options: {
              SUM(remaining_amount) AS balance,
              MAX(date)             AS last_purchase_date
       FROM sales_invoices
-      WHERE status = 'active' AND customer_id IS NOT NULL
+      WHERE status = 'active' AND customer_id IS NOT NULL ${storeFilter(options.scope)}
       GROUP BY customer_id
     ) inv ON inv.customer_id = c.id
     ${whereSql}
@@ -211,7 +216,12 @@ function mapCustomerRow(row: any): CustomerRow {
   };
 }
 
-export async function getCustomer(id: number): Promise<CustomerRow | null> {
+/** Filtre magasin pour les sous-requêtes de factures (vide = tous les magasins). */
+function storeFilter(scope: StoreScope | undefined, column = 'store_id'): string {
+  return scope ? `AND ${scopeSql(column, scope)}` : '';
+}
+
+export async function getCustomer(id: number, scope?: StoreScope): Promise<CustomerRow | null> {
   const row = await rawGet<any>(
     `SELECT c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active, c.created_at,
             COALESCE(inv.invoice_count, 0)   AS invoice_count,
@@ -224,7 +234,7 @@ export async function getCustomer(id: number): Promise<CustomerRow | null> {
        SELECT customer_id, COUNT(*) AS invoice_count, SUM(total) AS total_invoiced,
               SUM(amount_paid) AS total_paid, SUM(remaining_amount) AS balance,
               MAX(date) AS last_purchase_date
-       FROM sales_invoices WHERE status = 'active' AND customer_id IS NOT NULL
+       FROM sales_invoices WHERE status = 'active' AND customer_id IS NOT NULL ${storeFilter(scope)}
        GROUP BY customer_id
      ) inv ON inv.customer_id = c.id
      WHERE c.id = ?`,
@@ -246,12 +256,6 @@ export async function createCustomer(input: CustomerInput): Promise<CustomerRow>
       isActive: input.isActive ?? true,
     })
     .returning({ id: customers.id, syncId: customers.syncId });
-
-  await enqueueSyncWrite('customers', inserted[0]?.syncId, 'insert', {
-    name: input.name.trim(),
-    phone: input.phone ?? null,
-    credit_limit: Number(input.creditLimit ?? 0) || 0,
-  });
 
   const created = await getCustomer(inserted[0].id);
   if (!created) throw new Error('Client créé mais introuvable');
@@ -276,8 +280,6 @@ export async function updateCustomer(id: number, input: Partial<CustomerInput>):
 
   if (updated.length === 0) throw new Error('Client introuvable');
 
-  await enqueueSyncWrite('customers', updated[0].syncId, 'update', patch);
-
   const result = await getCustomer(id);
   if (!result) throw new Error('Client introuvable après modification');
   return result;
@@ -297,7 +299,6 @@ export async function deactivateCustomer(id: number): Promise<void> {
 
   if (updated.length === 0) throw new Error('Client introuvable');
 
-  await enqueueSyncWrite('customers', updated[0].syncId, 'delete', { deleted_at: new Date().toISOString() });
 }
 
 export async function reactivateCustomer(id: number): Promise<void> {
@@ -308,13 +309,15 @@ export async function reactivateCustomer(id: number): Promise<void> {
 }
 
 /** Fiche détaillée : statistiques, produits les plus achetés, dernières factures. */
-export async function getCustomerStats(id: number): Promise<CustomerStats | null> {
-  const customer = await getCustomer(id);
+export async function getCustomerStats(id: number, scope?: StoreScope): Promise<CustomerStats | null> {
+  const customer = await getCustomer(id, scope);
   if (!customer) return null;
+  const sf = storeFilter(scope);
+  const sfv = storeFilter(scope, 'v.store_id');
 
   const bounds = await rawGet<{ first_date: string | null; last_date: string | null }>(
     `SELECT MIN(date) AS first_date, MAX(date) AS last_date
-     FROM sales_invoices WHERE customer_id = ? AND status = 'active'`,
+     FROM sales_invoices WHERE customer_id = ? AND status = 'active' ${sf}`,
     [id],
   );
 
@@ -324,7 +327,7 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
             SUM(i.amount)   AS amount
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.customer_id = ? AND v.status = 'active'
+     WHERE v.customer_id = ? AND v.status = 'active' ${sfv}
      GROUP BY i.product_name
      ORDER BY amount DESC
      LIMIT 5`,
@@ -332,10 +335,11 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
   );
 
   const recentInvoices = await rawAll<any>(
-    `SELECT id, invoice_number, date, total, amount_paid, remaining_amount, payment_status, status
-     FROM sales_invoices
-     WHERE customer_id = ?
-     ORDER BY date DESC, id DESC
+    `SELECT v.id, v.invoice_number, v.date, v.total, v.amount_paid, v.remaining_amount, v.payment_status, v.status,
+            v.store_id, s.name AS store_name
+     FROM sales_invoices v LEFT JOIN stores s ON s.id = v.store_id
+     WHERE v.customer_id = ? ${sfv}
+     ORDER BY v.date DESC, v.id DESC
      LIMIT 10`,
     [id],
   );
@@ -351,17 +355,27 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
     `SELECT
        (SELECT COALESCE(SUM(total_ht), 0)
           FROM sales_invoices
-         WHERE customer_id = ? AND status = 'active') AS revenue_ht,
+         WHERE customer_id = ? AND status = 'active' ${sf}) AS revenue_ht,
        (SELECT COALESCE(SUM(i.quantity * COALESCE(p.purchase_price, 0)), 0)
           FROM sales_invoice_items i
           JOIN sales_invoices v ON v.id = i.invoice_id
           LEFT JOIN products p ON p.id = i.product_id
-         WHERE v.customer_id = ? AND v.status = 'active') AS cost`,
+         WHERE v.customer_id = ? AND v.status = 'active' ${sfv}) AS cost`,
     [id, id],
   );
 
   const cost = roundMoney(Number(profitRow?.cost ?? 0));
   const revenueHt = Number(profitRow?.revenue_ht ?? 0);
+
+  // Solde par établissement (§13) : ce que le client doit à chaque magasin.
+  const byStoreRows = await rawAll<{ store_id: number; name: string; balance: number; invoiced: number }>(
+    `SELECT v.store_id, s.name, COALESCE(SUM(v.remaining_amount), 0) AS balance, COALESCE(SUM(v.total), 0) AS invoiced
+       FROM sales_invoices v JOIN stores s ON s.id = v.store_id
+      WHERE v.customer_id = ? AND v.status = 'active' ${sfv}
+      GROUP BY v.store_id, s.name
+      ORDER BY s.name`,
+    [id],
+  );
 
   return {
     customer,
@@ -380,8 +394,15 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
       quantity: Number(p.quantity ?? 0),
       amount: Number(p.amount ?? 0),
     })),
+    byStore: byStoreRows.map((r) => ({
+      storeId: Number(r.store_id),
+      storeName: String(r.name),
+      balance: Number(r.balance ?? 0),
+      invoiced: Number(r.invoiced ?? 0),
+    })),
     recentInvoices: recentInvoices.map((i) => ({
       id: Number(i.id),
+      storeName: i.store_name ?? null,
       invoiceNumber: i.invoice_number,
       date: i.date,
       total: Number(i.total ?? 0),
@@ -394,13 +415,13 @@ export async function getCustomerStats(id: number): Promise<CustomerStats | null
 }
 
 /** Liste des clients débiteurs, triée par ancienneté de dette. */
-export async function listDebtors(): Promise<CustomerRow[]> {
-  const { data } = await listCustomers({ debtorsOnly: true, limit: 500 });
+export async function listDebtors(scope?: StoreScope): Promise<CustomerRow[]> {
+  const { data } = await listCustomers({ scope, debtorsOnly: true, limit: 500 });
   return data;
 }
 
 /** Statistiques globales de l'en-tête de page. */
-export async function getCustomersSummary(): Promise<{
+export async function getCustomersSummary(scope?: StoreScope): Promise<{
   totalCustomers: number;
   activeCustomers: number;
   debtorsCount: number;
@@ -412,10 +433,10 @@ export async function getCustomersSummary(): Promise<{
        (SELECT COUNT(*) FROM customers) AS total_customers,
        (SELECT COUNT(*) FROM customers WHERE is_active = 1) AS active_customers,
        (SELECT COUNT(DISTINCT customer_id) FROM sales_invoices
-         WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL) AS debtors_count,
+         WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL ${storeFilter(scope)}) AS debtors_count,
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM sales_invoices
-         WHERE status = 'active' AND customer_id IS NOT NULL) AS total_receivables,
-       (SELECT COALESCE(SUM(total), 0) FROM sales_invoices WHERE status = 'active') AS total_invoiced`,
+         WHERE status = 'active' AND customer_id IS NOT NULL ${storeFilter(scope)}) AS total_receivables,
+       (SELECT COALESCE(SUM(total), 0) FROM sales_invoices WHERE status = 'active' ${storeFilter(scope)}) AS total_invoiced`,
   );
 
   return {
@@ -428,7 +449,7 @@ export async function getCustomersSummary(): Promise<{
 }
 
 /** Recherche rapide pour une modale de sélection (vente, chantier, commande). */
-export async function searchCustomers(term: string, limit = 20): Promise<CustomerRow[]> {
-  const { data } = await listCustomers({ search: term, limit });
+export async function searchCustomers(term: string, limit = 20, scope?: StoreScope): Promise<CustomerRow[]> {
+  const { data } = await listCustomers({ search: term, limit, scope });
   return data;
 }

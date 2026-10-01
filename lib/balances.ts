@@ -30,6 +30,7 @@ import { rawAll, rawGet } from '@/db';
 import { getPeriodResult, getProductMargins } from '@/lib/profit';
 import type { PeriodKey } from '@/lib/dashboard';
 import { today } from '@/lib/format';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /** Enveloppe paginée imposée (CONVENTIONS §4). */
 export type PaginatedBalances<T> = {
@@ -103,7 +104,7 @@ export type BalancesSummary = {
   grossMarginPercent: number;
   /** Dépenses de fonctionnement de la période (annulées exclues). */
   expenses: number;
-  /** Main-d'œuvre des chantiers, fabrications et commandes d'atelier. */
+  /** Main-d'œuvre des chantiers. */
   laborCost: number;
   expensesTotal: number;
   /** Bénéfice net = bénéfice brut − dépenses − main-d'œuvre (§15). */
@@ -153,7 +154,7 @@ export type ProductMarginRow = Awaited<ReturnType<typeof getProductMargins>>[num
  * Seuls `customer_id IS NOT NULL` sont retenus : une vente comptoir (client
  * `null`) n'ouvre aucune créance (§10.5).
  */
-const CLIENT_BALANCE_CTE = `
+const clientBalanceCte = (scope: StoreScope) => `
   WITH inv AS (
     SELECT customer_id,
            COUNT(*)         AS invoice_count,
@@ -162,20 +163,20 @@ const CLIENT_BALANCE_CTE = `
            SUM(remaining_amount) AS remaining,
            MIN(due_date)    AS oldest_due
     FROM sales_invoices
-    WHERE status = 'active' AND customer_id IS NOT NULL
+    WHERE status = 'active' AND customer_id IS NOT NULL AND ${scopeSql('store_id', scope)}
     GROUP BY customer_id
   ),
   pay AS (
     SELECT v.customer_id, SUM(p.amount) AS total_payments
     FROM payments p
     JOIN sales_invoices v ON v.id = p.reference_id
-    WHERE p.type = 'sale' AND v.customer_id IS NOT NULL
+    WHERE p.type = 'sale' AND v.customer_id IS NOT NULL AND ${scopeSql('v.store_id', scope)}
     GROUP BY v.customer_id
   )
 `;
 
 /** Solde d'un fournisseur = Σ `total` des achats actifs − Σ `payments`. */
-const SUPPLIER_BALANCE_CTE = `
+const supplierBalanceCte = (scope: StoreScope) => `
   WITH inv AS (
     SELECT supplier_id,
            COUNT(*)         AS purchase_count,
@@ -184,14 +185,14 @@ const SUPPLIER_BALANCE_CTE = `
            SUM(remaining_amount) AS remaining,
            MIN(due_date)    AS oldest_due
     FROM purchase_invoices
-    WHERE status = 'active' AND supplier_id IS NOT NULL
+    WHERE status = 'active' AND supplier_id IS NOT NULL AND ${scopeSql('store_id', scope)}
     GROUP BY supplier_id
   ),
   pay AS (
     SELECT a.supplier_id, SUM(p.amount) AS total_payments
     FROM payments p
     JOIN purchase_invoices a ON a.id = p.reference_id
-    WHERE p.type = 'purchase' AND a.supplier_id IS NOT NULL
+    WHERE p.type = 'purchase' AND a.supplier_id IS NOT NULL AND ${scopeSql('a.store_id', scope)}
     GROUP BY a.supplier_id
   )
 `;
@@ -203,11 +204,12 @@ const SUPPLIER_BALANCE_CTE = `
  * le filtre de l'onglet « Créances clients ».
  */
 export async function getClientBalances(options: {
+  scope: StoreScope;
   search?: string;
   debtorsOnly?: boolean;
   page?: number;
   limit?: number;
-} = {}): Promise<PaginatedBalances<ClientBalanceRow>> {
+}): Promise<PaginatedBalances<ClientBalanceRow>> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
@@ -240,7 +242,7 @@ export async function getClientBalances(options: {
   `;
 
   const innerSql = `
-    ${CLIENT_BALANCE_CTE}
+    ${clientBalanceCte(options.scope)}
     SELECT c.id, c.name, c.phone,
            COALESCE(inv.invoice_count, 0)   AS invoice_count,
            COALESCE(inv.total_invoiced, 0)  AS total_invoiced,
@@ -291,11 +293,12 @@ export async function getClientBalances(options: {
  * même si le document d'origine est un achat.
  */
 export async function getSupplierBalances(options: {
+  scope: StoreScope;
   search?: string;
   creditorsOnly?: boolean;
   page?: number;
   limit?: number;
-} = {}): Promise<PaginatedBalances<SupplierBalanceRow>> {
+}): Promise<PaginatedBalances<SupplierBalanceRow>> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
@@ -320,7 +323,7 @@ export async function getSupplierBalances(options: {
   `;
 
   const innerSql = `
-    ${SUPPLIER_BALANCE_CTE}
+    ${supplierBalanceCte(options.scope)}
     SELECT s.id, s.name, s.phone,
            COALESCE(inv.purchase_count, 0)   AS purchase_count,
            COALESCE(inv.total_purchased, 0)  AS total_purchased,
@@ -374,25 +377,27 @@ export async function getSupplierBalances(options: {
  * Treize mois d'historique (le mois courant inclus) : chiffre d'affaires,
  * dépenses et bénéfice brut par mois. Sert la courbe de la page `/soldes`.
  */
-async function getMonthlyTrend(): Promise<BalancesByMonth[]> {
+async function getMonthlyTrend(scope: StoreScope): Promise<BalancesByMonth[]> {
+  const v = scopeSql('store_id', scope);
   const [salesRows, jobsRows, expenseRows] = await Promise.all([
     rawAll<{ month: string; total: number | null }>(
       `SELECT substr(date, 1, 7) AS month, SUM(total_ht) AS total
        FROM sales_invoices
-       WHERE status = 'active' AND date >= date('now', '-11 months', 'start of month')
+       WHERE status = 'active' AND ${v} AND date >= date('now', '-11 months', 'start of month')
        GROUP BY month`,
     ),
     rawAll<{ month: string; total: number | null }>(
       `SELECT substr(date(start_date), 1, 7) AS month, SUM(total) AS total
        FROM service_jobs
-       WHERE status <> 'cancelled'
+       WHERE status <> 'cancelled' AND ${v}
          AND date(start_date) >= date('now', '-11 months', 'start of month')
        GROUP BY month`,
     ),
     rawAll<{ month: string; total: number | null }>(
       `SELECT substr(date, 1, 7) AS month, SUM(amount) AS total
        FROM expenses
-       WHERE deleted_at IS NULL AND date >= date('now', '-11 months', 'start of month')
+       WHERE deleted_at IS NULL AND approval_status = 'approved' AND ${v}
+         AND date >= date('now', '-11 months', 'start of month')
        GROUP BY month`,
     ),
   ]);
@@ -440,26 +445,28 @@ async function getMonthlyTrend(): Promise<BalancesByMonth[]> {
  * horodatage renverrait zéro ligne.
  */
 export async function getBalancesSummary(options: {
+  scope: StoreScope;
   from?: string;
   to?: string;
-} = {}): Promise<BalancesSummary> {
+}): Promise<BalancesSummary> {
   const from = options.from ?? '1900-01-01';
   const to = options.to ?? '2999-12-31';
+  const v = scopeSql('store_id', options.scope);
 
   const [result, trend, receivablesRow, payablesRow] = await Promise.all([
-    getPeriodResult(from, to),
-    getMonthlyTrend(),
+    getPeriodResult(from, to, options.scope),
+    getMonthlyTrend(options.scope),
     rawGet<{ total: number | null; debtors: number }>(
       `SELECT COALESCE(SUM(remaining_amount), 0) AS total,
               COUNT(DISTINCT customer_id)        AS debtors
        FROM sales_invoices
-       WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL`,
+       WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL AND ${v}`,
     ),
     rawGet<{ total: number | null; creditors: number }>(
       `SELECT COALESCE(SUM(remaining_amount), 0) AS total,
               COUNT(DISTINCT supplier_id)        AS creditors
        FROM purchase_invoices
-       WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL`,
+       WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL AND ${v}`,
     ),
   ]);
 
@@ -496,6 +503,7 @@ export async function getBalancesSummary(options: {
 export async function getTopCustomers(
   from: string,
   to: string,
+  scope: StoreScope,
   limit = 10,
 ): Promise<TopCustomerRow[]> {
   const safeLimit = Math.max(1, Math.min(100, limit));
@@ -509,7 +517,7 @@ export async function getTopCustomers(
             MIN(CASE WHEN v.remaining_amount > 0.001 THEN v.due_date END) AS oldest_due
      FROM sales_invoices v
      JOIN customers c ON c.id = v.customer_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', scope)}
      GROUP BY c.id, c.name, c.phone
      ORDER BY revenue DESC, c.name COLLATE NOCASE
      LIMIT ?`,
@@ -536,6 +544,7 @@ export async function getTopCustomers(
 export async function getTopSuppliers(
   from: string,
   to: string,
+  scope: StoreScope,
   limit = 10,
 ): Promise<TopSupplierRow[]> {
   const safeLimit = Math.max(1, Math.min(100, limit));
@@ -548,7 +557,7 @@ export async function getTopSuppliers(
             COALESCE(SUM(a.remaining_amount), 0) AS balance
      FROM purchase_invoices a
      JOIN suppliers s ON s.id = a.supplier_id
-     WHERE a.status = 'active' AND a.date >= ? AND a.date <= ?
+     WHERE a.status = 'active' AND a.date >= ? AND a.date <= ? AND ${scopeSql('a.store_id', scope)}
      GROUP BY s.id, s.name, s.phone
      ORDER BY purchased DESC, s.name COLLATE NOCASE
      LIMIT ?`,
@@ -577,9 +586,10 @@ export async function getTopSuppliers(
 export async function getMargins(
   from: string,
   to: string,
+  scope: StoreScope,
   limit = 20,
 ): Promise<ProductMarginRow[]> {
-  return getProductMargins(from, to, limit);
+  return getProductMargins(from, to, scope, limit);
 }
 
 /** Bornes d'une période nommée, transmises telles quelles par l'API. */

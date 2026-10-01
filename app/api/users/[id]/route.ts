@@ -8,8 +8,10 @@ import {
   readJson,
   requireAction,
   toBool,
+  requireCentralEdit,
 } from '@/lib/api';
-import { deactivateUser, getUser, reactivateUser, updateUser, type UserPatch } from '@/lib/users';
+import { assertAssignableRole, assertCanManageUser } from '@/lib/user-scope';
+import { deactivateUser, getUserWithStores, reactivateUser, updateUser, type UserPatch } from '@/lib/users';
 import { writeAudit } from '@/lib/audit';
 import { isRole } from '@/lib/permissions';
 
@@ -18,10 +20,11 @@ type Params = { params: Promise<{ id: string }> };
 /** GET /api/users/[id] — fiche d'un compte, **sans** `password_hash`. */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('users.manage');
+    const actor = await requireAction('users.manage');
     const { id } = await params;
+    await assertCanManageUser(actor, parseId(id));
 
-    const user = await getUser(parseId(id));
+    const user = await getUserWithStores(parseId(id));
     if (!user) throw new NotFoundError('Utilisateur introuvable');
 
     return ok(user);
@@ -43,6 +46,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const user = await requireAction('users.manage');
     const { id } = await params;
     const userId = parseId(id);
+    await requireCentralEdit();
+    await assertCanManageUser(user, userId);
     const body = await readJson<any>(request);
 
     const patch: UserPatch = {};
@@ -50,8 +55,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.username !== undefined) patch.username = String(body.username);
     if (body.role !== undefined) {
       if (!isRole(body.role)) {
-        throw new ValidationError('Rôle invalide : choisissez l’un des six rôles proposés');
+        throw new ValidationError('Rôle invalide : choisissez l’un des rôles proposés');
       }
+      assertAssignableRole(user, body.role);
       patch.role = body.role;
     }
     if (body.phone !== undefined) patch.phone = body.phone === null ? null : String(body.phone);
@@ -90,6 +96,11 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const user = await requireAction('users.manage');
     const { id } = await params;
     const userId = parseId(id);
+    await requireCentralEdit();
+    await assertCanManageUser(user, userId);
+    if (userId === user.id) {
+      throw new ValidationError('Vous ne pouvez pas désactiver votre propre compte.');
+    }
 
     const reactivate = request.nextUrl.searchParams.get('reactivate') === 'true';
 

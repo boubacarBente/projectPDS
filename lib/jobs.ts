@@ -19,7 +19,7 @@
  * stock et part au journal d'audit.
  */
 
-import { db, rawAll, rawGet } from '@/db';
+import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { asc, eq } from 'drizzle-orm';
 import {
   customers,
@@ -27,7 +27,7 @@ import {
   serviceJobWorkers,
   serviceJobs,
 } from '@/db/schema';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 import { addStockMovement } from '@/lib/stock';
 import { listPayments, recomputeDocumentPayments, type PaymentRow } from '@/lib/payments';
 import { nextDocumentNumber } from '@/lib/settings';
@@ -62,6 +62,8 @@ export function isQuoteStatus(value: unknown): value is QuoteStatus {
 /** Une ligne de `service_jobs`, enrichie de ses agrégats calculés. */
 export type ServiceJobRow = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   reference: string;
   customerId: number;
   customerName: string;
@@ -153,6 +155,8 @@ export type ServiceJobInput = {
 export type ServiceJobPatch = Partial<Omit<ServiceJobInput, 'userId'>>;
 
 export type ServiceJobListOptions = {
+  /** Magasins visibles (obligatoire). */
+  scope: StoreScope;
   search?: string;
   category?: string;
   status?: string;
@@ -184,6 +188,8 @@ export type JobsSummary = {
 
 type JobSqlRow = {
   id: number;
+  store_id: number | null;
+  store_name: string | null;
   reference: string;
   customer_id: number;
   customer_name: string | null;
@@ -219,7 +225,7 @@ type JobSqlRow = {
  * au stade du devis, qui n'a légitimement pas encore de date de début.
  */
 const JOB_SELECT = `
-  SELECT j.id, j.reference, j.customer_id, c.name AS customer_name, c.phone AS customer_phone,
+  SELECT j.id, j.store_id, st.name AS store_name, j.reference, j.customer_id, c.name AS customer_name, c.phone AS customer_phone,
          j.category, j.title, j.site_address, j.description, j.start_date, j.end_date,
          j.status, j.quote_status, j.quote_materials, j.quote_labor, j.quote_total, j.total,
          j.amount_paid, j.remaining_amount, j.payment_status, j.user_id, u.name AS user_name,
@@ -229,11 +235,14 @@ const JOB_SELECT = `
   FROM service_jobs j
   LEFT JOIN customers c ON c.id = j.customer_id
   LEFT JOIN users u ON u.id = j.user_id
+  LEFT JOIN stores st ON st.id = j.store_id
 `;
 
 function mapJobRow(row: JobSqlRow): ServiceJobRow {
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
     reference: row.reference,
     customerId: Number(row.customer_id),
     customerName: row.customer_name ?? 'Client supprimé',
@@ -264,13 +273,13 @@ function mapJobRow(row: JobSqlRow): ServiceJobRow {
 
 /** Liste paginée, filtrable par catégorie, statut, statut de devis, client, période. */
 export async function listServiceJobs(
-  options: ServiceJobListOptions = {},
+  options: ServiceJobListOptions,
 ): Promise<{ data: ServiceJobRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const where: string[] = [];
+  const where: string[] = [scopeSql('j.store_id', options.scope)];
   const args: (string | number)[] = [];
 
   if (options.search) {
@@ -403,7 +412,7 @@ export async function getServiceJob(id: number): Promise<ServiceJobDetail | null
   const [materials, workers, payments] = await Promise.all([
     listJobMaterials(id),
     listJobWorkers(id),
-    listPayments({ type: 'service_job', referenceId: id, limit: 200 }),
+    listPayments({ scope: job.storeId ? [job.storeId] : [], type: 'service_job', referenceId: id, limit: 200 }),
   ]);
 
   return {
@@ -434,8 +443,8 @@ export async function getJobCosts(jobId: number): Promise<JobCosts> {
  * quelques milliers de lignes et cette forme évite de répéter six fois la même
  * clause de période dans six sous-requêtes SQL (source d'erreur d'argument).
  */
-export async function getJobsSummary(options: { from?: string; to?: string } = {}): Promise<JobsSummary> {
-  const where: string[] = [];
+export async function getJobsSummary(options: { scope: StoreScope; from?: string; to?: string }): Promise<JobsSummary> {
+  const where: string[] = [scopeSql('j.store_id', options.scope)];
   const args: (string | number)[] = [];
 
   if (options.from) {
@@ -511,9 +520,15 @@ export async function getJobsSummary(options: { from?: string; to?: string } = {
  * Écriture
  * ------------------------------------------------------------------ */
 
-async function assertJobEditable(jobId: number): Promise<ServiceJobRow> {
+async function assertJobEditable(jobId: number, storeId: number): Promise<ServiceJobRow> {
   const job = await getServiceJobRow(jobId);
   if (!job) throw new NotFoundError('Chantier introuvable');
+  // Cloisonnement (§5) : un chantier ne se modifie que depuis son magasin.
+  if (!storeId || job.storeId !== Number(storeId)) {
+    throw new ValidationError(
+      'Ce chantier appartient à un autre magasin : il ne peut être modifié que depuis ce magasin.',
+    );
+  }
   if (job.status === 'cancelled') {
     throw new ConflictError('Ce chantier est annulé : il n’accepte plus aucune modification.');
   }
@@ -539,7 +554,12 @@ function cleanDate(value: unknown): string | null {
 }
 
 /** Numéro `CHA-2026-000001` puis création du chantier. */
-export async function createServiceJob(input: ServiceJobInput): Promise<ServiceJobRow> {
+export async function createServiceJob(input: ServiceJobInput & { storeId: number }): Promise<ServiceJobRow> {
+  return withTransaction(() => createServiceJobInTx(input));
+}
+
+async function createServiceJobInTx(input: ServiceJobInput & { storeId: number }): Promise<ServiceJobRow> {
+  if (!input.storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
   const customerId = Number(input.customerId);
   if (!Number.isInteger(customerId) || customerId <= 0) {
     throw new ValidationError('Le client du chantier est obligatoire');
@@ -548,7 +568,7 @@ export async function createServiceJob(input: ServiceJobInput): Promise<ServiceJ
     throw new ValidationError('Client introuvable');
   }
 
-  const reference = await nextDocumentNumber('job');
+  const reference = await nextDocumentNumber('job', input.storeId);
 
   const quoteMaterials = roundMoney(Number(input.quoteMaterials ?? 0) || 0);
   const quoteLabor = roundMoney(Number(input.quoteLabor ?? 0) || 0);
@@ -557,6 +577,7 @@ export async function createServiceJob(input: ServiceJobInput): Promise<ServiceJ
   const inserted = await db
     .insert(serviceJobs)
     .values({
+      storeId: input.storeId,
       reference,
       customerId,
       category: isJobCategory(input.category) ? input.category : 'placo',
@@ -579,18 +600,6 @@ export async function createServiceJob(input: ServiceJobInput): Promise<ServiceJ
     })
     .returning({ id: serviceJobs.id, syncId: serviceJobs.syncId });
 
-  await enqueueSyncWrite('service_jobs', inserted[0]?.syncId, 'insert', {
-    reference,
-    customer_id: customerId,
-    category: input.category ?? 'placo',
-    status: 'quote',
-    quote_status: input.quoteStatus ?? 'draft',
-    quote_materials: quoteMaterials,
-    quote_labor: quoteLabor,
-    quote_total: quoteTotal,
-    total: quoteTotal,
-  });
-
   const created = await getServiceJobRow(inserted[0].id);
   if (!created) throw new NotFoundError('Chantier créé mais introuvable');
   return created;
@@ -605,8 +614,9 @@ export async function createServiceJob(input: ServiceJobInput): Promise<ServiceJ
  * réaligne le devis sur le réalisé — le devis reste ainsi cohérent avec ce qui
  * a réellement été sorti du stock et payé comme main-d'œuvre.
  */
-export async function updateServiceJob(id: number, patch: ServiceJobPatch): Promise<ServiceJobRow> {
-  const job = await assertJobEditable(id);
+export async function updateServiceJob(id: number, patch: ServiceJobPatch, storeId: number): Promise<ServiceJobRow> {
+  return withTransaction(async () => {
+  const job = await assertJobEditable(id, storeId);
 
   const values: Record<string, unknown> = { updatedAt: new Date() };
 
@@ -669,8 +679,6 @@ export async function updateServiceJob(id: number, patch: ServiceJobPatch): Prom
 
   if (updated.length === 0) throw new NotFoundError('Chantier introuvable');
 
-  await enqueueSyncWrite('service_jobs', updated[0].syncId, 'update', values);
-
   // Le total a bougé : le reste à payer et le statut de paiement suivent,
   // recalculés depuis les paiements réels (§7).
   if (totalsChanged) await recomputeDocumentPayments('service_job', id);
@@ -678,6 +686,7 @@ export async function updateServiceJob(id: number, patch: ServiceJobPatch): Prom
   const result = await getServiceJobRow(id);
   if (!result) throw new NotFoundError('Chantier introuvable après modification');
   return result;
+  });
 }
 
 /**
@@ -686,10 +695,10 @@ export async function updateServiceJob(id: number, patch: ServiceJobPatch): Prom
  * `pending`, et cela évite un chantier accepté qui resterait affiché comme un
  * simple devis.
  */
-export async function updateQuoteStatus(id: number, quoteStatus: QuoteStatus): Promise<ServiceJobRow> {
+export async function updateQuoteStatus(id: number, quoteStatus: QuoteStatus, storeId: number): Promise<ServiceJobRow> {
   if (!isQuoteStatus(quoteStatus)) throw new ValidationError('Statut de devis invalide');
 
-  const job = await assertJobEditable(id);
+  const job = await assertJobEditable(id, storeId);
 
   const values: Record<string, unknown> = { quoteStatus, updatedAt: new Date() };
   if (quoteStatus === 'accepted' && job.status === 'quote') values.status = 'pending';
@@ -702,15 +711,13 @@ export async function updateQuoteStatus(id: number, quoteStatus: QuoteStatus): P
 
   if (updated.length === 0) throw new NotFoundError('Chantier introuvable');
 
-  await enqueueSyncWrite('service_jobs', updated[0].syncId, 'update', values);
-
   const result = await getServiceJobRow(id);
   if (!result) throw new NotFoundError('Chantier introuvable après modification');
   return result;
 }
 
 /** Avancement du chantier. « Terminé » renseigne la date de fin si elle manque. */
-export async function updateStatus(id: number, status: JobStatus): Promise<ServiceJobRow> {
+export async function updateStatus(id: number, status: JobStatus, storeId: number): Promise<ServiceJobRow> {
   if (!isJobStatus(status)) throw new ValidationError('Statut de chantier invalide');
   if (status === 'cancelled') {
     throw new ValidationError(
@@ -718,7 +725,7 @@ export async function updateStatus(id: number, status: JobStatus): Promise<Servi
     );
   }
 
-  const job = await assertJobEditable(id);
+  const job = await assertJobEditable(id, storeId);
 
   const values: Record<string, unknown> = { status, updatedAt: new Date() };
   if (status === 'completed' && !job.endDate) values.endDate = today();
@@ -730,8 +737,6 @@ export async function updateStatus(id: number, status: JobStatus): Promise<Servi
     .returning({ id: serviceJobs.id, syncId: serviceJobs.syncId });
 
   if (updated.length === 0) throw new NotFoundError('Chantier introuvable');
-
-  await enqueueSyncWrite('service_jobs', updated[0].syncId, 'update', values);
 
   const result = await getServiceJobRow(id);
   if (!result) throw new NotFoundError('Chantier introuvable après modification');
@@ -773,14 +778,6 @@ export async function recomputeJobTotals(jobId: number): Promise<ServiceJobRow> 
     })
     .where(eq(serviceJobs.id, jobId));
 
-  await enqueueSyncWrite('service_jobs', null, 'update', {
-    reference: job.reference,
-    quote_materials: quoteMaterials,
-    quote_labor: quoteLabor,
-    quote_total: quoteTotal,
-    total: quoteTotal,
-  });
-
   await recomputeDocumentPayments('service_job', jobId);
 
   const refreshed = await getServiceJobRow(jobId);
@@ -807,9 +804,16 @@ export async function recomputeJobTotals(jobId: number): Promise<ServiceJobRow> 
  */
 export async function addJobMaterial(
   jobId: number,
-  input: { productId: number; quantity: number; unitCost?: number | null; userId?: number | null },
+  input: { productId: number; quantity: number; unitCost?: number | null; userId?: number | null; storeId: number },
 ): Promise<ServiceJobMaterialRow> {
-  const job = await assertJobEditable(jobId);
+  return withTransaction(() => addJobMaterialInTx(jobId, input));
+}
+
+async function addJobMaterialInTx(
+  jobId: number,
+  input: { productId: number; quantity: number; unitCost?: number | null; userId?: number | null; storeId: number },
+): Promise<ServiceJobMaterialRow> {
+  const job = await assertJobEditable(jobId, input.storeId);
 
   const productId = Number(input.productId);
   if (!Number.isInteger(productId) || productId <= 0) {
@@ -852,27 +856,13 @@ export async function addJobMaterial(
 
   const row = inserted[0];
 
-  try {
-    await addStockMovement(productId, 'exit', quantity, {
-      referenceType: 'service_job',
-      referenceId: jobId,
-      motif: `chantier ${job.reference} : ${product.name}`,
-      userId: input.userId ?? null,
-    });
-  } catch (error) {
-    // Compensation : la ligne ne doit pas survivre à une sortie de stock refusée.
-    await db.delete(serviceJobMaterials).where(eq(serviceJobMaterials.id, row.id));
-    throw error;
-  }
-
-  await enqueueSyncWrite('service_job_materials', row.syncId, 'insert', {
-    job_reference: job.reference,
-    product_id: productId,
-    product_name: product.name,
-    unit: product.unit,
-    quantity,
-    unit_cost: unitCost,
-    amount,
+  // Dans la transaction : si le stock est insuffisant, la ligne est annulée avec.
+  await addStockMovement(productId, 'exit', quantity, {
+    storeId: input.storeId,
+    referenceType: 'service_job',
+    referenceId: jobId,
+    motif: `chantier ${job.reference} : ${product.name}`,
+    userId: input.userId ?? null,
   });
 
   await recomputeJobTotals(jobId);
@@ -899,8 +889,9 @@ export async function addJobMaterial(
  * est tracée dans le journal d'audit et dans le journal de stock (motif
  * explicite).
  */
-export async function removeJobMaterial(jobId: number, materialId: number): Promise<ServiceJobRow> {
-  const job = await assertJobEditable(jobId);
+export async function removeJobMaterial(jobId: number, materialId: number, storeId: number): Promise<ServiceJobRow> {
+  return withTransaction(async () => {
+  const job = await assertJobEditable(jobId, storeId);
 
   const rows = await db
     .select()
@@ -917,20 +908,15 @@ export async function removeJobMaterial(jobId: number, materialId: number): Prom
 
   if (material.productId) {
     await addStockMovement(material.productId, 'entry', Number(material.quantity), {
+      storeId,
       referenceType: 'service_job',
       referenceId: jobId,
       motif: `annulation ligne matériau chantier ${job.reference} : ${material.productName}`,
     });
   }
 
-  await enqueueSyncWrite('service_job_materials', material.syncId, 'delete', {
-    job_reference: job.reference,
-    product_name: material.productName,
-    quantity: Number(material.quantity),
-    deleted_at: new Date().toISOString(),
-  });
-
   return recomputeJobTotals(jobId);
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -953,8 +939,10 @@ export async function addJobWorker(
     days: number;
     dailyRate?: number | null;
   },
+  storeId: number,
 ): Promise<ServiceJobWorkerRow> {
-  const job = await assertJobEditable(jobId);
+  return withTransaction(async () => {
+  const job = await assertJobEditable(jobId, storeId);
 
   const days = Number(input.days);
   if (!Number.isFinite(days) || days <= 0) {
@@ -1006,16 +994,6 @@ export async function addJobWorker(
 
   const row = inserted[0];
 
-  await enqueueSyncWrite('service_job_workers', row.syncId, 'insert', {
-    job_reference: job.reference,
-    worker_id: workerId,
-    worker_name: workerName,
-    role,
-    days,
-    daily_rate: rate,
-    amount,
-  });
-
   await recomputeJobTotals(jobId);
 
   return {
@@ -1029,6 +1007,7 @@ export async function addJobWorker(
     amount: Number(row.amount),
     createdAt: row.createdAt,
   };
+  });
 }
 
 /**
@@ -1038,8 +1017,8 @@ export async function addJobWorker(
  * celui de l'ouvrier : un journalier ponctuel n'a pas de `worker_id`, et un
  * même ouvrier peut intervenir deux fois (deux rôles, deux périodes).
  */
-export async function removeJobWorker(jobId: number, workerId: number): Promise<ServiceJobRow> {
-  await assertJobEditable(jobId);
+export async function removeJobWorker(jobId: number, workerId: number, storeId: number): Promise<ServiceJobRow> {
+  await assertJobEditable(jobId, storeId);
 
   const rows = await db
     .select()
@@ -1053,12 +1032,6 @@ export async function removeJobWorker(jobId: number, workerId: number): Promise<
   }
 
   await db.delete(serviceJobWorkers).where(eq(serviceJobWorkers.id, workerId));
-
-  await enqueueSyncWrite('service_job_workers', assignment.syncId, 'delete', {
-    worker_name: assignment.workerName,
-    days: Number(assignment.days),
-    deleted_at: new Date().toISOString(),
-  });
 
   return recomputeJobTotals(jobId);
 }
@@ -1080,13 +1053,17 @@ export async function removeJobWorker(jobId: number, workerId: number): Promise<
 export async function cancelServiceJob(
   id: number,
   reason: string,
-  user?: { id?: number | null; name?: string | null } | null,
+  user?: { id?: number | null; name?: string | null; storeId?: number | null } | null,
 ): Promise<ServiceJobRow> {
   const motif = (reason ?? '').trim();
   if (!motif) throw new ValidationError('Le motif d’annulation est obligatoire');
 
+  return withTransaction(async () => {
   const job = await getServiceJobRow(id);
   if (!job) throw new NotFoundError('Chantier introuvable');
+  if (!user?.storeId || job.storeId !== Number(user.storeId)) {
+    throw new ValidationError('Ce chantier appartient à un autre magasin : il ne peut être annulé que depuis ce magasin.');
+  }
   if (job.status === 'cancelled') {
     throw new ConflictError('Ce chantier est déjà annulé');
   }
@@ -1096,6 +1073,7 @@ export async function cancelServiceJob(
   for (const material of materials) {
     if (!material.productId) continue;
     await addStockMovement(material.productId, 'entry', material.quantity, {
+      storeId: Number(job.storeId),
       referenceType: 'service_job',
       referenceId: id,
       motif: `annulation chantier ${job.reference} : ${material.productName}`,
@@ -1111,15 +1089,10 @@ export async function cancelServiceJob(
     .set({ status: 'cancelled', notes, updatedAt: new Date() })
     .where(eq(serviceJobs.id, id));
 
-  await enqueueSyncWrite('service_jobs', null, 'update', {
-    reference: job.reference,
-    status: 'cancelled',
-    cancel_reason: motif,
-  });
-
   await recomputeDocumentPayments('service_job', id);
 
   const result = await getServiceJobRow(id);
   if (!result) throw new NotFoundError('Chantier introuvable');
   return result;
+  });
 }

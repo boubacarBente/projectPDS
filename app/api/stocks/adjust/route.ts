@@ -8,6 +8,7 @@ import {
   requireAction,
   required,
   toNumber,
+  requireActiveStore,
 } from '@/lib/api';
 import { adjustStock } from '@/lib/stock';
 import { writeAudit } from '@/lib/audit';
@@ -26,6 +27,8 @@ import { writeAudit } from '@/lib/audit';
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('stock.adjust');
+    // Un ajustement porte toujours sur le stock du magasin actif.
+    const storeId = await requireActiveStore(user);
     const body = await readJson<any>(request);
 
     const productId = Number(body.productId);
@@ -40,13 +43,14 @@ export async function POST(request: NextRequest) {
 
     const motif = required(body.motif, 'Motif');
 
-    const result = await adjustStock(productId, delta, motif, { userId: user.id });
+    const result = await adjustStock(storeId, productId, delta, motif, { userId: user.id });
 
     await writeAudit({
       user,
       action: 'stock_adjust',
       entity: 'stock',
       entityId: productId,
+      storeId,
       details: {
         delta,
         motif,

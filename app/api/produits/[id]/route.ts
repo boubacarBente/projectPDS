@@ -8,19 +8,25 @@ import {
   toBool,
   toNumber,
   NotFoundError,
+  scopeFromRequest,
+  requireCentralEdit,
+  ValidationError,
 } from '@/lib/api';
+import { canEditCentralData } from '@/lib/device';
+import { getSettings } from '@/lib/settings';
+import { assertStoreWritable } from '@/lib/stores';
 import { deactivateProduct, getProduct, reactivateProduct, updateProduct } from '@/lib/products';
 import { writeAudit } from '@/lib/audit';
 
 type Params = { params: Promise<{ id: string }> };
 
 /** GET /api/produits/[id] — fiche produit enrichie (catégorie, valeur de stock). */
-export async function GET(_request: NextRequest, { params }: Params) {
+export async function GET(request: NextRequest, { params }: Params) {
   try {
-    await requireAction('products.view');
+    const user = await requireAction('products.view');
     const { id } = await params;
 
-    const product = await getProduct(parseId(id));
+    const product = await getProduct(parseId(id), scopeFromRequest(user, request));
     if (!product) throw new NotFoundError('Produit introuvable');
 
     return ok(product);
@@ -52,10 +58,32 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.salePrice !== undefined) patch.salePrice = toNumber(body.salePrice, 0);
     if (body.stock !== undefined) patch.stock = toNumber(body.stock, 0);
     if (body.stockMin !== undefined) patch.stockMin = toNumber(body.stockMin, 0);
+    if (body.barcode !== undefined) patch.barcode = body.barcode;
     if (body.description !== undefined) patch.description = body.description;
     if (body.isActive !== undefined) patch.isActive = toBool(body.isActive, true);
 
-    const product = await updateProduct(productId, patch as any, { userId: user.id });
+    // Réglages propres au magasin actif : prix local (si autorisé) et seuil local.
+    if (body.localSalePrice !== undefined) {
+      const settings = await getSettings();
+      if (!settings.localPricesAllowed) {
+        throw new ValidationError('Les prix locaux sont désactivés dans les paramètres.');
+      }
+      patch.localSalePrice = body.localSalePrice === null || body.localSalePrice === '' ? null : toNumber(body.localSalePrice, 0);
+    }
+    if (body.localStockMin !== undefined) {
+      patch.localStockMin = body.localStockMin === null || body.localStockMin === '' ? null : toNumber(body.localStockMin, 0);
+    }
+    if (patch.stock !== undefined || patch.localSalePrice !== undefined || patch.localStockMin !== undefined) {
+      if (!user.storeId) throw new ValidationError('Aucun magasin actif.');
+      await assertStoreWritable(user.storeId);
+    }
+
+    const product = await updateProduct(productId, patch as any, {
+      userId: user.id,
+      storeId: user.storeId,
+      // Sur un poste de magasin, les champs du catalogue commun sont verrouillés.
+      centralEdit: await canEditCentralData(),
+    });
 
     await writeAudit({
       user,
@@ -80,6 +108,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('products.delete');
+    await requireCentralEdit();
     const { id } = await params;
     const productId = parseId(id);
 

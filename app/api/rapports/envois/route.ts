@@ -18,12 +18,15 @@ import { listReportDeliveries } from '@/lib/report-sender';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('reports.view');
+    const user = await requireAction('reports.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
 
     const result = await listReportDeliveries({
+      storeIds: user.storeIds,
+      // Les rapports consolidés (sans magasin) ne sont visibles que d'un compte multi-magasins.
+      includeCentral: user.allStores,
       period: params.get('period') ?? undefined,
       channel: params.get('channel') ?? undefined,
       status: params.get('status') ?? undefined,

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, requireAction, NotFoundError } from '@/lib/api';
+import { fail, ok, parseId, requireAction, NotFoundError, assertStoreVisible } from '@/lib/api';
 import { getReceiptData } from '@/lib/payments';
 
 type Params = { params: Promise<{ id: string }> };
@@ -10,11 +10,12 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('payments.view');
+    const user = await requireAction('payments.view');
     const { id } = await params;
 
     const data = await getReceiptData(parseId(id));
     if (!data) throw new NotFoundError('Reçu introuvable');
+    assertStoreVisible(user, data.payment.storeId);
 
     return ok(data);
   } catch (error) {

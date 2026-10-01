@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, readJson, toNumber, requireAction } from '@/lib/api';
+import { fail, ok, readJson, toNumber, requireAction, requireActiveStore, scopeFromRequest } from '@/lib/api';
 import { closeSession, getCashSummary, getOpenSession, listCashSessions, openSession } from '@/lib/caisse';
 import { writeAudit } from '@/lib/audit';
 
@@ -10,14 +10,15 @@ import { writeAudit } from '@/lib/audit';
  *   `{ sessionId, counted: { "Espèces": 23000000, "Mobile Money": … }, notes }`.
  *   `countedAmount` (comptage global) reste accepté pour les appels existants.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    await requireAction('cash.view');
+    const user = await requireAction('cash.view');
+    const scope = scopeFromRequest(user, request);
 
     const [session, history, summary] = await Promise.all([
-      getOpenSession(),
-      listCashSessions({ limit: 30 }),
-      getCashSummary(),
+      scope.length === 1 ? getOpenSession(scope[0]) : Promise.resolve(null),
+      listCashSessions({ scope, limit: 30 }),
+      getCashSummary({ scope }),
     ]);
 
     return ok({ session, history, summary });
@@ -31,7 +32,9 @@ export async function POST(request: NextRequest) {
     const user = await requireAction('cash.open');
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const session = await openSession({
+      storeId,
       openingAmount: toNumber(body.openingAmount, 0),
       userId: user.id,
       notes: body.notes ?? null,
@@ -70,7 +73,9 @@ export async function PUT(request: NextRequest) {
           )
         : null;
 
+    const storeId = await requireActiveStore(user);
     const session = await closeSession({
+      storeId,
       sessionId: toNumber(body.sessionId),
       countedByMethod,
       countedAmount: toNumber(body.countedAmount, 0),

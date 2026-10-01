@@ -32,7 +32,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { BackButton } from '@/components/back-button';
 import { DatePicker } from '@/components/date-picker';
@@ -349,25 +349,9 @@ const LINE_GRID =
 
 function NouvelleVenteForm() {
   const router = useRouter();
-  /**
-   * **Canal de vente** (§20) : `/ventes/nouvelle?canal=briqueterie` crée une
-   * vente de la briqueterie.
-   *
-   * Pourquoi une page qui se restreint elle-même plutôt qu'un second formulaire :
-   * une vente de briques doit gagner **toutes** les fonctionnalités déjà écrites
-   * et testées (contrôle de stock, remises, TVA, acompte, reçu, brouillon,
-   * export, paiements ultérieurs). En ne changeant que le **canal** et le
-   * **catalogue proposé**, on ne duplique aucune ligne de logique — et la vente
-   * reste invisible dans `/ventes`, dont la liste ne montre que `channel=general`.
-   *
-   * `useSearchParams()` est encapsulé dans un `<Suspense>` par l'export par
-   * défaut du fichier : sans cette frontière, Next refuse de pré-rendre la page.
-   */
-  const searchParams = useSearchParams();
-  const isBrickChannel = searchParams.get('canal') === 'briqueterie';
-  const channel: 'general' | 'brick' = isBrickChannel ? 'brick' : 'general';
-  /** Liste des ventes à ouvrir après enregistrement, selon le canal. */
-  const listHref = isBrickChannel ? '/briqueterie/ventes' : '/ventes';
+  /** Canal unique depuis le retrait de la briqueterie. */
+  const channel = 'general' as const;
+  const listHref = '/ventes';
 
   const { settings } = useSettings();
   const canCreate = usePermission('sales.create');
@@ -445,33 +429,7 @@ function NouvelleVenteForm() {
         })
         .filter((product) => product.id > 0);
 
-      /*
-       * Canal briqueterie : le catalogue proposé est restreint **aux produits
-       * liés à un type de brique** (`brick_types.product_id`). C'est la seule
-       * différence de comportement entre les deux canaux — le formulaire,
-       * les calculs et les écritures restent identiques.
-       */
-      let sellable = catalogue;
-
-      if (isBrickChannel) {
-        const typesResponse = await fetch('/api/briqueterie/types?limit=200', {
-          cache: 'no-store',
-          credentials: 'same-origin',
-          signal,
-        }).catch(() => null);
-
-        let ids: number[] = [];
-        if (typesResponse && typesResponse.ok) {
-          const typesPayload = (await typesResponse.json()) as { data?: unknown[] };
-          ids = (Array.isArray(typesPayload.data) ? typesPayload.data : [])
-            .map((raw) => Number((raw as Record<string, unknown>)?.productId ?? 0))
-            .filter((id) => Number.isInteger(id) && id > 0);
-        }
-
-        sellable = catalogue.filter((product) => ids.includes(product.id));
-      }
-
-      setProducts(sellable);
+      setProducts(catalogue);
 
       if (customersResponse && customersResponse.ok) {
         const customersPayload = (await customersResponse.json()) as { data?: unknown[] };
@@ -497,7 +455,7 @@ function NouvelleVenteForm() {
     } finally {
       if (!signal.aborted) setIsLoading(false);
     }
-  }, [isBrickChannel]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -832,7 +790,6 @@ function NouvelleVenteForm() {
           taxRate: totals.rate,
           notes: notes.trim() || null,
           status,
-          /** Canal : `brick` pour la briqueterie, `general` pour le commerce. */
           channel,
           lines: buildPayloadLines(),
         }),
@@ -889,10 +846,10 @@ function NouvelleVenteForm() {
             <div className="flex items-center gap-2 text-xs text-base-content/60">
               <BackButton withMargin={false} />
               <span className="flex items-center gap-1.5">
-                <span>{isBrickChannel ? 'Briqueterie' : 'Commercial'}</span>
+                <span>Commercial</span>
                 <span aria-hidden>›</span>
                 <Link href={listHref} className="font-medium hover:underline">
-                  {isBrickChannel ? 'Ventes de briques' : 'Ventes'}
+                  Ventes
                 </Link>
               </span>
             </div>
@@ -901,13 +858,11 @@ function NouvelleVenteForm() {
                 <Icon d={ICONS.cart} className="h-6 w-6" strokeWidth={2} />
               </span>
               <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-                {isBrickChannel ? 'Nouvelle vente de briques' : 'Nouvelle vente'}
+                Nouvelle vente
               </h1>
             </div>
             <p className="mt-2.5 max-w-2xl text-sm leading-6 text-base-content/60">
-              {isBrickChannel
-                ? 'Vente de la briqueterie : seuls ses produits sont proposés, et la vente n’apparaîtra pas dans la liste « Ventes » du commerce général.'
-                : 'Enregistrez une nouvelle vente : plusieurs produits, remises, TVA et encaissement immédiat.'}
+              {'Enregistrez une nouvelle vente : plusieurs produits, remises, TVA et encaissement immédiat.'}
             </p>
           </div>
           {/* Logo de l'application : `settings.companyLogo` quand un logo est
@@ -937,18 +892,10 @@ function NouvelleVenteForm() {
       ) : products.length === 0 ? (
         <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
           <ErrorState
-            title={
-              isBrickChannel
-                ? 'Aucun produit de briqueterie'
-                : 'Aucun produit au catalogue'
-            }
-            description={
-              isBrickChannel
-                ? 'Créez un type de brique lié à un produit actif : c’est ce produit qui est proposé à la vente de briqueterie.'
-                : 'Créez au moins un produit actif avant d’enregistrer une vente.'
-            }
-            onRetry={() => router.push(isBrickChannel ? '/briqueterie' : '/produits')}
-            retryLabel={isBrickChannel ? 'Gérer les types de briques' : 'Aller au catalogue'}
+            title="Aucun produit au catalogue"
+            description={'Créez au moins un produit actif avant d’enregistrer une vente.'}
+            onRetry={() => router.push('/produits')}
+            retryLabel="Aller au catalogue"
           />
         </div>
       ) : (
@@ -1715,8 +1662,8 @@ function NouvelleVenteForm() {
 }
 
 /**
- * Frontière `<Suspense>` obligatoire : `NouvelleVenteForm` lit
- * `useSearchParams()` (le canal de vente). Sans elle, Next refuse de
+ * Frontière `<Suspense>` conservée : elle affiche un squelette pendant le
+ * premier chargement. (Historiquement requise par `useSearchParams()`.) Sans elle, Next refusait de
  * pré-rendre la page, et `/ventes/nouvelle` renverrait une erreur de build.
  */
 export default function NouvelleVentePage() {

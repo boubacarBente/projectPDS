@@ -8,8 +8,10 @@ import {
   required,
   toNumber,
   requireAction,
+  requireActiveStore,
+  scopeFromRequest,
 } from '@/lib/api';
-import { createExpense, isExpenseScope, listExpenses } from '@/lib/expenses';
+import { createExpense, listExpenses, type ExpenseApprovalStatus } from '@/lib/expenses';
 import { writeAudit } from '@/lib/audit';
 import { today } from '@/lib/format';
 
@@ -20,28 +22,26 @@ import { today } from '@/lib/format';
  * réponse. Aucune requête Drizzle ici, toute la logique vit dans
  * `lib/expenses.ts` (c'est ce qui alimente la file de synchronisation).
  *
- * **Portée** (`?scope=general|production`, §20) : par défaut la liste renvoie
- * **tout**. `/depenses` demande `general` (les frais de fonctionnement, sans les
- * dépenses rattachées à un lot de briqueterie) ; la briqueterie lit la portée
- * complémentaire depuis la fiche du lot.
+ * **Magasin** : `?store=all|<id>` (défaut : magasin actif).
  */
 
 /** GET /api/depenses — liste paginée, filtrable (recherche, catégorie, moyen, période, portée). */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('expenses.view');
+    const user = await requireAction('expenses.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
-    const scope = params.get('scope');
+    const approval = params.get('approvalStatus');
 
     const result = await listExpenses({
+      scope: scopeFromRequest(user, request),
+      approvalStatus: (approval as ExpenseApprovalStatus | 'all' | null) ?? undefined,
       search: params.get('search') ?? undefined,
       category: params.get('category') ?? undefined,
       paymentMethod: params.get('paymentMethod') ?? undefined,
       from: params.get('from') ?? undefined,
       to: params.get('to') ?? undefined,
-      scope: isExpenseScope(scope) ? scope : undefined,
       page,
       limit,
     });
@@ -63,7 +63,10 @@ export async function POST(request: NextRequest) {
     const user = await requireAction('expenses.create');
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const expense = await createExpense({
+      storeId,
+      canSkipApproval: user.permissions.includes('expenses.approve'),
       category: required(body.category, 'Catégorie'),
       amount: toNumber(body.amount, 0),
       description: body.description ?? null,
@@ -72,7 +75,6 @@ export async function POST(request: NextRequest) {
       referenceId: body.referenceId ?? null,
       beneficiary: body.beneficiary ?? null,
       date: businessDate(body.date, 'date', today()),
-      scope: isExpenseScope(body.scope) ? body.scope : undefined,
       userId: user.id,
     });
 
@@ -86,6 +88,7 @@ export async function POST(request: NextRequest) {
         amount: expense.amount,
         paymentMethod: expense.paymentMethod,
         date: expense.date,
+        approbation: expense.approvalStatus,
       },
     });
 

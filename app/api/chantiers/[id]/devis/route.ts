@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction, ValidationError } from '@/lib/api';
+import { fail, ok, parseId, readJson, requireAction, requireActiveStore, ValidationError } from '@/lib/api';
 import { isQuoteStatus, updateQuoteStatus } from '@/lib/jobs';
 import { writeAudit } from '@/lib/audit';
 
@@ -24,7 +24,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
       throw new ValidationError('Statut de devis invalide (draft, sent, accepted ou refused)');
     }
 
-    const job = await updateQuoteStatus(jobId, body.quoteStatus);
+    const storeId = await requireActiveStore(user);
+    const job = await updateQuoteStatus(jobId, body.quoteStatus, storeId);
 
     await writeAudit({
       user,

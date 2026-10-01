@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, parsePagination, requireAction, NotFoundError } from '@/lib/api';
+import { fail, ok, parseId, parsePagination, requireAction, NotFoundError, scopeFromRequest } from '@/lib/api';
 import { getSupplier, listSupplierPayments } from '@/lib/suppliers';
 
 type Params = { params: Promise<{ id: string }> };
@@ -10,7 +10,7 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function GET(request: NextRequest, { params }: Params) {
   try {
-    await requireAction('suppliers.view');
+    const user = await requireAction('suppliers.view');
     const { id } = await params;
     const supplierId = parseId(id);
 
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     const { page, limit } = parsePagination(request.nextUrl.searchParams);
 
-    return ok(await listSupplierPayments(supplierId, { page, limit }));
+    return ok(await listSupplierPayments(supplierId, { scope: scopeFromRequest(user, request), page, limit }));
   } catch (error) {
     return fail(error);
   }

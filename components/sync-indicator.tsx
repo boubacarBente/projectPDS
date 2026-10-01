@@ -1,84 +1,91 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-type SyncStatus = {
-  mode: 'off' | 'backup' | 'multi';
-  online: boolean;
+type SyncSummary = {
+  mode: 'standalone' | 'hq' | 'store';
+  connected: boolean;
   pending: number;
-  failed: number;
-  lastSyncAt: string | null;
+  conflicts: number;
+  lastSuccessAt: string | null;
+  hasError: boolean;
 };
 
 /**
- * Indicateur d'état de synchronisation du pied de sidebar (README §5.4).
+ * Indicateur de synchronisation du pied de sidebar.
  *
- * La synchronisation est **optionnelle** (§26.14) : si l'API est absente ou si
- * la route n'est pas disponible, l'indicateur affiche simplement « Local » et
- * l'application n'en souffre pas. Aucun écran ne dépend de lui.
+ *  - gris  « Poste autonome » : aucune liaison au serveur central ;
+ *  - vert  « Synchronisé »    : dernier échange réussi, rien en attente ;
+ *  - orange « N en attente » / « Hors ligne » : des changements attendent
+ *    le prochain échange (le travail continue normalement) ;
+ *  - rouge « Conflits »       : un administrateur doit arbitrer.
+ * Un clic ouvre /synchronisation.
  */
 export function SyncIndicator({ collapsed = false }: { collapsed?: boolean }) {
-  const [status, setStatus] = useState<SyncStatus | null>(null);
+  const [status, setStatus] = useState<SyncSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-
     const load = async () => {
       try {
         const res = await fetch('/api/sync/status', { cache: 'no-store' });
         if (!res.ok) return;
-        const data = (await res.json()) as SyncStatus;
+        const data = (await res.json()) as SyncSummary;
         if (!cancelled) setStatus(data);
       } catch {
-        /* hors ligne ou route absente : on reste sur l'état local */
+        /* hors ligne : on garde le dernier état connu */
       }
     };
-
     void load();
-    const timer = setInterval(load, 60_000);
+    const timer = setInterval(load, 30_000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
   }, []);
 
-  const mode = status?.mode ?? 'off';
-  const isOff = mode === 'off';
-
-  const label = isOff
-    ? 'Local'
-    : status?.online
-      ? mode === 'multi'
-        ? 'Synchronisé (multi-postes)'
-        : 'Sauvegardé en ligne'
-      : 'Hors ligne';
-
-  const tone = isOff ? 'text-base-content/50' : status?.online ? 'text-success' : 'text-warning';
+  const linked = Boolean(status && status.mode !== 'standalone' && status.connected);
+  let label = 'Poste autonome';
+  let dot = 'bg-base-content/30';
+  let tone = 'text-base-content/50';
+  if (linked && status) {
+    if (status.conflicts > 0) {
+      label = `${status.conflicts} conflit${status.conflicts > 1 ? 's' : ''} à arbitrer`;
+      dot = 'bg-error';
+      tone = 'text-error';
+    } else if (status.hasError) {
+      label = status.pending > 0 ? `Hors ligne · ${status.pending} en attente` : 'Hors ligne';
+      dot = 'bg-warning';
+      tone = 'text-warning';
+    } else if (status.pending > 0) {
+      label = `${status.pending} en attente d’envoi`;
+      dot = 'bg-warning';
+      tone = 'text-warning';
+    } else {
+      label = status.mode === 'hq' ? 'Synchronisé (siège)' : 'Synchronisé';
+      dot = 'bg-success';
+      tone = 'text-success';
+    }
+  }
 
   if (collapsed) {
     return (
-      <span
-        className={`inline-block h-2.5 w-2.5 rounded-full ${
-          isOff ? 'bg-base-content/30' : status?.online ? 'bg-success' : 'bg-warning'
-        }`}
-        title={label}
-        aria-label={label}
-      />
+      <Link href="/synchronisation" title={label} aria-label={label}>
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${dot}`} />
+      </Link>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--sidebar-text-muted)' }}>
-      <span
-        className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-          isOff ? 'bg-base-content/30' : status?.online ? 'bg-success' : 'bg-warning'
-        }`}
-        aria-hidden
-      />
+    <Link
+      href="/synchronisation"
+      className="flex items-center gap-2 text-[11px] hover:underline"
+      style={{ color: 'var(--sidebar-text-muted)' }}
+      title={status?.lastSuccessAt ? `Dernier échange : ${new Date(status.lastSuccessAt).toLocaleString('fr-FR')}` : undefined}
+    >
+      <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dot}`} aria-hidden />
       <span className={`truncate ${tone}`}>{label}</span>
-      {!isOff && (status?.pending ?? 0) > 0 && (
-        <span className="tabular opacity-80">· {status?.pending} en attente</span>
-      )}
-    </div>
+    </Link>
   );
 }

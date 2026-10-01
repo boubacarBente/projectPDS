@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction, toNumber, ValidationError } from '@/lib/api';
+import { fail, ok, parseId, readJson, requireAction, requireActiveStore, toNumber, ValidationError } from '@/lib/api';
 import { addJobWorker, listJobWorkers, removeJobWorker } from '@/lib/jobs';
 import { writeAudit } from '@/lib/audit';
 
@@ -30,13 +30,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     const jobId = parseId(id);
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const assignment = await addJobWorker(jobId, {
       workerId: toNumber(body.workerId, 0) || null,
       workerName: body.workerName ?? null,
       role: body.role ?? null,
       days: toNumber(body.days, 0),
       dailyRate: body.dailyRate === undefined || body.dailyRate === null ? null : toNumber(body.dailyRate, 0),
-    });
+    }, storeId);
 
     await writeAudit({
       user,
@@ -77,7 +78,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     if (!workerId) throw new ValidationError('L’affectation à retirer est obligatoire');
 
-    const job = await removeJobWorker(jobId, workerId);
+    const storeId = await requireActiveStore(user);
+    const job = await removeJobWorker(jobId, workerId, storeId);
 
     await writeAudit({
       user,

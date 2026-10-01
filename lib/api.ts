@@ -2,7 +2,10 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { ForbiddenError, requirePermission, type Action, type Role } from '@/lib/permissions';
 import { getEffectivePermissions } from '@/lib/user-permissions';
+import { loadSession, setSessionStore, SESSION_COOKIE } from '@/lib/session';
+import { assertStoreWritable, resolveStoreContext, type StoreScope } from '@/lib/stores';
 import { InsufficientStockError } from '@/lib/stock';
+import { canEditCentralData } from '@/lib/device';
 
 /**
  * Aides communes à tous les Route Handlers.
@@ -12,12 +15,6 @@ import { InsufficientStockError } from '@/lib/stock';
  * logique métier vit dans `lib/`.
  */
 
-export type SessionUser = {
-  id: number;
-  name: string;
-  username: string;
-  role: Role;
-};
 
 export class UnauthorizedError extends Error {
   readonly status = 401;
@@ -51,23 +48,58 @@ export class ConflictError extends Error {
   }
 }
 
-/** Lit la session depuis le cookie httpOnly `session_user`. */
+/**
+ * Utilisateur de session **avec son contexte de magasin** (§5).
+ *
+ * - `storeId` : magasin actif (opérations). `null` seulement si aucun magasin
+ *   n'est accessible (première installation, compte sans affectation).
+ * - `storeIds` : magasins consultables sur ce poste (déjà filtrés par les
+ *   affectations, le statut et le périmètre du poste).
+ * - `allStores` : administrateur général ou permission `stores.viewAll`.
+ */
+export type SessionUser = {
+  id: number;
+  name: string;
+  username: string;
+  role: Role;
+  sessionId: string;
+  storeId: number | null;
+  storeIds: number[];
+  allStores: boolean;
+  permissions: Action[];
+};
+
+/** Lit la session (jeton du cookie → table `sessions` → utilisateur relu en base). */
 export async function getSessionUser(): Promise<SessionUser | null> {
   try {
     const cookieStore = await cookies();
-    const raw = cookieStore.get('session_user')?.value;
-    if (!raw) return null;
+    const token = cookieStore.get(SESSION_COOKIE)?.value;
+    const session = await loadSession(token);
+    if (!session) return null;
 
-    const parsed = JSON.parse(raw);
-    if (!parsed?.id || !parsed?.name || !parsed?.role) return null;
+    const permissions = await getEffectivePermissions({ id: session.id, role: session.role });
+    const viewAll = session.role === 'admin' || permissions.includes('stores.viewAll');
+    const context = await resolveStoreContext({ id: session.id, role: session.role }, session.storeId, viewAll);
+
+    if (context.activeStoreId !== session.storeId) {
+      // Le magasin enregistré n'est plus accessible (affectation retirée,
+      // magasin archivé…) : on bascule sur le premier magasin autorisé.
+      await setSessionStore(session.sessionId, context.activeStoreId).catch(() => {});
+    }
 
     return {
-      id: Number(parsed.id),
-      name: String(parsed.name),
-      username: String(parsed.username ?? parsed.name),
-      role: parsed.role as Role,
+      id: session.id,
+      name: session.name,
+      username: session.username,
+      role: session.role,
+      sessionId: session.sessionId,
+      storeId: context.activeStoreId,
+      storeIds: context.storeIds,
+      allStores: context.allStores,
+      permissions,
     };
-  } catch {
+  } catch (error) {
+    console.error('[auth] Lecture de session impossible :', error);
     return null;
   }
 }
@@ -81,25 +113,101 @@ export async function requireUser(): Promise<SessionUser> {
 /**
  * Session **et** permission : la garde serveur de référence.
  *
- * ⚠️ La décision ne se prend **pas** sur le seul rôle : elle passe par
- * `getEffectivePermissions()`, qui applique la matrice du rôle **puis** les
- * surcharges par utilisateur décidées par l'administrateur (demande explicite du
- * client). C'est ce qui garantit qu'un droit accordé ou retiré à la main est
- * respecté par l'API, et pas seulement masqué dans le menu — masquer n'est pas
- * protéger.
+ * La décision passe par les permissions effectives (matrice du rôle, puis
+ * surcharges par utilisateur). Le rôle est relu en base à chaque requête :
+ * modifier un cookie ne donne plus aucun droit.
  */
 export async function requireAction(action: Action): Promise<SessionUser> {
   const user = await requireUser();
-  const permissions = await getEffectivePermissions({ id: user.id, role: user.role });
-  requirePermission(user, action, permissions);
+  requirePermission(user, action, user.permissions);
   return user;
 }
 
 /** Permissions effectives de la session courante (pour les écrans qui en ont besoin). */
 export async function getSessionPermissions(): Promise<Action[]> {
   const user = await getSessionUser();
-  if (!user) return [];
-  return getEffectivePermissions({ id: user.id, role: user.role });
+  return user?.permissions ?? [];
+}
+
+/**
+ * Magasin actif, obligatoire pour toute écriture.
+ * Vérifie aussi que le magasin accepte de nouvelles opérations (non suspendu).
+ */
+export async function requireActiveStore(user: SessionUser): Promise<number> {
+  if (!user.storeId) {
+    throw new ValidationError(
+      'Aucun magasin actif : créez un magasin ou demandez à l’administrateur de vous affecter à un magasin.',
+    );
+  }
+  await assertStoreWritable(user.storeId);
+  return user.storeId;
+}
+
+/**
+ * Portée de **lecture** demandée par l'écran (`?store=…`), toujours bornée aux
+ * magasins autorisés :
+ *  - absent       → magasin actif ;
+ *  - `all`        → tous les magasins accessibles (vue consolidée) ;
+ *  - un identifiant → ce magasin, s'il est autorisé (sinon 403).
+ *
+ * Le paramètre venant du navigateur n'est **jamais** cru tel quel (§5).
+ */
+export function resolveScope(user: SessionUser, requested?: string | null): StoreScope {
+  const value = (requested ?? '').trim();
+  if (value === 'all') return [...user.storeIds];
+  if (value) {
+    const id = Number(value);
+    if (!Number.isInteger(id) || !user.storeIds.includes(id)) {
+      throw new ForbiddenStoreError();
+    }
+    return [id];
+  }
+  return user.storeId ? [user.storeId] : [];
+}
+
+/** Portée lue depuis l'URL de la requête. */
+export function scopeFromRequest(user: SessionUser, request: Request): StoreScope {
+  const url = new URL(request.url);
+  return resolveScope(user, url.searchParams.get('store'));
+}
+
+/** Vérifie qu'un document appartient à un magasin visible par l'utilisateur. */
+export function assertStoreVisible(user: SessionUser, storeId: number | null | undefined): void {
+  if (storeId === null || storeId === undefined) {
+    if (!user.allStores) throw new ForbiddenStoreError();
+    return;
+  }
+  if (!user.storeIds.includes(Number(storeId))) throw new ForbiddenStoreError();
+}
+
+/**
+ * Données centrales (catalogue, catégories, comptes, magasins, paramètres) :
+ * modifiables uniquement depuis le siège ou une installation autonome. Sur un
+ * poste de magasin relié au serveur, ces tables ne sont jamais envoyées
+ * (`hqOnly`) : une modification locale serait écrasée — on la refuse.
+ */
+export async function requireCentralEdit(): Promise<void> {
+  if (!(await canEditCentralData())) {
+    throw new CentralDataError();
+  }
+}
+
+export class CentralDataError extends Error {
+  readonly status = 403;
+  constructor() {
+    super(
+      'Ces données sont gérées au siège : connectez-vous sur le poste du siège pour les modifier.',
+    );
+    this.name = 'CentralDataError';
+  }
+}
+
+export class ForbiddenStoreError extends Error {
+  readonly status = 403;
+  constructor() {
+    super('Accès refusé : ce magasin ne fait pas partie de votre périmètre.');
+    this.name = 'ForbiddenStoreError';
+  }
 }
 
 /** Enveloppe une réponse JSON de succès. */
@@ -179,9 +287,9 @@ export function fail(error: unknown): NextResponse {
       'products_name_unique': 'Un produit porte déjà ce nom.',
       'users.username': 'Cet identifiant est déjà pris.',
       'categories.name': 'Cette catégorie existe déjà.',
-      'furniture_models.code': 'Ce code de modèle existe déjà.',
-      'brick_productions.batch_number': 'Ce numéro de lot existe déjà.',
-      'furniture_orders.order_number': 'Ce numéro de commande existe déjà.',
+      'stores.code': 'Ce code de magasin est déjà utilisé.',
+      'stock_transfers.reference': 'Cette référence de transfert existe déjà.',
+      'inventories.reference': 'Cette référence d’inventaire existe déjà.',
       'service_jobs.reference': 'Cette référence de chantier existe déjà.',
     };
 

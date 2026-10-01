@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction, toNumber, ValidationError } from '@/lib/api';
+import { fail, ok, parseId, readJson, requireAction, requireActiveStore, toNumber, ValidationError } from '@/lib/api';
 import { addJobMaterial, listJobMaterials, removeJobMaterial } from '@/lib/jobs';
 import { writeAudit } from '@/lib/audit';
 
@@ -31,7 +31,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     const jobId = parseId(id);
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const material = await addJobMaterial(jobId, {
+      storeId,
       productId: toNumber(body.productId, 0),
       quantity: toNumber(body.quantity, 0),
       unitCost: body.unitCost === undefined || body.unitCost === null ? null : toNumber(body.unitCost, 0),
@@ -76,7 +78,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     if (!materialId) throw new ValidationError('La ligne de matériau à retirer est obligatoire');
 
-    const job = await removeJobMaterial(jobId, materialId);
+    const storeId = await requireActiveStore(user);
+    const job = await removeJobMaterial(jobId, materialId, storeId);
 
     await writeAudit({
       user,

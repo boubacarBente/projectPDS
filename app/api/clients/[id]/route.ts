@@ -8,6 +8,7 @@ import {
   toBool,
   requireAction,
   NotFoundError,
+  scopeFromRequest,
 } from '@/lib/api';
 import { deactivateCustomer, getCustomerStats, reactivateCustomer, updateCustomer } from '@/lib/customers';
 import { canViewSalesProfit, withoutSalesProfit } from '@/lib/sales';
@@ -22,12 +23,12 @@ type Params = { params: Promise<{ id: string }> };
  * utilisateur détenant `balances.view` : donnée financière sensible, le serveur
  * reste seul juge (§9).
  */
-export async function GET(_request: NextRequest, { params }: Params) {
+export async function GET(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('customers.view');
     const { id } = await params;
 
-    const stats = await getCustomerStats(parseId(id));
+    const stats = await getCustomerStats(parseId(id), scopeFromRequest(user, request));
     if (!stats) throw new NotFoundError('Client introuvable');
 
     if (await canViewSalesProfit(user)) return ok(stats);

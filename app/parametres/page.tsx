@@ -43,28 +43,6 @@ type SettingsContextType = {
   refreshSettings: () => Promise<void>;
 };
 
-/**
- * Ce que la briqueterie contient aujourd'hui — miroir du JSON de
- * `GET /api/parametres/briqueterie`.
- *
- * Type redéclaré ici et **non importé** de `lib/brick-seed.ts` : ce module
- * importe `@/db` (donc `@libsql/client` et `fs`). Un composant client qui en
- * importerait une valeur — même un type non effacé — entraînerait la chaîne
- * base de données dans le bundle navigateur (AGENTS.md invariant 6).
- */
-type BrickDataSummary = {
-  brickTypes: number;
-  productions: number;
-  productionsStored: number;
-  expenses: number;
-  sales: number;
-  orders: number;
-  outstanding: number;
-  hasData: boolean;
-  oldestProduction: string | null;
-  newestProduction: string | null;
-};
-
 const SettingsContext = createContext<SettingsContextType>({
   settings: DEFAULT_SETTINGS,
   isLoading: true,
@@ -190,8 +168,6 @@ type FormState = {
   purchasePrefix: string;
   receiptPrefix: string;
   jobPrefix: string;
-  brickPrefix: string;
-  furniturePrefix: string;
   defaultTaxRate: string;
   defaultStockMin: string;
   reportSendTime: string;
@@ -218,8 +194,6 @@ function toForm(settings: Settings): FormState {
     purchasePrefix: settings.purchasePrefix,
     receiptPrefix: settings.receiptPrefix,
     jobPrefix: settings.jobPrefix,
-    brickPrefix: settings.brickPrefix,
-    furniturePrefix: settings.furniturePrefix,
     defaultTaxRate: String(settings.defaultTaxRate),
     defaultStockMin: String(settings.defaultStockMin),
     reportSendTime: settings.reportSendTime,
@@ -244,35 +218,6 @@ export default function ParametresPage() {
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [pendingRestoreFile, setPendingRestoreFile] = useState<File | null>(null);
   const [isWorking, setIsWorking] = useState(false);
-
-  /* ---- Briqueterie : jeu de démonstration (§20.5) ---- */
-  const [brickSummary, setBrickSummary] = useState<BrickDataSummary | null>(null);
-  const [brickSummaryError, setBrickSummaryError] = useState<string | null>(null);
-  const [brickAction, setBrickAction] = useState<'seed' | 'reset' | null>(null);
-  const [showBrickSeedModal, setShowBrickSeedModal] = useState(false);
-  const [showBrickResetModal, setShowBrickResetModal] = useState(false);
-
-  const loadBrickSummary = useCallback(async () => {
-    try {
-      const response = await fetch('/api/parametres/briqueterie', {
-        cache: 'no-store',
-        credentials: 'same-origin',
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error ?? 'Résumé indisponible');
-      setBrickSummary(payload as BrickDataSummary);
-      setBrickSummaryError(null);
-    } catch (caught: any) {
-      // Le résumé est un appoint : son échec ne doit pas masquer la page.
-      setBrickSummary(null);
-      setBrickSummaryError(caught?.message ?? 'Résumé indisponible');
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!canCritical) return;
-    void loadBrickSummary();
-  }, [canCritical, loadBrickSummary]);
 
   // Les paramètres arrivent après le premier rendu : on réaligne le formulaire.
   useEffect(() => {
@@ -319,8 +264,6 @@ export default function ParametresPage() {
       purchasePrefix: form.purchasePrefix,
       receiptPrefix: form.receiptPrefix,
       jobPrefix: form.jobPrefix,
-      brickPrefix: form.brickPrefix,
-      furniturePrefix: form.furniturePrefix,
       defaultTaxRate: Number(form.defaultTaxRate) || 0,
     });
     setIsSubmitting(false);
@@ -424,55 +367,6 @@ export default function ParametresPage() {
     }
   };
 
-  /**
-   * **Données de démonstration de la briqueterie** (§20.5).
-   *
-   * Deux actions seulement : `seed` ajoute une année d'activité (semaine, mois,
-   * année en cours), `reset` efface l'activité de la briqueterie. Le serveur crée
-   * une copie de sécurité de la base avant tout effacement.
-   *
-   * Aucun `window.location.reload()` ici, contrairement à la réinitialisation
-   * générale : les écrans de la briqueterie rechargent leurs données à chaque
-   * visite, et recharger la page ferait perdre le formulaire de paramètres en
-   * cours de saisie. On rafraîchit donc le résumé affiché.
-   */
-  const runBrickAction = async (action: 'seed' | 'reset') => {
-    setBrickAction(action);
-    try {
-      const response = await fetch('/api/parametres/briqueterie', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ action }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error ?? 'Opération impossible');
-
-      if (action === 'seed') {
-        const counts = payload?.counts ?? {};
-        toast.success(
-          `Briqueterie pré-remplie : ${counts.productions ?? 0} lot(s), ${counts.expenses ?? 0} dépense(s), ` +
-            `${counts.sales ?? 0} vente(s), ${counts.orders ?? 0} commande(s).`,
-          { autoClose: 10000 },
-        );
-      } else {
-        const report = payload?.report ?? {};
-        toast.success(
-          `Briqueterie réinitialisée : ${report.productions ?? 0} lot(s), ${report.expenses ?? 0} dépense(s), ` +
-            `${report.sales ?? 0} vente(s) effacés, ${report.productsZeroed ?? 0} stock(s) remis à zéro. Copie de sécurité créée.`,
-          { autoClose: 10000 },
-        );
-      }
-
-      await loadBrickSummary();
-    } catch (caught: any) {
-      toast.error(caught?.message ?? 'Opération impossible', { autoClose: 10000 });
-    } finally {
-      setBrickAction(null);
-      setShowBrickSeedModal(false);
-      setShowBrickResetModal(false);
-    }
-  };
 
   const runDatabaseAction = async (action: 'reset-data' | 'seed-data') => {    setIsWorking(true);
     try {
@@ -820,22 +714,6 @@ export default function ParametresPage() {
                 onChange={(e) => set('jobPrefix', e.target.value.toUpperCase())}
               />
             </FormField>
-            <FormField label="Préfixe lot de briques">
-              <input
-                className="input input-bordered field-rounded w-full"
-                value={form.brickPrefix}
-                disabled={!canUpdate}
-                onChange={(e) => set('brickPrefix', e.target.value.toUpperCase())}
-              />
-            </FormField>
-            <FormField label="Préfixe commande meuble">
-              <input
-                className="input input-bordered field-rounded w-full"
-                value={form.furniturePrefix}
-                disabled={!canUpdate}
-                onChange={(e) => set('furniturePrefix', e.target.value.toUpperCase())}
-              />
-            </FormField>
             <FormField label="Gabarit du numéro" className="sm:col-span-2">
               <input
                 className="input input-bordered field-rounded w-full font-mono text-sm"
@@ -1178,124 +1056,6 @@ export default function ParametresPage() {
         </PageSection>
       </RoleGate>
 
-      {/*
-        Données de démonstration de la briqueterie (§20.5).
-
-        Volontairement **hors** de la « zone dangereuse » masquée en desktop et en
-        production : c'est un jeu de démonstration **par module**, pas un
-        effacement de la base, et le client doit pouvoir le rejouer sur son poste
-        pour montrer l'écran. Reste réservé à `settings.critical` (administrateur).
-      */}
-      {canCritical && (
-        <PageSection
-          title="Briqueterie — données de démonstration"
-          subtitle="Pré-remplit une année d’activité (semaine, mois et année en cours) ou efface l’activité de la briqueterie sans toucher au reste."
-        >
-          <Card>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-xl border border-base-200 bg-base-200/40 p-3">
-                <div className="text-[11px] uppercase text-base-content/45">Lots de fabrication</div>
-                <div className="mt-1 text-xl font-semibold tabular">
-                  {brickSummary ? formatNumber(brickSummary.productions) : '—'}
-                </div>
-                <div className="text-xs text-base-content/55">
-                  {brickSummary
-                    ? `${formatNumber(brickSummary.productionsStored)} mis en stock`
-                    : 'Résumé indisponible'}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-base-200 bg-base-200/40 p-3">
-                <div className="text-[11px] uppercase text-base-content/45">
-                  Dépenses rattachées
-                </div>
-                <div className="mt-1 text-xl font-semibold tabular">
-                  {brickSummary ? formatNumber(brickSummary.expenses) : '—'}
-                </div>
-                <div className="text-xs text-base-content/55">
-                  Ciment, sable, carburant, main-d’œuvre…
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-base-200 bg-base-200/40 p-3">
-                <div className="text-[11px] uppercase text-base-content/45">Ventes de briques</div>
-                <div className="mt-1 text-xl font-semibold tabular">
-                  {brickSummary ? formatNumber(brickSummary.sales) : '—'}
-                </div>
-                <div className="text-xs text-base-content/55">
-                  {brickSummary
-                    ? `Reste à encaisser ${formatCurrency(brickSummary.outstanding, settings.currency)}`
-                    : 'Résumé indisponible'}
-                </div>
-              </div>
-            </div>
-
-            {brickSummary && (brickSummary.oldestProduction || brickSummary.newestProduction) && (
-              <p className="mt-3 text-xs text-base-content/55">
-                Période couverte : {brickSummary.oldestProduction ?? '—'} →{' '}
-                {brickSummary.newestProduction ?? '—'} ·{' '}
-                {formatNumber(brickSummary.brickTypes)} type(s) de brique ·{' '}
-                {formatNumber(brickSummary.orders)} commande(s).
-              </p>
-            )}
-
-            {brickSummaryError && (
-              <p className="mt-3 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-base-content/70">
-                Le résumé n’a pas pu être chargé ({brickSummaryError}) — les deux boutons restent
-                utilisables.
-              </p>
-            )}
-
-            <div className="mt-4 flex flex-wrap gap-3">
-              <button
-                type="button"
-                className="btn btn-primary min-h-11"
-                disabled={brickAction !== null}
-                onClick={() => setShowBrickSeedModal(true)}
-              >
-                {brickAction === 'seed' ? (
-                  <>
-                    <span className="loading loading-spinner loading-sm" aria-hidden />
-                    Pré-remplissage…
-                  </>
-                ) : (
-                  'Pré-remplir la briqueterie'
-                )}
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline btn-error min-h-11"
-                disabled={brickAction !== null || !brickSummary?.hasData}
-                onClick={() => setShowBrickResetModal(true)}
-              >
-                {brickAction === 'reset' ? (
-                  <>
-                    <span className="loading loading-spinner loading-sm" aria-hidden />
-                    Réinitialisation…
-                  </>
-                ) : (
-                  'Réinitialiser la briqueterie'
-                )}
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-xl border border-base-200 bg-base-200/40 p-3 text-xs text-base-content/70">
-              <strong>Pré-remplir ajoute, ne remplace pas.</strong> Des lots, dépenses, ventes et
-              commandes sont créés à des dates réparties sur la <strong>semaine</strong>, le{' '}
-              <strong>mois</strong> et l’<strong>année</strong> en cours, pour que les filtres, les
-              rapports et les graphiques de la briqueterie aient des données à montrer. Pour repartir
-              de zéro, réinitialisez d’abord.
-              <br />
-              <strong>Réinitialiser</strong> efface l’activité de la briqueterie (lots, dépenses,
-              ventes, commandes, mouvements), <strong>remet à zéro le stock des produits de
-              briques</strong> par un ajustement motivé, et <strong>conserve</strong> les types de
-              briques, les produits, les clients et le journal d’actions. Une copie de sécurité de
-              la base est créée avant l’effacement ; les soldes de caisse sont reconstruits.
-            </div>
-          </Card>
-        </PageSection>
-      )}
-
       {/* 12. Zone dangereuse — outils de développement uniquement */}
       {canCritical && !hideDatabaseActions && (
         <PageSection
@@ -1326,54 +1086,6 @@ export default function ParametresPage() {
       )}
 
       {/* ------------------------------- Modales ------------------------------- */}
-
-      <ConfirmDialog
-        isOpen={showBrickSeedModal}
-        onClose={() => setShowBrickSeedModal(false)}
-        onConfirm={() => void runBrickAction('seed')}
-        title="Pré-remplir la briqueterie"
-        confirmLabel="Pré-remplir"
-        isSubmitting={brickAction === 'seed'}
-        message={
-          <>
-            Une <strong>année d’activité de démonstration</strong> va être créée pour la
-            briqueterie : lots de fabrication (dont des lots en cours cette semaine), dépenses
-            rattachées, ventes du canal briquetterie et commandes à différents stades.
-            <br />
-            <span className="text-sm">
-              Les données existantes sont <strong>conservées</strong> : l’opération ajoute. Elle peut
-              prendre quelques secondes.
-            </span>
-          </>
-        }
-      />
-
-      <ConfirmDialog
-        isOpen={showBrickResetModal}
-        onClose={() => setShowBrickResetModal(false)}
-        onConfirm={() => void runBrickAction('reset')}
-        title="Réinitialiser la briqueterie"
-        tone="error"
-        confirmLabel="Effacer l’activité"
-        isSubmitting={brickAction === 'reset'}
-        message={
-          <>
-            Les <strong>lots de fabrication</strong>, leurs <strong>dépenses rattachées</strong>,
-            les <strong>ventes de briques</strong> et les <strong>commandes</strong> de la
-            briqueterie seront <strong>définitivement supprimés</strong>, avec leurs mouvements de
-            stock et de caisse.
-            <br />
-            Les <strong>stocks des produits de briques sont remis à zéro</strong> par un mouvement
-            d’ajustement motivé (traçable dans l’historique des mouvements) — y compris ce qui
-            provenait d’achats ou de ventes du commerce général.
-            <br />
-            Les types de briques, les produits, les clients, les paramètres et le journal d’actions
-            sont conservés. Une copie de sécurité de la base est créée avant l’effacement.
-            <br />
-            <span className="text-sm">Cette action est irréversible.</span>
-          </>
-        }
-      />
 
       <ConfirmDialog
         isOpen={showResetModal}

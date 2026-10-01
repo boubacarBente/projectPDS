@@ -5,6 +5,8 @@ import {
   parsePagination,
   readJson,
   requireAction,
+  requireActiveStore,
+  scopeFromRequest,
   toNumber,
 } from '@/lib/api';
 import {
@@ -29,12 +31,14 @@ import { writeAudit } from '@/lib/audit';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('jobs.view');
+    const user = await requireAction('jobs.view');
 
     const params = request.nextUrl.searchParams;
+    const scope = scopeFromRequest(user, request);
 
     if (params.get('stats') === '1' || params.get('stats') === 'true') {
       const summary = await getJobsSummary({
+        scope,
         from: params.get('from') ?? undefined,
         to: params.get('to') ?? undefined,
       });
@@ -44,6 +48,7 @@ export async function GET(request: NextRequest) {
     const { page, limit } = parsePagination(params);
 
     const result = await listServiceJobs({
+      scope,
       search: params.get('search')?.trim() || undefined,
       category: params.get('category') ?? undefined,
       status: params.get('status') ?? undefined,
@@ -67,7 +72,9 @@ export async function POST(request: NextRequest) {
     const user = await requireAction('jobs.create');
     const body = await readJson<any>(request);
 
+    const storeId = await requireActiveStore(user);
     const job = await createServiceJob({
+      storeId,
       customerId: toNumber(body.customerId, 0),
       category: isJobCategory(body.category) ? body.category : undefined,
       title: body.title ?? null,

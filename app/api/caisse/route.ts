@@ -1,17 +1,19 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, readJson, toNumber, requireAction } from '@/lib/api';
+import { fail, ok, parsePagination, readJson, toNumber, requireAction, requireActiveStore, scopeFromRequest } from '@/lib/api';
 import { addCashMovement, getCashSummary, listCashMovements } from '@/lib/caisse';
 import { writeAudit } from '@/lib/audit';
 
 /** GET /api/caisse — mouvements paginés + résumé de la session. */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('cash.view');
+    const user = await requireAction('cash.view');
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
+    const scope = scopeFromRequest(user, request);
 
     const [movements, summary] = await Promise.all([
       listCashMovements({
+        scope,
         type: (params.get('type') as 'income' | 'expense' | null) ?? undefined,
         paymentMethod: params.get('paymentMethod') ?? undefined,
         sessionId: params.get('sessionId') ? Number(params.get('sessionId')) : undefined,
@@ -21,7 +23,7 @@ export async function GET(request: NextRequest) {
         page,
         limit,
       }),
-      getCashSummary(),
+      getCashSummary({ scope, from: params.get('from') ?? undefined, to: params.get('to') ?? undefined }),
     ]);
 
     return ok({ ...movements, summary });
@@ -38,7 +40,9 @@ export async function POST(request: NextRequest) {
 
     const type = body.type === 'expense' ? 'expense' : 'income';
 
+    const storeId = await requireActiveStore(user);
     const result = await addCashMovement({
+      storeId,
       type,
       amount: toNumber(body.amount),
       paymentMethod: body.paymentMethod ?? 'Espèces',

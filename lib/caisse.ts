@@ -1,8 +1,10 @@
 /**
- * Caisse et solde (§8, §13).
+ * Caisse et solde (§8, §13 ; multi-magasins §11).
+ *
+ * Chaque magasin a sa caisse : sessions et mouvements portent `store_id`.
  *
  * Deux invariants :
- *  1. **une seule session `open` à la fois** ;
+ *  1. **une seule session `open` à la fois par magasin** ;
  *  2. `balance_after` est recalculé à **chaque** mouvement — le solde
  *     disponible est le dernier `balance_after` de la session ouverte.
  *
@@ -10,14 +12,14 @@
  * pour permettre le rapprochement caisse ↔ vente ↔ dépense (§13).
  */
 
-import { db, rawAll, rawGet, rawRun } from '@/db';
+import { db, rawAll, rawGet, rawRun, withTransaction } from '@/db';
 import { cashMovements, cashSessions } from '@/db/schema';
-import { and, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { and, desc, eq, gte, inArray, lte, sql, type SQL } from 'drizzle-orm';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 import { roundMoney, today } from '@/lib/format';
 
 export type CashMovementType = 'income' | 'expense';
-export type CashReferenceType = 'sale' | 'payment' | 'purchase' | 'expense' | 'manual';
+export type CashReferenceType = 'sale' | 'payment' | 'purchase' | 'expense' | 'manual' | 'service_job';
 
 export class CashSessionError extends Error {
   readonly status = 400;
@@ -29,6 +31,7 @@ export class CashSessionError extends Error {
 
 export type CashSessionRow = {
   id: number;
+  storeId: number | null;
   status: 'open' | 'closed';
   openedAt: Date | null;
   openedBy: number | null;
@@ -41,12 +44,12 @@ export type CashSessionRow = {
   notes: string | null;
 };
 
-/** La session ouverte, ou `null`. */
-export async function getOpenSession(): Promise<CashSessionRow | null> {
+/** La session ouverte du magasin, ou `null`. */
+export async function getOpenSession(storeId: number): Promise<CashSessionRow | null> {
   const row = await db
     .select()
     .from(cashSessions)
-    .where(eq(cashSessions.status, 'open'))
+    .where(and(eq(cashSessions.status, 'open'), eq(cashSessions.storeId, storeId)))
     .orderBy(desc(cashSessions.id))
     .limit(1);
 
@@ -57,14 +60,16 @@ export async function getOpenSession(): Promise<CashSessionRow | null> {
 function mapSession(row: any): CashSessionRow {
   return {
     id: row.id,
+    storeId: row.storeId ?? row.store_id ?? null,
     status: row.status,
-    openedAt: row.openedAt,
-    openedBy: row.openedBy,
-    openingAmount: Number(row.openingAmount ?? 0),
-    closedAt: row.closedAt,
-    closedBy: row.closedBy,
-    theoreticalAmount: row.theoreticalAmount == null ? null : Number(row.theoreticalAmount),
-    countedAmount: row.countedAmount == null ? null : Number(row.countedAmount),
+    openedAt: row.openedAt ?? (row.opened_at ? new Date(Number(row.opened_at) * 1000) : null),
+    openedBy: row.openedBy ?? row.opened_by ?? null,
+    openingAmount: Number(row.openingAmount ?? row.opening_amount ?? 0),
+    closedAt: row.closedAt ?? (row.closed_at ? new Date(Number(row.closed_at) * 1000) : null),
+    closedBy: row.closedBy ?? row.closed_by ?? null,
+    theoreticalAmount:
+      (row.theoreticalAmount ?? row.theoretical_amount) == null ? null : Number(row.theoreticalAmount ?? row.theoretical_amount),
+    countedAmount: (row.countedAmount ?? row.counted_amount) == null ? null : Number(row.countedAmount ?? row.counted_amount),
     difference: row.difference == null ? null : Number(row.difference),
     notes: row.notes,
   };
@@ -72,11 +77,21 @@ function mapSession(row: any): CashSessionRow {
 
 /** Ouvre une session de caisse. Refuse s'il en existe déjà une ouverte. */
 export async function openSession(input: {
+  storeId: number;
   openingAmount: number;
   userId?: number | null;
   notes?: string | null;
 }): Promise<CashSessionRow> {
-  const existing = await getOpenSession();
+  return withTransaction(() => openSessionInTx(input));
+}
+
+async function openSessionInTx(input: {
+  storeId: number;
+  openingAmount: number;
+  userId?: number | null;
+  notes?: string | null;
+}): Promise<CashSessionRow> {
+  const existing = await getOpenSession(input.storeId);
   if (existing) {
     throw new CashSessionError(
       `Une session de caisse est déjà ouverte (depuis le ${existing.openedAt ? existing.openedAt.toLocaleString('fr-FR') : '—'}). Clôturez-la d'abord.`,
@@ -88,6 +103,7 @@ export async function openSession(input: {
   const inserted = await db
     .insert(cashSessions)
     .values({
+      storeId: input.storeId,
       status: 'open',
       openedBy: input.userId ?? null,
       openingAmount,
@@ -100,6 +116,7 @@ export async function openSession(input: {
   // `balance_after` du premier encaissement serait faux.
   if (openingAmount > 0) {
     await db.insert(cashMovements).values({
+      storeId: input.storeId,
       type: 'income',
       amount: openingAmount,
       paymentMethod: 'Espèces',
@@ -113,11 +130,6 @@ export async function openSession(input: {
     });
   }
 
-  await enqueueSyncWrite('cash_sessions', inserted[0]?.syncId, 'insert', {
-    status: 'open',
-    opening_amount: openingAmount,
-  });
-
   const session = await getSessionById(inserted[0].id);
   if (!session) throw new Error('Session créée mais introuvable');
   return session;
@@ -128,15 +140,15 @@ export async function getSessionById(id: number): Promise<CashSessionRow | null>
   return row[0] ? mapSession(row[0]) : null;
 }
 
-/** Solde théorique d'une session : `balance_after` du dernier mouvement. */
+/** Solde théorique d'une session : somme algébrique de ses mouvements. */
 export async function getSessionTheoreticalAmount(sessionId: number): Promise<number> {
-  const row = await rawGet<{ balance_after: number }>(
-    `SELECT balance_after FROM cash_movements
-     WHERE session_id = ?
-     ORDER BY id DESC LIMIT 1`,
+  const row = await rawGet<{ balance: number | null }>(
+    `SELECT SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END) AS balance
+       FROM cash_movements
+      WHERE session_id = ? AND deleted_at IS NULL`,
     [sessionId],
   );
-  return Number(row?.balance_after ?? 0);
+  return roundMoney(Number(row?.balance ?? 0));
 }
 
 /**
@@ -185,6 +197,8 @@ export type CashCountByMethod = {
  * l'historique, les rapports et les exports restent inchangés.
  */
 export async function closeSession(input: {
+  /** Magasin de l'utilisateur : la session doit lui appartenir. */
+  storeId: number;
   sessionId: number;
   /** Comptage par moyen (`{ Espèces: 23000000, 'Mobile Money': … }`). */
   countedByMethod?: Record<string, number> | null;
@@ -193,8 +207,9 @@ export async function closeSession(input: {
   userId?: number | null;
   notes?: string | null;
 }): Promise<CashSessionRow & { counts: CashCountByMethod[] }> {
+  return withTransaction(async () => {
   const session = await getSessionById(input.sessionId);
-  if (!session) throw new CashSessionError('Session de caisse introuvable');
+  if (!session || session.storeId !== input.storeId) throw new CashSessionError('Session de caisse introuvable');
   if (session.status === 'closed') throw new CashSessionError('Cette session est déjà clôturée');
 
   const theoreticals = await getSessionTheoreticalByMethod(input.sessionId);
@@ -249,14 +264,8 @@ export async function closeSession(input: {
   const updated = await getSessionById(input.sessionId);
   if (!updated) throw new Error('Session introuvable après clôture');
 
-  await enqueueSyncWrite('cash_sessions', null, 'update', {
-    status: 'closed',
-    theoretical_amount: theoretical,
-    counted_amount: counted,
-    difference,
-  });
-
   return { ...updated, counts };
+  });
 }
 
 /**
@@ -268,6 +277,8 @@ export async function closeSession(input: {
  * motif le signale explicitement dans l'historique.
  */
 export async function addCashMovement(input: {
+  /** Magasin dont la caisse est mouvementée — obligatoire. */
+  storeId: number;
   type: CashMovementType;
   amount: number;
   paymentMethod?: string;
@@ -283,12 +294,16 @@ export async function addCashMovement(input: {
   if (amount < 0) throw new CashSessionError('Le montant d’un mouvement de caisse doit être positif');
   if (amount === 0) throw new CashSessionError('Le montant d’un mouvement de caisse ne peut pas être nul');
 
+  if (!input.storeId) throw new CashSessionError('Magasin obligatoire pour un mouvement de caisse');
+
+  return withTransaction(async () => {
   let sessionId = input.sessionId ?? null;
 
   if (!sessionId) {
-    let session = await getOpenSession();
+    let session = await getOpenSession(input.storeId);
     if (!session) {
-      session = await openSession({
+      session = await openSessionInTx({
+        storeId: input.storeId,
         openingAmount: 0,
         userId: input.userId ?? null,
         notes: 'Session ouverte automatiquement par une opération de caisse',
@@ -297,18 +312,17 @@ export async function addCashMovement(input: {
     sessionId = session.id;
   }
 
-  const previous = await rawGet<{ balance_after: number }>(
-    `SELECT balance_after FROM cash_movements WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
-    [sessionId],
-  );
-
-  const previousBalance = Number(previous?.balance_after ?? 0);
+  // Solde = somme de la session (et non « dernier balance_after ») : des
+  // mouvements reçus par synchronisation peuvent avoir un identifiant local
+  // qui ne suit pas l'ordre chronologique.
+  const previousBalance = await getSessionTheoreticalAmount(sessionId);
   const balanceAfter =
     input.type === 'income' ? previousBalance + amount : previousBalance - amount;
 
   const inserted = await db
     .insert(cashMovements)
     .values({
+      storeId: input.storeId,
       type: input.type,
       amount,
       paymentMethod: input.paymentMethod || 'Espèces',
@@ -322,18 +336,14 @@ export async function addCashMovement(input: {
     })
     .returning({ id: cashMovements.id, syncId: cashMovements.syncId });
 
-  await enqueueSyncWrite('cash_movements', inserted[0]?.syncId, 'insert', {
-    type: input.type,
-    amount,
-    payment_method: input.paymentMethod || 'Espèces',
-    motif: input.motif,
-  });
-
   return { id: inserted[0].id, balanceAfter, sessionId };
+  });
 }
 
 export type CashMovementRow = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   type: CashMovementType;
   amount: number;
   paymentMethod: string;
@@ -349,6 +359,7 @@ export type CashMovementRow = {
 };
 
 export async function listCashMovements(options: {
+  scope: StoreScope;
   type?: CashMovementType;
   paymentMethod?: string;
   sessionId?: number;
@@ -357,12 +368,14 @@ export async function listCashMovements(options: {
   search?: string;
   page?: number;
   limit?: number;
-} = {}): Promise<{ data: CashMovementRow[]; total: number; page: number; limit: number; totalPages: number }> {
+}): Promise<{ data: CashMovementRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(200, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [
+    options.scope.length > 0 ? inArray(cashMovements.storeId, options.scope) : sql`0 = 1`,
+  ];
   if (options.type) conditions.push(eq(cashMovements.type, options.type));
   if (options.paymentMethod) conditions.push(eq(cashMovements.paymentMethod, options.paymentMethod));
   if (options.sessionId) conditions.push(eq(cashMovements.sessionId, options.sessionId));
@@ -378,7 +391,7 @@ export async function listCashMovements(options: {
     db.query.cashMovements.findMany({
       where,
       orderBy: [desc(cashMovements.date), desc(cashMovements.id)],
-      with: { user: { columns: { name: true } } },
+      with: { user: { columns: { name: true } }, store: { columns: { name: true } } },
       limit,
       offset,
     }),
@@ -390,6 +403,8 @@ export async function listCashMovements(options: {
   return {
     data: rows.map((m) => ({
       id: m.id,
+      storeId: m.storeId ?? null,
+      storeName: m.store?.name ?? null,
       type: m.type as CashMovementType,
       amount: Number(m.amount),
       paymentMethod: m.paymentMethod,
@@ -410,12 +425,20 @@ export async function listCashMovements(options: {
   };
 }
 
-/** Solde de caisse disponible : dernier `balance_after` connu, toutes sessions. */
-export async function getCashBalance(): Promise<number> {
-  const row = await rawGet<{ balance_after: number }>(
-    `SELECT balance_after FROM cash_movements ORDER BY id DESC LIMIT 1`,
+/**
+ * Solde de caisse disponible d'un ou plusieurs magasins : pour chaque magasin,
+ * le solde de sa session la plus récente (ouverte ou dernière clôturée).
+ */
+export async function getCashBalance(scope: StoreScope): Promise<number> {
+  const rows = await rawAll<{ balance: number | null }>(
+    `SELECT (SELECT SUM(CASE WHEN m.type = 'income' THEN m.amount ELSE -m.amount END)
+               FROM cash_movements m WHERE m.session_id = cs.id AND m.deleted_at IS NULL) AS balance
+       FROM cash_sessions cs
+      WHERE ${scopeSql('cs.store_id', scope)}
+        AND cs.id = (SELECT c2.id FROM cash_sessions c2 WHERE c2.store_id = cs.store_id
+                      ORDER BY c2.opened_at DESC, c2.id DESC LIMIT 1)`,
   );
-  return Number(row?.balance_after ?? 0);
+  return roundMoney(rows.reduce((sum, r) => sum + Number(r.balance ?? 0), 0));
 }
 
 /**
@@ -442,7 +465,7 @@ export async function getCashBalance(): Promise<number> {
  */
 export async function recalculateCashBalances(): Promise<{ movements: number }> {
   const rows = await rawAll<{ id: number; session_id: number | null; type: string; amount: number }>(
-    `SELECT id, session_id, type, amount FROM cash_movements ORDER BY id ASC`,
+    `SELECT id, session_id, type, amount FROM cash_movements ORDER BY session_id, created_at, id`,
   );
 
   let currentSession: number | null | undefined = undefined;
@@ -492,12 +515,12 @@ export type CashSummary = {
   movementsCount: number;
 };
 
-/** Dernière session clôturée : référence quand aucune session n'est ouverte. */
-export async function getLastClosedSession(): Promise<CashSessionRow | null> {
+/** Dernière session clôturée du magasin : référence quand aucune session n'est ouverte. */
+export async function getLastClosedSession(storeId: number): Promise<CashSessionRow | null> {
   const row = await db
     .select()
     .from(cashSessions)
-    .where(eq(cashSessions.status, 'closed'))
+    .where(and(eq(cashSessions.status, 'closed'), eq(cashSessions.storeId, storeId)))
     .orderBy(desc(cashSessions.id))
     .limit(1);
 
@@ -505,9 +528,13 @@ export async function getLastClosedSession(): Promise<CashSessionRow | null> {
 }
 
 /** Résumé de caisse sur une période, avec répartition Espèces / Mobile Money (§8). */
-export async function getCashSummary(options: { from?: string; to?: string } = {}): Promise<CashSummary> {
-  const session = await getOpenSession();
-  const balance = await getCashBalance();
+export async function getCashSummary(options: { scope: StoreScope; from?: string; to?: string }): Promise<CashSummary> {
+  const storeScope = options.scope;
+  // Une session n'a de sens que pour **un** magasin ; en consolidé, les totaux
+  // portent sur la période demandée (aujourd'hui par défaut).
+  const single = storeScope.length === 1 ? storeScope[0] : null;
+  const session = single ? await getOpenSession(single) : null;
+  const balance = await getCashBalance(storeScope);
 
   /*
    * Sur quoi portent les totaux ? La session ouverte si elle existe ; sinon la
@@ -517,10 +544,15 @@ export async function getCashSummary(options: { from?: string; to?: string } = {
   let scopeSessionId: number | null = null;
   let scopeClosedAt: Date | null = null;
 
-  const conditions: string[] = [];
+  const conditions: string[] = [scopeSql('store_id', storeScope), 'deleted_at IS NULL'];
   const args: (string | number)[] = [];
 
-  if (session) {
+  if (!single) {
+    const from = options.from ?? today();
+    const to = options.to ?? today();
+    conditions.push('date >= ? AND date <= ?');
+    args.push(from, to);
+  } else if (session) {
     scope = 'session';
     scopeSessionId = session.id;
     conditions.push('session_id = ?');
@@ -529,7 +561,7 @@ export async function getCashSummary(options: { from?: string; to?: string } = {
     conditions.push('date >= ? AND date <= ?');
     args.push(options.from, options.to);
   } else {
-    const lastClosed = await getLastClosedSession();
+    const lastClosed = await getLastClosedSession(single);
     if (lastClosed) {
       scope = 'lastClosed';
       scopeSessionId = lastClosed.id;
@@ -580,27 +612,31 @@ export async function getCashSummary(options: { from?: string; to?: string } = {
 }
 
 export type CashSessionHistoryRow = CashSessionRow & {
+  storeName: string | null;
   openedByName: string | null;
   closedByName: string | null;
   movementsCount: number;
 };
 
-export async function listCashSessions(options: { limit?: number } = {}): Promise<CashSessionHistoryRow[]> {
+export async function listCashSessions(options: { scope: StoreScope; limit?: number }): Promise<CashSessionHistoryRow[]> {
   const limit = Math.max(1, Math.min(200, options.limit ?? 30));
 
   const rows = await rawAll<any>(
     `SELECT s.*,
             (SELECT name FROM users WHERE id = s.opened_by) AS opened_by_name,
             (SELECT name FROM users WHERE id = s.closed_by) AS closed_by_name,
+            (SELECT name FROM stores WHERE id = s.store_id) AS store_name,
             (SELECT COUNT(*) FROM cash_movements WHERE session_id = s.id) AS movements_count
      FROM cash_sessions s
-     ORDER BY s.id DESC
+     WHERE ${scopeSql('s.store_id', options.scope)}
+     ORDER BY s.opened_at DESC, s.id DESC
      LIMIT ?`,
     [limit],
   );
 
   return rows.map((row) => ({
     ...mapSession(row),
+    storeName: row.store_name ?? null,
     openedByName: row.opened_by_name ?? null,
     closedByName: row.closed_by_name ?? null,
     movementsCount: Number(row.movements_count ?? 0),
@@ -613,4 +649,5 @@ export const CASH_REFERENCE_LABELS: Record<string, string> = {
   purchase: 'Achat',
   expense: 'Dépense',
   manual: 'Manuel',
+  service_job: 'Chantier',
 };

@@ -1,4 +1,5 @@
-import { fail, ok, requireAction } from '@/lib/api';
+import { NextRequest } from 'next/server';
+import { fail, ok, requireAction, scopeFromRequest } from '@/lib/api';
 import { getStockSummary } from '@/lib/stock';
 
 /**
@@ -10,10 +11,10 @@ import { getStockSummary } from '@/lib/stock';
  * Tout est **calculé à la lecture** depuis `products` (§6.5 règle 6) : aucun
  * total n'est stocké, donc aucune dérive possible.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    await requireAction('stock.view');
-    return ok(await getStockSummary());
+    const user = await requireAction('stock.view');
+    return ok(await getStockSummary(scopeFromRequest(user, request)));
   } catch (error) {
     return fail(error);
   }

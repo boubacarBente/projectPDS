@@ -933,6 +933,7 @@ export default function CaissePage() {
           session
             ? {
                 id: session.id,
+                storeId: session.storeId ?? null,
                 status: session.status,
                 openedAt: session.openedAt,
                 openedBy: session.openedBy,

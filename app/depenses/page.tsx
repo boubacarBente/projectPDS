@@ -246,6 +246,9 @@ export default function DepensesPage() {
           averageAmount: Number(payload.averageAmount ?? 0),
           byCategory: Array.isArray(payload.byCategory) ? payload.byCategory : [],
           byMonth: Array.isArray(payload.byMonth) ? payload.byMonth : [],
+          pendingCount: Number(payload.pendingCount ?? 0),
+          pendingAmount: Number(payload.pendingAmount ?? 0),
+          byStore: Array.isArray(payload.byStore) ? payload.byStore : [],
         });
       } catch (caught) {
         if (!active) return;

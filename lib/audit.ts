@@ -8,8 +8,8 @@
  */
 
 import { db } from '@/db';
-import { auditLogs } from '@/db/schema';
-import { desc, and, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
+import { auditLogs, stores } from '@/db/schema';
+import { desc, and, eq, gte, lte, sql, inArray, or, isNull, type SQL } from 'drizzle-orm';
 import {
   AUDIT_ACTION_LABELS,
   AUDIT_ENTITY_LABELS,
@@ -27,7 +27,10 @@ export { AUDIT_ACTION_LABELS, AUDIT_ENTITY_LABELS, auditActionLabel, auditEntity
 export type { AuditAction } from '@/lib/audit-labels';
 
 export type AuditInput = {
-  user?: { id: number; name: string } | null;
+  /** L'utilisateur de session porte aussi son magasin actif (`storeId`). */
+  user?: { id: number; name: string; storeId?: number | null } | null;
+  /** Magasin concerné ; par défaut le magasin actif de l'utilisateur. */
+  storeId?: number | null;
   action: AuditAction;
   entity: string;
   entityId?: number | null;
@@ -46,6 +49,7 @@ export async function writeAudit(input: AuditInput): Promise<void> {
     await db.insert(auditLogs).values({
       userId: input.user?.id ?? null,
       userName: input.user?.name ?? 'Système',
+      storeId: input.storeId !== undefined ? input.storeId : (input.user?.storeId ?? null),
       action: input.action,
       entity: input.entity,
       entityId: input.entityId ?? null,
@@ -58,6 +62,8 @@ export async function writeAudit(input: AuditInput): Promise<void> {
 
 export type AuditListEntry = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   userId: number | null;
   userName: string;
   action: string;
@@ -73,15 +79,17 @@ export async function listAuditLogs(options: {
   userId?: number;
   action?: string;
   entity?: string;
-  /**
-   * Restreint à **un** document précis. Utilisé par l'historique d'une fiche
-   * (lot de briqueterie, commande) : sans ce filtre, l'historique d'un lot
-   * mélangerait les modifications de tous les lots de la même entité.
-   */
+  /** Restreint à un document précis (historique d'une fiche). */
   entityId?: number;
   from?: string;
   to?: string;
   search?: string;
+  /**
+   * Magasins visibles. `includeCentral` ajoute les actions sans magasin
+   * (connexions, comptes, paramètres) — réservé à l'administration centrale.
+   */
+  storeIds?: number[];
+  includeCentral?: boolean;
 }): Promise<{ data: AuditListEntry[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(200, options.limit ?? 20));
@@ -99,19 +107,35 @@ export async function listAuditLogs(options: {
       sql`(${auditLogs.userName} LIKE ${`%${options.search}%`} OR ${auditLogs.entity} LIKE ${`%${options.search}%`} OR ${auditLogs.details} LIKE ${`%${options.search}%`})`,
     );
   }
+  if (options.storeIds) {
+    const ids = options.storeIds.filter((id) => Number.isInteger(id) && id > 0);
+    const storeCondition = ids.length > 0 ? inArray(auditLogs.storeId, ids) : sql`0 = 1`;
+    conditions.push(
+      options.includeCentral ? (or(storeCondition, isNull(auditLogs.storeId)) as SQL) : storeCondition,
+    );
+  }
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [rows, totalResult] = await Promise.all([
-    db.select().from(auditLogs).where(where).orderBy(desc(auditLogs.createdAt)).limit(limit).offset(offset),
+    db
+      .select({ log: auditLogs, storeName: stores.name })
+      .from(auditLogs)
+      .leftJoin(stores, eq(stores.id, auditLogs.storeId))
+      .where(where)
+      .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
+      .limit(limit)
+      .offset(offset),
     db.select({ count: sql<number>`count(*)` }).from(auditLogs).where(where),
   ]);
 
   const total = Number(totalResult[0]?.count ?? 0);
 
   return {
-    data: rows.map((r) => ({
+    data: rows.map(({ log: r, storeName }) => ({
       id: r.id,
+      storeId: r.storeId ?? null,
+      storeName: storeName ?? null,
       userId: r.userId,
       userName: r.userName,
       action: r.action,
@@ -126,4 +150,3 @@ export async function listAuditLogs(options: {
     totalPages: Math.ceil(total / limit) || 1,
   };
 }
-

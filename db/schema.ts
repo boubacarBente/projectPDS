@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, uniqueIndex, index, primaryKey } from 'drizzle-orm/sqlite-core';
 import { relations, sql } from 'drizzle-orm';
 
 /**
@@ -43,7 +43,7 @@ export const users = sqliteTable('users', {
   name: text('name').notNull(),
   username: text('username').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
-  /** admin | manager | seller | storekeeper | carpenter | brickmaker */
+  /** admin (administrateur général) | manager (gérant) | seller | storekeeper */
   role: text('role').notNull().default('seller'),
   phone: text('phone'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
@@ -57,6 +57,8 @@ export const auditLogs = sqliteTable('audit_logs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: integer('user_id').references(() => users.id),
   userName: text('user_name').notNull(),
+  /** Magasin concerné (null = action centrale). */
+  storeId: integer('store_id'),
   /** create | update | delete | cancel | login | logout | payment | stock_adjust | restore | backup | settings */
   action: text('action').notNull(),
   entity: text('entity').notNull(),
@@ -65,7 +67,11 @@ export const auditLogs = sqliteTable('audit_logs', {
   details: text('details'),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('audit_logs_created_idx').on(t.createdAt),
+  index('audit_logs_store_idx').on(t.storeId),
+  index('audit_logs_entity_idx').on(t.entity, t.entityId),
+]);
 
 /**
  * **Surcharges de permissions par utilisateur** (demande explicite du client).
@@ -103,6 +109,65 @@ export const userPermissions = sqliteTable(
     ...syncCols(),
   },
   (table) => [uniqueIndex('user_permissions_user_action_unique').on(table.userId, table.action)],
+);
+
+
+/* ------------------------------------------------------------------ *
+ * 1 bis. Magasins (cahier des charges multi-magasins §4, §5, §17)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Un établissement. `kind = 'headquarters'` désigne le siège : il porte les
+ * charges centrales et sert de point de pilotage, mais il fonctionne comme un
+ * magasin (caisse, dépenses, stock éventuel).
+ *
+ * Jamais de suppression physique d'un magasin ayant des opérations : on
+ * l'archive (`status = 'archived'`).
+ */
+export const stores = sqliteTable('stores', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** Code court, unique, en majuscules — entre dans les numéros de pièces (FAC-KAL1-…). */
+  code: text('code').notNull().unique(),
+  name: text('name').notNull(),
+  kind: text('kind', { enum: ['store', 'headquarters'] }).notNull().default('store'),
+  address: text('address'),
+  phone: text('phone'),
+  email: text('email'),
+  /** Gérant principal. */
+  managerUserId: integer('manager_user_id').references(() => users.id),
+  openingDate: text('opening_date'),
+  /** active | suspended (plus de nouvelle opération) | archived */
+  status: text('status', { enum: ['active', 'suspended', 'archived'] }).notNull().default('active'),
+  openingHours: text('opening_hours'),
+  /** Mentions affichées en pied de facture / reçu pour ce magasin. */
+  receiptFooter: text('receipt_footer'),
+  /** Paramètres locaux (JSON) : remplacent les paramètres globaux autorisés. */
+  settings: text('settings'),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+});
+
+/** Affectation explicite d'un utilisateur à un magasin (§5). */
+export const userStores = sqliteTable(
+  'user_stores',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    /** Gérant de ce magasin (délégation possible, tracée dans l'audit). */
+    isManager: integer('is_manager', { mode: 'boolean' }).notNull().default(false),
+    isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+    startsAt: text('starts_at'),
+    endsAt: text('ends_at'),
+    createdAt: createdAt(),
+    ...syncCols(),
+  },
+  (table) => [uniqueIndex('user_stores_user_store_unique').on(table.userId, table.storeId)],
 );
 
 /* ------------------------------------------------------------------ *
@@ -159,9 +224,10 @@ export const products = sqliteTable(
     /** Prix d'achat — base du calcul de marge (ex-`unit_price` de Gaz, renommé). */
     purchasePrice: real('purchase_price').notNull().default(0),
     salePrice: real('sale_price').notNull().default(0),
-    /** real : le m² et le kg exigent du décimal (Gaz utilisait integer). */
-    stock: real('stock').notNull().default(0),
+    /** Seuil d'alerte par défaut — chaque magasin peut le remplacer (`product_stocks.stock_min`). */
     stockMin: real('stock_min').notNull().default(0),
+    /** Code-barres éventuel (§7). */
+    barcode: text('barcode'),
     description: text('description'),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
     createdAt: createdAt(),
@@ -180,13 +246,47 @@ export const products = sqliteTable(
   ],
 );
 
+
+/**
+ * **Stock par magasin** (§7). Une ligne par couple magasin × produit.
+ *
+ * Invariant : `quantity` = somme algébrique des `stock_movements` du magasin
+ * pour ce produit. La synchronisation recalcule `quantity` depuis les
+ * mouvements après chaque réception de données : deux postes hors ligne ne
+ * peuvent donc jamais « perdre » une vente en écrasant le stock l'un de l'autre.
+ */
+export const productStocks = sqliteTable(
+  'product_stocks',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storeId: integer('store_id')
+      .notNull()
+      .references(() => stores.id),
+    productId: integer('product_id')
+      .notNull()
+      .references(() => products.id),
+    quantity: real('quantity').notNull().default(0),
+    /** Seuil d'alerte propre au magasin (null = celui du produit). */
+    stockMin: real('stock_min'),
+    /** Prix de vente local (null = prix du catalogue). */
+    salePrice: real('sale_price'),
+    createdAt: createdAt(),
+    ...syncCols(),
+  },
+  (table) => [
+    uniqueIndex('product_stocks_store_product_unique').on(table.storeId, table.productId),
+    index('product_stocks_product_idx').on(table.productId),
+  ],
+);
+
 /**
  * Journal unique du stock (§4).
- * Invariant : `products.stock` = somme algébrique des mouvements.
+ * Invariant : `product_stocks.quantity` = somme algébrique des mouvements du magasin.
  * `adjustment` stocke un **écart signé**, jamais une valeur absolue (§6.1).
  */
 export const stockMovements = sqliteTable('stock_movements', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   productId: integer('product_id')
     .notNull()
     .references(() => products.id),
@@ -196,13 +296,16 @@ export const stockMovements = sqliteTable('stock_movements', {
   motif: text('motif').notNull(),
   stockBefore: real('stock_before').notNull(),
   stockAfter: real('stock_after').notNull(),
-  /** sale | purchase | brick_production | furniture_order | service_job | inventory */
+  /** sale | purchase | service_job | inventory | transfer | adjustment */
   referenceType: text('reference_type'),
   referenceId: integer('reference_id'),
   userId: integer('user_id').references(() => users.id),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('stock_movements_store_product_idx').on(t.storeId, t.productId),
+  index('stock_movements_reference_idx').on(t.referenceType, t.referenceId),
+]);
 
 /* ------------------------------------------------------------------ *
  * 4. Ventes, achats, paiements
@@ -210,6 +313,7 @@ export const stockMovements = sqliteTable('stock_movements', {
 
 export const salesInvoices = sqliteTable('sales_invoices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   invoiceNumber: text('invoice_number').notNull().unique(),
   /** `null` = vente comptoir (§10.5) */
   customerId: integer('customer_id').references(() => customers.id),
@@ -234,16 +338,7 @@ export const salesInvoices = sqliteTable('sales_invoices', {
   paymentMethod: text('payment_method').notNull().default('Espèces'),
   /** draft | active | cancelled */
   status: text('status', { enum: ['draft', 'active', 'cancelled'] }).notNull().default('active'),
-  /**
-   * **Canal de vente** — un module, une liste (§20).
-   *
-   * `general` = commerce général (quincaillerie, décoration) : c'est ce que
-   * montre `/ventes`. `brick` = briqueterie : la vente est créée depuis
-   * `/ventes/nouvelle?canal=briqueterie`, elle gagne **toutes** les
-   * fonctionnalités existantes (stock, caisse, reçu, PDF, paiements) mais elle
-   * n'apparaît **jamais** dans `/ventes` — sa liste vit dans
-   * `/briqueterie/ventes`.
-   */
+  /** Canal de vente (conservé pour compatibilité ; `general` uniquement). */
   channel: text('channel', { enum: ['general', 'brick'] }).notNull().default('general'),
   cancelReason: text('cancel_reason'),
   cancelledBy: integer('cancelled_by').references(() => users.id),
@@ -251,7 +346,10 @@ export const salesInvoices = sqliteTable('sales_invoices', {
   notes: text('notes'),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('sales_invoices_store_date_idx').on(t.storeId, t.date),
+  index('sales_invoices_customer_idx').on(t.customerId),
+]);
 
 /**
  * Lignes de facture de vente.
@@ -272,10 +370,14 @@ export const salesInvoiceItems = sqliteTable('sales_invoice_items', {
   amount: real('amount').notNull(),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('sales_invoice_items_invoice_idx').on(t.invoiceId),
+  index('sales_invoice_items_product_idx').on(t.productId),
+]);
 
 export const purchaseInvoices = sqliteTable('purchase_invoices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   /** Notre numéro ACH-… */
   reference: text('reference').notNull().unique(),
   /** Numéro de facture du fournisseur */
@@ -296,7 +398,10 @@ export const purchaseInvoices = sqliteTable('purchase_invoices', {
   notes: text('notes'),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('purchase_invoices_store_date_idx').on(t.storeId, t.date),
+  index('purchase_invoices_supplier_idx').on(t.supplierId),
+]);
 
 export const purchaseInvoiceItems = sqliteTable('purchase_invoice_items', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -311,7 +416,9 @@ export const purchaseInvoiceItems = sqliteTable('purchase_invoice_items', {
   amount: real('amount').notNull(),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('purchase_invoice_items_invoice_idx').on(t.invoiceId),
+]);
 
 /**
  * Paiements polymorphes — un seul mécanisme d'acompte, de solde et de reçu
@@ -322,14 +429,9 @@ export const purchaseInvoiceItems = sqliteTable('purchase_invoice_items', {
  */
 export const payments = sqliteTable('payments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   receiptNumber: text('receipt_number').notNull().unique(),
-  /**
-   * sale | purchase | service_job | brick_order
-   *
-   * `brick_order` (acompte d'une commande de briques, §20) a été ajouté **sans
-   * migration** : en SQLite cette colonne est un `text` sans contrainte `CHECK`,
-   * la liste fermée n'existe que dans TypeScript.
-   */
+  /** sale | purchase | service_job (`brick_order` : historique de l'ancienne briqueterie) */
   type: text('type', { enum: ['sale', 'purchase', 'service_job', 'brick_order'] }).notNull(),
   referenceId: integer('reference_id').notNull(),
   amount: real('amount').notNull(),
@@ -344,7 +446,10 @@ export const payments = sqliteTable('payments', {
   userId: integer('user_id').references(() => users.id),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('payments_reference_idx').on(t.type, t.referenceId),
+  index('payments_store_date_idx').on(t.storeId, t.date),
+]);
 
 /* ------------------------------------------------------------------ *
  * 5. Caisse et dépenses
@@ -352,6 +457,7 @@ export const payments = sqliteTable('payments', {
 
 export const cashSessions = sqliteTable('cash_sessions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   /** open | closed — une seule session `open` à la fois */
   status: text('status', { enum: ['open', 'closed'] }).notNull().default('open'),
   openedAt: integer('opened_at', { mode: 'timestamp' })
@@ -368,10 +474,13 @@ export const cashSessions = sqliteTable('cash_sessions', {
   notes: text('notes'),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('cash_sessions_store_status_idx').on(t.storeId, t.status),
+]);
 
 export const cashMovements = sqliteTable('cash_movements', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   /** income | expense */
   type: text('type', { enum: ['income', 'expense'] }).notNull(),
   amount: real('amount').notNull(),
@@ -388,11 +497,15 @@ export const cashMovements = sqliteTable('cash_movements', {
   userId: integer('user_id').references(() => users.id),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('cash_movements_store_date_idx').on(t.storeId, t.date),
+  index('cash_movements_session_idx').on(t.sessionId),
+]);
 
 /** Une dépense sort de la caisse et n'affecte jamais le stock (§9, §14). */
 export const expenses = sqliteTable('expenses', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   /** Liste fermée issue de `settings.expense_categories` */
   category: text('category').notNull(),
   amount: real('amount').notNull(),
@@ -401,12 +514,20 @@ export const expenses = sqliteTable('expenses', {
   referenceType: text('reference_type'),
   referenceId: integer('reference_id'),
   beneficiary: text('beneficiary'),
+  /** approved (décaissée) | pending (en attente) | to_pay (approuvée, à décaisser) | rejected — §12 */
+  approvalStatus: text('approval_status', { enum: ['approved', 'pending', 'to_pay', 'rejected'] })
+    .notNull()
+    .default('approved'),
+  approvedBy: integer('approved_by').references(() => users.id),
+  approvedAt: integer('approved_at', { mode: 'timestamp' }),
   /** Date métier YYYY-MM-DD */
   date: text('date').notNull(),
   userId: integer('user_id').references(() => users.id),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('expenses_store_date_idx').on(t.storeId, t.date),
+]);
 
 /* ------------------------------------------------------------------ *
  * 6. Prestations et main-d'œuvre
@@ -436,6 +557,7 @@ export const workers = sqliteTable('workers', {
  */
 export const serviceJobs = sqliteTable('service_jobs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   reference: text('reference').notNull().unique(),
   customerId: integer('customer_id')
     .notNull()
@@ -472,7 +594,10 @@ export const serviceJobs = sqliteTable('service_jobs', {
   notes: text('notes'),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('service_jobs_store_idx').on(t.storeId),
+  index('service_jobs_customer_idx').on(t.customerId),
+]);
 
 export const serviceJobMaterials = sqliteTable('service_job_materials', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -487,7 +612,9 @@ export const serviceJobMaterials = sqliteTable('service_job_materials', {
   amount: real('amount').notNull().default(0),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('service_job_materials_job_idx').on(t.jobId),
+]);
 
 export const serviceJobWorkers = sqliteTable('service_job_workers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -503,272 +630,135 @@ export const serviceJobWorkers = sqliteTable('service_job_workers', {
   amount: real('amount').notNull().default(0),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('service_job_workers_job_idx').on(t.jobId),
+]);
+
 
 /* ------------------------------------------------------------------ *
- * 7. Briqueterie (§17)
+ * 8. Transferts intermagasins et inventaires (§7, §8)
  * ------------------------------------------------------------------ */
 
-/** Le produit lié porte le stock et le prix de vente. */
-export const brickTypes = sqliteTable('brick_types', {
+export const TRANSFER_STATUSES = [
+  'draft',
+  'pending',
+  'approved',
+  'preparing',
+  'in_transit',
+  'partially_received',
+  'received',
+  'disputed',
+  'refused',
+  'cancelled',
+] as const;
+
+export const stockTransfers = sqliteTable('stock_transfers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  reference: text('reference').notNull().unique(),
+  sourceStoreId: integer('source_store_id')
+    .notNull()
+    .references(() => stores.id),
+  destinationStoreId: integer('destination_store_id')
+    .notNull()
+    .references(() => stores.id),
+  status: text('status', { enum: TRANSFER_STATUSES }).notNull().default('draft'),
+  reason: text('reason'),
+  requestedDate: text('requested_date'),
+  requestedBy: integer('requested_by').references(() => users.id),
+  approvedBy: integer('approved_by').references(() => users.id),
+  approvedAt: integer('approved_at', { mode: 'timestamp' }),
+  shippedBy: integer('shipped_by').references(() => users.id),
+  shippedAt: integer('shipped_at', { mode: 'timestamp' }),
+  receivedBy: integer('received_by').references(() => users.id),
+  receivedAt: integer('received_at', { mode: 'timestamp' }),
+  closedAt: integer('closed_at', { mode: 'timestamp' }),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('stock_transfers_source_idx').on(t.sourceStoreId, t.status),
+  index('stock_transfers_destination_idx').on(t.destinationStoreId, t.status),
+]);
+
+export const stockTransferItems = sqliteTable('stock_transfer_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  transferId: integer('transfer_id')
+    .notNull()
+    .references(() => stockTransfers.id, { onDelete: 'cascade' }),
   productId: integer('product_id')
     .notNull()
     .references(() => products.id),
-  name: text('name').notNull(),
-  /** solid | hollow | block */
-  shape: text('shape', { enum: ['solid', 'hollow', 'block'] }).notNull().default('solid'),
-  dimensions: text('dimensions'),
-  description: text('description'),
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-export const brickProductions = sqliteTable('brick_productions', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  batchNumber: text('batch_number').notNull().unique(),
-  brickTypeId: integer('brick_type_id')
-    .notNull()
-    .references(() => brickTypes.id),
-  plannedQuantity: real('planned_quantity').notNull().default(0),
-  producedQuantity: real('produced_quantity').notNull().default(0),
-  brokenQuantity: real('broken_quantity').notNull().default(0),
-  startDate: text('start_date'),
-  endDate: text('end_date'),
-  /** molding | drying | firing | stored */
-  stage: text('stage', { enum: ['molding', 'drying', 'firing', 'stored'] })
-    .notNull()
-    .default('molding'),
-  /**
-   * **Statut de la fiche de production** : `registered` (enregistrée),
-   * `finished` (terminée, c'est-à-dire mise en stock), `cancelled` (annulée).
-   *
-   * Il ne remplace pas le tombstone `deleted_at` (§6.7) : l'annulation pose
-   * **les deux** — `status = 'cancelled'` porte le motif lisible, `deleted_at`
-   * reste le marqueur de synchronisation que lisent déjà les listes.
-   */
-  status: text('status', { enum: ['registered', 'finished', 'cancelled'] })
-    .notNull()
-    .default('registered'),
-  /** Équipe ou responsable de production (texte libre : « Équipe A — Mamadou »). */
-  team: text('team'),
-  materialCost: real('material_cost').notNull().default(0),
-  laborCost: real('labor_cost').notNull().default(0),
-  /** Somme des **dépenses rattachées** (`expenses.reference_type = 'brick_production'`). */
-  expenseCost: real('expense_cost').notNull().default(0),
-  totalCost: real('total_cost').notNull().default(0),
-  cancelReason: text('cancel_reason'),
-  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
-  cancelledBy: integer('cancelled_by').references(() => users.id),
-  userId: integer('user_id').references(() => users.id),
-  notes: text('notes'),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-/** La table qui manquait au schéma client : sans elle, aucune matière première ne sort du stock. */
-export const brickProductionMaterials = sqliteTable('brick_production_materials', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  productionId: integer('production_id')
-    .notNull()
-    .references(() => brickProductions.id, { onDelete: 'cascade' }),
-  productId: integer('product_id').references(() => products.id),
-  productName: text('product_name').notNull(),
-  unit: text('unit').notNull().default('kg'),
-  quantity: real('quantity').notNull(),
-  unitCost: real('unit_cost').notNull().default(0),
-  amount: real('amount').notNull().default(0),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-export const brickProductionWorkers = sqliteTable('brick_production_workers', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  productionId: integer('production_id')
-    .notNull()
-    .references(() => brickProductions.id, { onDelete: 'cascade' }),
-  workerId: integer('worker_id').references(() => workers.id),
-  workerName: text('worker_name').notNull(),
-  role: text('role'),
-  days: real('days').notNull().default(0),
-  dailyRate: real('daily_rate').notNull().default(0),
-  amount: real('amount').notNull().default(0),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-/**
- * **Commande client de briques** (§20, « Commandes et ventes »).
- *
- * Une commande engage le client sur plusieurs produits ; elle suit son état
- * jusqu'à la livraison puis se transforme en **facture de vente** du canal
- * `brick` (`invoiceBrickOrder()`), qui est le document qui sort le stock et fait
- * entrer le chiffre d'affaires. L'acompte versé sur la commande est un
- * `payments` de type `brick_order` : à la facturation, il est **transféré** sur
- * la facture (même numéro de reçu, même mouvement de caisse) — l'argent n'est
- * donc jamais compté deux fois.
- */
-export const brickOrders = sqliteTable('brick_orders', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  orderNumber: text('order_number').notNull().unique(),
-  customerId: integer('customer_id').references(() => customers.id),
-  customerName: text('customer_name').notNull(),
-  userId: integer('user_id').references(() => users.id),
-  /** Date métier YYYY-MM-DD */
-  date: text('date').notNull(),
-  dueDate: text('due_date'),
-  deliveryDate: text('delivery_date'),
-  /** Livraison promise au client (délai promis, §18 repris pour la briqueterie). */
-  promisedDate: text('promised_date'),
-  subTotal: real('sub_total').notNull().default(0),
-  discount: real('discount').notNull().default(0),
-  total: real('total').notNull().default(0),
-  /** Toujours **recalculés** depuis `payments` (§6.5 règle 2), jamais incrémentés. */
-  amountPaid: real('amount_paid').notNull().default(0),
-  remainingAmount: real('remaining_amount').notNull().default(0),
-  paymentStatus: text('payment_status').notNull().default('unpaid'),
-  /** draft | confirmed | in_production | ready | partially_delivered | delivered | cancelled */
-  status: text('status', {
-    enum: [
-      'draft',
-      'confirmed',
-      'in_production',
-      'ready',
-      'partially_delivered',
-      'delivered',
-      'cancelled',
-    ],
-  })
-    .notNull()
-    .default('draft'),
-  /** Facture de vente née de la commande (canal `brick`) — `null` tant qu'aucune. */
-  salesInvoiceId: integer('sales_invoice_id'),
-  cancelReason: text('cancel_reason'),
-  cancelledBy: integer('cancelled_by').references(() => users.id),
-  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
-  notes: text('notes'),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-/** Lignes d'une commande : instantané du nom et de l'unité (§6.5 règle 5). */
-export const brickOrderItems = sqliteTable('brick_order_items', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  orderId: integer('order_id')
-    .notNull()
-    .references(() => brickOrders.id, { onDelete: 'cascade' }),
-  brickTypeId: integer('brick_type_id').references(() => brickTypes.id),
-  productId: integer('product_id').references(() => products.id),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('pièce'),
-  quantity: real('quantity').notNull(),
-  unitPrice: real('unit_price').notNull().default(0),
-  discount: real('discount').notNull().default(0),
-  amount: real('amount').notNull().default(0),
-  /** Quantité effectivement livrée (suivi « partiellement livrée »). */
-  deliveredQuantity: real('delivered_quantity').notNull().default(0),
+  quantityRequested: real('quantity_requested').notNull(),
+  quantityShipped: real('quantity_shipped').notNull().default(0),
+  quantityReceived: real('quantity_received').notNull().default(0),
+  /** Écart, dommage ou litige signalé à la réception. */
+  discrepancyNote: text('discrepancy_note'),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  index('stock_transfer_items_transfer_idx').on(t.transferId),
+]);
 
-/* ------------------------------------------------------------------ *
- * 8. Atelier de meubles (§18)
- * ------------------------------------------------------------------ */
-
-export const furnitureModels = sqliteTable('furniture_models', {
+/** Historique immuable d'un transfert : qui, quand, quel changement. */
+export const stockTransferEvents = sqliteTable('stock_transfer_events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  code: text('code').notNull().unique(),
-  name: text('name').notNull(),
-  description: text('description'),
-  standardDimensions: text('standard_dimensions'),
-  laborHours: real('labor_hours').notNull().default(0),
-  salePrice: real('sale_price').notNull().default(0),
-  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-/** Nomenclature (BOM) : base du calcul automatique des besoins en matières. */
-export const furnitureModelMaterials = sqliteTable('furniture_model_materials', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  modelId: integer('model_id')
+  transferId: integer('transfer_id')
     .notNull()
-    .references(() => furnitureModels.id, { onDelete: 'cascade' }),
+    .references(() => stockTransfers.id, { onDelete: 'cascade' }),
+  event: text('event').notNull(),
+  fromStatus: text('from_status'),
+  toStatus: text('to_status'),
+  storeId: integer('store_id').references(() => stores.id),
+  userId: integer('user_id').references(() => users.id),
+  userName: text('user_name'),
+  note: text('note'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('stock_transfer_events_transfer_idx').on(t.transferId),
+]);
+
+export const inventories = sqliteTable('inventories', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  reference: text('reference').notNull().unique(),
+  storeId: integer('store_id')
+    .notNull()
+    .references(() => stores.id),
+  /** open (comptage en cours) | validated (écarts appliqués) | cancelled */
+  status: text('status', { enum: ['open', 'validated', 'cancelled'] }).notNull().default('open'),
+  /** Catégorie inventoriée (null = tout le catalogue). */
+  categoryId: integer('category_id').references(() => categories.id),
+  openedBy: integer('opened_by').references(() => users.id),
+  validatedBy: integer('validated_by').references(() => users.id),
+  validatedAt: integer('validated_at', { mode: 'timestamp' }),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('inventories_store_idx').on(t.storeId, t.status),
+]);
+
+export const inventoryItems = sqliteTable('inventory_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  inventoryId: integer('inventory_id')
+    .notNull()
+    .references(() => inventories.id, { onDelete: 'cascade' }),
   productId: integer('product_id')
     .notNull()
     .references(() => products.id),
-  quantity: real('quantity').notNull().default(0),
-  unit: text('unit').notNull().default('pièce'),
-  notes: text('notes'),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-export const furnitureOrders = sqliteTable('furniture_orders', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  orderNumber: text('order_number').notNull().unique(),
-  customerId: integer('customer_id').references(() => customers.id),
-  customerName: text('customer_name'),
-  modelId: integer('model_id').references(() => furnitureModels.id),
-  modelName: text('model_name'),
-  isCustom: integer('is_custom', { mode: 'boolean' }).notNull().default(false),
-  dimensions: text('dimensions'),
-  finish: text('finish'),
-  quantity: real('quantity').notNull().default(1),
-  startDate: text('start_date'),
-  promisedDate: text('promised_date'),
-  deliveryDate: text('delivery_date'),
-  /** cutting | assembly | sanding | painting | finishing | delivered */
-  stage: text('stage', {
-    enum: ['cutting', 'assembly', 'sanding', 'painting', 'finishing', 'delivered'],
-  })
-    .notNull()
-    .default('cutting'),
-  materialCost: real('material_cost').notNull().default(0),
-  laborCost: real('labor_cost').notNull().default(0),
-  totalCost: real('total_cost').notNull().default(0),
-  agreedPrice: real('agreed_price').notNull().default(0),
-  amountPaid: real('amount_paid').notNull().default(0),
-  /** Meuble fini → entrée en stock à la livraison */
-  productId: integer('product_id').references(() => products.id),
-  userId: integer('user_id').references(() => users.id),
-  notes: text('notes'),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
-
-export const furnitureOrderMaterials = sqliteTable('furniture_order_materials', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  orderId: integer('order_id')
-    .notNull()
-    .references(() => furnitureOrders.id, { onDelete: 'cascade' }),
-  productId: integer('product_id').references(() => products.id),
   productName: text('product_name').notNull(),
   unit: text('unit').notNull().default('pièce'),
-  quantity: real('quantity').notNull(),
-  /** Chutes de bois et pertes de matière (§18) */
-  wastageQuantity: real('wastage_quantity').notNull().default(0),
-  unitCost: real('unit_cost').notNull().default(0),
-  amount: real('amount').notNull().default(0),
+  /** Stock théorique au moment du comptage. */
+  expectedQuantity: real('expected_quantity').notNull().default(0),
+  countedQuantity: real('counted_quantity'),
+  justification: text('justification'),
   createdAt: createdAt(),
   ...syncCols(),
-});
-
-export const furnitureOrderWorkers = sqliteTable('furniture_order_workers', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  orderId: integer('order_id')
-    .notNull()
-    .references(() => furnitureOrders.id, { onDelete: 'cascade' }),
-  workerId: integer('worker_id').references(() => workers.id),
-  workerName: text('worker_name').notNull(),
-  role: text('role'),
-  days: real('days').notNull().default(0),
-  dailyRate: real('daily_rate').notNull().default(0),
-  amount: real('amount').notNull().default(0),
-  createdAt: createdAt(),
-  ...syncCols(),
-});
+}, (t) => [
+  index('inventory_items_inventory_idx').on(t.inventoryId),
+]);
 
 /* ------------------------------------------------------------------ *
  * 9. Rapports et paramètres
@@ -776,6 +766,7 @@ export const furnitureOrderWorkers = sqliteTable('furniture_order_workers', {
 
 export const reportDeliveries = sqliteTable('report_deliveries', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   /** day | week | month */
   period: text('period', { enum: ['day', 'week', 'month'] }).notNull().default('day'),
   fromDate: text('from_date').notNull(),
@@ -842,18 +833,55 @@ export const syncState = sqliteTable('sync_state', {
     .$defaultFn(() => new Date()),
 });
 
-/** File d'envoi : une entrée par écriture d'une table synchronisée. */
-export const syncOutbox = sqliteTable('sync_outbox', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  tableName: text('table_name').notNull(),
-  syncId: text('sync_id').notNull(),
-  /** insert | update | delete */
-  operation: text('operation', { enum: ['insert', 'update', 'delete'] }).notNull(),
-  payload: text('payload').notNull(),
-  attempts: integer('attempts').notNull().default(0),
-  lastAttemptAt: integer('last_attempt_at', { mode: 'timestamp' }),
-  lastError: text('last_error'),
+/**
+ * **Journal des changements à envoyer** (alimenté par des triggers SQLite,
+ * voir `lib/sync-triggers.ts`) : une ligne par enregistrement modifié depuis
+ * le dernier envoi. Les triggers garantissent qu'aucune écriture — Drizzle ou
+ * SQL brut — n'échappe à la synchronisation.
+ */
+export const syncChanges = sqliteTable(
+  'sync_changes',
+  {
+    tableName: text('table_name').notNull(),
+    syncId: text('sync_id').notNull(),
+    deleted: integer('deleted', { mode: 'boolean' }).notNull().default(false),
+    /** Compteur monotone : permet d'acquitter un envoi sans perdre une modification survenue pendant. */
+    changeSeq: integer('change_seq').notNull().default(0),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+  },
+  (table) => [primaryKey({ columns: [table.tableName, table.syncId] })],
+);
+
+/**
+ * Sessions de connexion (§5, §19.3) — locales au poste, jamais synchronisées.
+ * Le cookie ne contient qu'un jeton aléatoire ; seul son SHA-256 est stocké.
+ */
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id')
+    .notNull()
+    .references(() => users.id),
+  /** Magasin actif choisi après connexion (vérifié à chaque requête). */
+  storeId: integer('store_id'),
   createdAt: createdAt(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+});
+
+/** Compteurs de numérotation, locaux au poste (jamais synchronisés). */
+export const docSequences = sqliteTable('doc_sequences', {
+  key: text('key').primaryKey(),
+  value: integer('value').notNull().default(0),
+});
+
+/** Tentatives de connexion échouées (protection contre les essais répétés). */
+export const loginAttempts = sqliteTable('login_attempts', {
+  username: text('username').primaryKey(),
+  failures: integer('failures').notNull().default(0),
+  lockedUntil: integer('locked_until', { mode: 'timestamp' }),
+  lastFailureAt: integer('last_failure_at', { mode: 'timestamp' }),
 });
 
 /** Lignes reçues en quarantaine (référence parente manquante, §23.4). */
@@ -915,7 +943,6 @@ export const stockMovementRelations = relations(stockMovements, ({ one }) => ({
 export const customerRelations = relations(customers, ({ many }) => ({
   salesInvoices: many(salesInvoices),
   serviceJobs: many(serviceJobs),
-  furnitureOrders: many(furnitureOrders),
 }));
 
 export const supplierRelations = relations(suppliers, ({ many }) => ({
@@ -973,6 +1000,10 @@ export const cashSessionRelations = relations(cashSessions, ({ many }) => ({
 }));
 
 export const cashMovementRelations = relations(cashMovements, ({ one }) => ({
+  store: one(stores, {
+    fields: [cashMovements.storeId],
+    references: [stores.id],
+  }),
   session: one(cashSessions, {
     fields: [cashMovements.sessionId],
     references: [cashSessions.id],
@@ -1016,134 +1047,6 @@ export const serviceJobWorkerRelations = relations(serviceJobWorkers, ({ one }) 
 
 export const workerRelations = relations(workers, ({ many }) => ({
   jobAssignments: many(serviceJobWorkers),
-  brickAssignments: many(brickProductionWorkers),
-  furnitureAssignments: many(furnitureOrderWorkers),
-}));
-
-export const brickTypeRelations = relations(brickTypes, ({ one, many }) => ({
-  product: one(products, {
-    fields: [brickTypes.productId],
-    references: [products.id],
-  }),
-  productions: many(brickProductions),
-}));
-
-export const brickProductionRelations = relations(brickProductions, ({ one, many }) => ({
-  brickType: one(brickTypes, {
-    fields: [brickProductions.brickTypeId],
-    references: [brickTypes.id],
-  }),
-  materials: many(brickProductionMaterials),
-  workers: many(brickProductionWorkers),
-}));
-
-export const brickProductionMaterialRelations = relations(
-  brickProductionMaterials,
-  ({ one }) => ({
-    production: one(brickProductions, {
-      fields: [brickProductionMaterials.productionId],
-      references: [brickProductions.id],
-    }),
-    product: one(products, {
-      fields: [brickProductionMaterials.productId],
-      references: [products.id],
-    }),
-  }),
-);
-
-export const brickProductionWorkerRelations = relations(brickProductionWorkers, ({ one }) => ({
-  production: one(brickProductions, {
-    fields: [brickProductionWorkers.productionId],
-    references: [brickProductions.id],
-  }),
-  worker: one(workers, {
-    fields: [brickProductionWorkers.workerId],
-    references: [workers.id],
-  }),
-}));
-
-export const brickOrderRelations = relations(brickOrders, ({ one, many }) => ({
-  customer: one(customers, {
-    fields: [brickOrders.customerId],
-    references: [customers.id],
-  }),
-  items: many(brickOrderItems),
-}));
-
-export const brickOrderItemRelations = relations(brickOrderItems, ({ one }) => ({
-  order: one(brickOrders, {
-    fields: [brickOrderItems.orderId],
-    references: [brickOrders.id],
-  }),
-  brickType: one(brickTypes, {
-    fields: [brickOrderItems.brickTypeId],
-    references: [brickTypes.id],
-  }),
-  product: one(products, {
-    fields: [brickOrderItems.productId],
-    references: [products.id],
-  }),
-}));
-
-export const furnitureModelRelations = relations(furnitureModels, ({ many }) => ({
-  materials: many(furnitureModelMaterials),
-  orders: many(furnitureOrders),
-}));
-
-export const furnitureModelMaterialRelations = relations(
-  furnitureModelMaterials,
-  ({ one }) => ({
-    model: one(furnitureModels, {
-      fields: [furnitureModelMaterials.modelId],
-      references: [furnitureModels.id],
-    }),
-    product: one(products, {
-      fields: [furnitureModelMaterials.productId],
-      references: [products.id],
-    }),
-  }),
-);
-
-export const furnitureOrderRelations = relations(furnitureOrders, ({ one, many }) => ({
-  customer: one(customers, {
-    fields: [furnitureOrders.customerId],
-    references: [customers.id],
-  }),
-  model: one(furnitureModels, {
-    fields: [furnitureOrders.modelId],
-    references: [furnitureModels.id],
-  }),
-  product: one(products, {
-    fields: [furnitureOrders.productId],
-    references: [products.id],
-  }),
-  materials: many(furnitureOrderMaterials),
-  workers: many(furnitureOrderWorkers),
-}));
-
-export const furnitureOrderMaterialRelations = relations(
-  furnitureOrderMaterials,
-  ({ one }) => ({
-    order: one(furnitureOrders, {
-      fields: [furnitureOrderMaterials.orderId],
-      references: [furnitureOrders.id],
-    }),
-    product: one(products, {
-      fields: [furnitureOrderMaterials.productId],
-      references: [products.id],
-    }),
-  }),
-);
-
-export const furnitureOrderWorkerRelations = relations(furnitureOrderWorkers, ({ one }) => ({
-  order: one(furnitureOrders, {
-    fields: [furnitureOrderWorkers.orderId],
-    references: [furnitureOrders.id],
-  }),
-  worker: one(workers, {
-    fields: [furnitureOrderWorkers.workerId],
-    references: [workers.id],
-  }),
 }));
 
 export const auditLogRelations = relations(auditLogs, ({ one }) => ({
@@ -1195,30 +1098,20 @@ export type ServiceJobMaterial = typeof serviceJobMaterials.$inferSelect;
 export type NewServiceJobMaterial = typeof serviceJobMaterials.$inferInsert;
 export type ServiceJobWorker = typeof serviceJobWorkers.$inferSelect;
 export type NewServiceJobWorker = typeof serviceJobWorkers.$inferInsert;
-export type BrickType = typeof brickTypes.$inferSelect;
-export type NewBrickType = typeof brickTypes.$inferInsert;
-export type BrickProduction = typeof brickProductions.$inferSelect;
-export type NewBrickProduction = typeof brickProductions.$inferInsert;
-export type BrickProductionMaterial = typeof brickProductionMaterials.$inferSelect;
-export type NewBrickProductionMaterial = typeof brickProductionMaterials.$inferInsert;
-export type BrickProductionWorker = typeof brickProductionWorkers.$inferSelect;
-export type NewBrickProductionWorker = typeof brickProductionWorkers.$inferInsert;
-export type FurnitureModel = typeof furnitureModels.$inferSelect;
-export type NewFurnitureModel = typeof furnitureModels.$inferInsert;
-export type FurnitureModelMaterial = typeof furnitureModelMaterials.$inferSelect;
-export type NewFurnitureModelMaterial = typeof furnitureModelMaterials.$inferInsert;
-export type FurnitureOrder = typeof furnitureOrders.$inferSelect;
-export type NewFurnitureOrder = typeof furnitureOrders.$inferInsert;
-export type FurnitureOrderMaterial = typeof furnitureOrderMaterials.$inferSelect;
-export type NewFurnitureOrderMaterial = typeof furnitureOrderMaterials.$inferInsert;
-export type FurnitureOrderWorker = typeof furnitureOrderWorkers.$inferSelect;
-export type NewFurnitureOrderWorker = typeof furnitureOrderWorkers.$inferInsert;
 export type ReportDelivery = typeof reportDeliveries.$inferSelect;
 export type NewReportDelivery = typeof reportDeliveries.$inferInsert;
 export type Setting = typeof settings.$inferSelect;
 export type NewSetting = typeof settings.$inferInsert;
 export type Device = typeof devices.$inferSelect;
 export type SyncStateRow = typeof syncState.$inferSelect;
-export type SyncOutboxRow = typeof syncOutbox.$inferSelect;
+export type SyncChangeRow = typeof syncChanges.$inferSelect;
+export type Store = typeof stores.$inferSelect;
+export type UserStore = typeof userStores.$inferSelect;
+export type ProductStock = typeof productStocks.$inferSelect;
+export type StockTransfer = typeof stockTransfers.$inferSelect;
+export type StockTransferItem = typeof stockTransferItems.$inferSelect;
+export type Inventory = typeof inventories.$inferSelect;
+export type InventoryItem = typeof inventoryItems.$inferSelect;
+export type Session = typeof sessions.$inferSelect;
 export type SyncPendingRow = typeof syncPending.$inferSelect;
 export type SyncConflictRow = typeof syncConflicts.$inferSelect;

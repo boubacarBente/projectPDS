@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, readJson, required, toBool, toNumber, requireAction } from '@/lib/api';
+import { fail, ok, parsePagination, readJson, required, toBool, toNumber, requireAction, scopeFromRequest } from '@/lib/api';
 import { createCustomer, listCustomers } from '@/lib/customers';
 import { writeAudit } from '@/lib/audit';
 import { parseListSort } from '@/lib/list-sort';
@@ -7,12 +7,13 @@ import { parseListSort } from '@/lib/list-sort';
 /** GET /api/clients — liste paginée, filtrable, avec soldes calculés. */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('customers.view');
+    const user = await requireAction('customers.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
 
     const result = await listCustomers({
+      scope: scopeFromRequest(user, request),
       search: params.get('search') ?? undefined,
       page,
       limit,

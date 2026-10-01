@@ -162,7 +162,7 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
         {/*
          * Le défilement horizontal appartient au **tableau**, pas à la page.
          *
-         * Un tableau de 9 à 10 colonnes (stocks, modèles d'atelier, achats…)
+         * Un tableau de 9 à 10 colonnes (stocks, achats…)
          * est plus large que l'écran : sans ce conteneur, il imposait sa largeur
          * à `main` et faisait déborder toute la page (barre horizontale en bas,
          * contenu coupé). Ici, seule la carte du tableau défile : le cadre, les

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, requireAction, toInt } from '@/lib/api';
+import { fail, ok, parsePagination, requireAction, scopeFromRequest, toInt } from '@/lib/api';
 import { listAuditLogs } from '@/lib/audit';
 
 /**
@@ -18,7 +18,7 @@ import { listAuditLogs } from '@/lib/audit';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('audit.view');
+    const user = await requireAction('audit.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -28,6 +28,10 @@ export async function GET(request: NextRequest) {
     const to = params.get('to') ?? '';
 
     const result = await listAuditLogs({
+      // `?store=all|<id>` ; les actions centrales (sans magasin) ne sont visibles
+      // que d'un compte multi-magasins.
+      storeIds: scopeFromRequest(user, request),
+      includeCentral: user.allStores,
       page,
       limit,
       userId: userId > 0 ? userId : undefined,

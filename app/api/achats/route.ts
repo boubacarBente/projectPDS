@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, readJson, requireAction, toInt } from '@/lib/api';
+import { fail, ok, parsePagination, readJson, requireAction, requireActiveStore, scopeFromRequest, toInt } from '@/lib/api';
 import { createPurchaseInvoice, listPurchaseInvoices, parsePurchaseInput } from '@/lib/purchases';
 
 /**
@@ -15,7 +15,7 @@ import { createPurchaseInvoice, listPurchaseInvoices, parsePurchaseInput } from 
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('purchases.view');
+    const user = await requireAction('purchases.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
     const supplierId = params.get('supplierId');
 
     const result = await listPurchaseInvoices({
+      scope: scopeFromRequest(user, request),
       search: params.get('search') ?? undefined,
       supplierId: supplierId ? toInt(supplierId, 0) || undefined : undefined,
       from: params.get('from') ?? undefined,
@@ -54,7 +55,8 @@ export async function POST(request: NextRequest) {
     const user = await requireAction('purchases.create');
     const body = await readJson<any>(request);
 
-    const invoice = await createPurchaseInvoice({ ...parsePurchaseInput(body), userId: user.id });
+    const storeId = await requireActiveStore(user);
+    const invoice = await createPurchaseInvoice({ ...parsePurchaseInput(body), userId: user.id, storeId });
 
     return ok({ invoice }, 201);
   } catch (error) {

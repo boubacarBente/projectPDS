@@ -50,7 +50,7 @@ export function proxy(request: NextRequest) {
   // Fichiers de `public/` : servis sans jeton, AVANT tout contrôle.
   // Voir PUBLIC_ASSET_PATTERN pour le pourquoi (réinjection interne de
   // l'optimiseur d'images, qui ne peut pas porter l'en-tête).
-  if (PUBLIC_ASSET_PATTERN.test(pathname)) {
+  if (PUBLIC_ASSET_PATTERN.test(pathname) && !pathname.startsWith('/api/') && !pathname.startsWith('/_next/')) {
     return NextResponse.next();
   }
 
@@ -81,18 +81,21 @@ export function proxy(request: NextRequest) {
     }
   }
 
-  // API routes : vérifier le cookie de session
+  // Premier filtre seulement : la présence du jeton. La session elle-même est
+  // **vérifiée en base** par chaque route (`requireUser`) — un cookie inventé
+  // n'ouvre donc rien.
+  const sessionToken = request.cookies.get('pd_session');
+
+  // API routes
   if (pathname.startsWith('/api/')) {
-    const sessionUser = request.cookies.get('session_user');
-    if (!sessionUser?.value) {
+    if (!sessionToken?.value) {
       return NextResponse.json({ error: 'Non authentifié' }, { status: 401 });
     }
     return NextResponse.next();
   }
 
-  // Pages : vérifier le cookie de session
-  const sessionUser = request.cookies.get('session_user');
-  if (!sessionUser?.value) {
+  // Pages
+  if (!sessionToken?.value) {
     const loginUrl = new URL('/login', request.url);
     return NextResponse.redirect(loginUrl);
   }

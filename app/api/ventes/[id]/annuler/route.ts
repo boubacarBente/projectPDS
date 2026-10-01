@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction } from '@/lib/api';
+import { fail, ok, parseId, readJson, requireAction, requireActiveStore } from '@/lib/api';
 import { cancelSalesInvoice } from '@/lib/sales';
 
 type Params = { params: Promise<{ id: string }> };
@@ -21,6 +21,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     const user = await requireAction('sales.cancel');
     const { id } = await params;
     const invoiceId = parseId(id);
+    await requireActiveStore(user);
 
     let reason = request.nextUrl.searchParams.get('reason') ?? '';
     try {

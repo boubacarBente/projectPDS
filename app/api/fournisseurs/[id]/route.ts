@@ -7,6 +7,7 @@ import {
   toBool,
   requireAction,
   NotFoundError,
+  scopeFromRequest,
 } from '@/lib/api';
 import {
   deactivateSupplier,
@@ -20,12 +21,12 @@ import { writeAudit } from '@/lib/audit';
 type Params = { params: Promise<{ id: string }> };
 
 /** GET /api/fournisseurs/[id] — fiche + statistiques + derniers achats. */
-export async function GET(_request: NextRequest, { params }: Params) {
+export async function GET(request: NextRequest, { params }: Params) {
   try {
-    await requireAction('suppliers.view');
+    const user = await requireAction('suppliers.view');
     const { id } = await params;
 
-    const stats = await getSupplierStats(parseId(id));
+    const stats = await getSupplierStats(parseId(id), scopeFromRequest(user, request));
     if (!stats) throw new NotFoundError('Fournisseur introuvable');
 
     return ok(stats);

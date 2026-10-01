@@ -7,6 +7,8 @@ import {
   required,
   toNumber,
   requireAction,
+  requireActiveStore,
+  scopeFromRequest,
 } from '@/lib/api';
 import { createPayment, listPayments, type PaymentType } from '@/lib/payments';
 import { writeAudit } from '@/lib/audit';
@@ -14,13 +16,14 @@ import { writeAudit } from '@/lib/audit';
 /** GET /api/paiements — liste paginée, filtrable par type, document, client, période. */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('payments.view');
+    const user = await requireAction('payments.view');
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
 
     const type = params.get('type') as PaymentType | null;
 
     const result = await listPayments({
+      scope: scopeFromRequest(user, request),
       type: type ?? undefined,
       referenceId: params.get('referenceId') ? Number(params.get('referenceId')) : undefined,
       customerId: params.get('customerId') ? Number(params.get('customerId')) : undefined,
@@ -53,7 +56,9 @@ export async function POST(request: NextRequest) {
       return fail(new Error('Type de paiement invalide : attendu sale, purchase ou service_job'));
     }
 
+    const storeId = await requireActiveStore(user);
     const payment = await createPayment({
+      storeId,
       type,
       referenceId: toNumber(body.referenceId),
       amount: toNumber(body.amount),

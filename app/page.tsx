@@ -126,7 +126,7 @@ const PROFIT_CHIP_TOOLTIPS = {
     'Frais de fonctionnement de la période : transport, loyer, salaires administratifs, carburant, électricité… Une dépense annulée n’est plus comptée.',
 
   "Main-d'œuvre":
-    'Salaires et paiements de main-d’œuvre des chantiers, de la briqueterie et de l’atelier. Un chantier annulé ne laisse pas sa main-d’œuvre dans le calcul.',
+    'Salaires et paiements de main-d’œuvre des chantiers. Un chantier annulé ne laisse pas sa main-d’œuvre dans le calcul.',
 
   'Bénéfice net':
     'Marge brute − dépenses − main-d’œuvre. C’est ce que l’activité a réellement rapporté sur la période, et le même montant que sur la page Soldes.',

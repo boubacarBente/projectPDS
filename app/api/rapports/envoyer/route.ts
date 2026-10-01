@@ -6,6 +6,7 @@ import {
   ok,
   readJson,
   requireAction,
+  resolveScope,
 } from '@/lib/api';
 import { can } from '@/lib/permissions';
 import { resolvePeriod } from '@/lib/dashboard';
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
 
     /* ------------------- Restriction de période (vendeur) ------------------ */
     let forcedPeriod = false;
-    if (!can(user, 'reports.viewAll') && (from !== reference || to !== reference)) {
+    if (!can(user, 'reports.viewAll', user.permissions) && (from !== reference || to !== reference)) {
       from = reference;
       to = reference;
       forcedPeriod = true;
@@ -106,7 +107,11 @@ export async function POST(request: NextRequest) {
     /* ------------------------------ Envoi ---------------------------------- */
     const isTest = body.test === true;
 
+    // Portée : `body.store` = 'all' | id ; défaut = magasin actif.
+    const storeIds = resolveScope(user, (body as { store?: string | number }).store?.toString() ?? null);
+
     const result = await sendReport({
+      storeIds,
       period,
       from,
       to,

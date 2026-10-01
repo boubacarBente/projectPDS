@@ -10,7 +10,7 @@
 
 import { db } from '@/db';
 import { users } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { Role } from '@/lib/permissions';
 
@@ -77,7 +77,12 @@ export async function hasAdminUser(): Promise<boolean> {
 
 export async function getUserByUsername(username: string) {
   try {
-    const result = await db.select().from(users).where(eq(users.username, username)).limit(1);
+    // Insensible à la casse : « Admin » et « admin » désignent le même compte.
+    const result = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.username}) = lower(${username.trim()})`)
+      .limit(1);
     return result[0] ?? null;
   } catch (err: any) {
     if (/no such table/i.test(err?.message ?? '')) return null;

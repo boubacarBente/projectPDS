@@ -31,8 +31,9 @@ export type IconKey =
   | 'products'
   | 'stock'
   | 'jobs'
-  | 'bricks'
-  | 'workshop'
+  | 'stores'
+  | 'transfers'
+  | 'inventory'
   | 'cash'
   | 'receipts'
   | 'expenses'
@@ -63,14 +64,14 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { href: '/produits', label: 'Produits', iconKey: 'products', action: 'products.view' },
       { href: '/stocks', label: 'Stocks', iconKey: 'stock', action: 'stock.view' },
+      { href: '/transferts', label: 'Transferts', iconKey: 'transfers', action: 'transfers.view' },
+      { href: '/inventaires', label: 'Inventaires', iconKey: 'inventory', action: 'inventory.view' },
     ],
   },
   {
     title: 'Production',
     items: [
       { href: '/chantiers', label: 'Chantiers', iconKey: 'jobs', action: 'jobs.view' },
-      { href: '/briqueterie', label: 'Briqueterie', iconKey: 'bricks', action: 'brick.view' },
-      { href: '/atelier', label: 'Atelier', iconKey: 'workshop', action: 'furniture.view' },
     ],
   },
   {
@@ -84,6 +85,7 @@ export const NAVIGATION: NavGroup[] = [
   {
     title: 'Administration',
     items: [
+      { href: '/magasins', label: 'Magasins', iconKey: 'stores', action: 'stores.view' },
       { href: '/utilisateurs', label: 'Utilisateurs', iconKey: 'users', action: 'users.manage' },
       { href: '/parametres', label: 'Paramètres', iconKey: 'settings', action: 'settings.view' },
       { href: '/synchronisation', label: 'Synchronisation', iconKey: 'sync', action: 'sync.manage' },

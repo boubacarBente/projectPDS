@@ -5,6 +5,7 @@ import {
   parseId,
   readJson,
   requireAction,
+  requireCentralEdit,
   toBool,
   NotFoundError,
 } from '@/lib/api';
@@ -37,6 +38,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('products.update');
+    await requireCentralEdit();
     const { id } = await params;
     const categoryId = parseId(id);
     const body = await readJson<any>(request);
@@ -74,6 +76,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('products.delete');
+    await requireCentralEdit();
     const { id } = await params;
     const categoryId = parseId(id);
 

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, requireAction } from '@/lib/api';
+import { fail, ok, parsePagination, requireAction, scopeFromRequest } from '@/lib/api';
 import { listStockMovements, type StockMovementType } from '@/lib/stock';
 
 /** Les trois seuls types de mouvement du journal (§12) — jamais de `loss`. */
@@ -25,7 +25,7 @@ function bound(value: string | null): string | undefined {
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('stock.view');
+    const user = await requireAction('stock.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
       : undefined;
 
     const result = await listStockMovements({
+      scope: scopeFromRequest(user, request),
       productId: Number.isInteger(productId) && productId > 0 ? productId : undefined,
       type,
       from: bound(params.get('from')),

@@ -132,6 +132,8 @@ export function normalizeInvoiceRow(raw: unknown): SalesInvoiceRow {
 
   return {
     id: num(row.id),
+    storeId: row.storeId == null && row.store_id == null ? null : num(row.storeId ?? row.store_id),
+    storeName: (row.storeName ?? row.store_name ?? null) as string | null,
     invoiceNumber: String(row.invoiceNumber ?? row.invoice_number ?? '—'),
     customerId: row.customerId == null && row.customer_id == null ? null : num(row.customerId ?? row.customer_id),
     customerName: String(row.customerName ?? row.customer_name ?? 'Client comptoir'),
@@ -150,8 +152,7 @@ export function normalizeInvoiceRow(raw: unknown): SalesInvoiceRow {
     paymentStatus: String(row.paymentStatus ?? row.payment_status ?? 'unpaid'),
     paymentMethod: String(row.paymentMethod ?? row.payment_method ?? 'Espèces'),
     status: toInvoiceStatus(row.status),
-    // Canal : une valeur inconnue retombe sur `general` (commerce général).
-    channel: row.channel === 'brick' ? 'brick' : 'general',
+    channel: 'general',
     cancelReason: (row.cancelReason ?? row.cancel_reason ?? null) as string | null,
     notes: (row.notes ?? null) as string | null,
     itemCount: num(row.itemCount ?? row.item_count),

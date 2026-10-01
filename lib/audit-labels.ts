@@ -25,7 +25,11 @@ export type AuditAction =
   | 'backup'
   | 'settings'
   | 'reset'
-  | 'seed';
+  | 'seed'
+  | 'approve'
+  | 'reject'
+  | 'export'
+  | 'sync';
 
 export const AUDIT_ACTION_LABELS: Record<string, string> = {
   create: 'Création',
@@ -42,6 +46,10 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   settings: 'Paramètres',
   reset: 'Réinitialisation',
   seed: 'Préremplissage',
+  approve: 'Approbation',
+  reject: 'Rejet',
+  export: 'Export',
+  sync: 'Synchronisation',
 };
 
 export const AUDIT_ENTITY_LABELS: Record<string, string> = {
@@ -60,12 +68,18 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   user_permissions: 'Permissions utilisateur',
   settings: 'Paramètres',
   service_job: 'Chantier',
-  brick_production: 'Fabrication de briques',
-  brick_type: 'Type de brique',
-  brick_order: 'Commande de briques',
-  briqueterie: 'Briqueterie (données de démonstration)',
-  furniture_order: 'Commande de meuble',
-  furniture_model: 'Modèle de meuble',
+  brick_production: 'Fabrication de briques (archive)',
+  brick_type: 'Type de brique (archive)',
+  brick_order: 'Commande de briques (archive)',
+  furniture_order: 'Commande de meuble (archive)',
+  furniture_model: 'Modèle de meuble (archive)',
+  store: 'Magasin',
+  user_stores: 'Affectations aux magasins',
+  session_store: 'Changement de magasin actif',
+  stock_transfer: 'Transfert intermagasins',
+  inventory: 'Inventaire',
+  device: 'Poste',
+  report: 'Rapport',
   worker: 'Ouvrier',
   report_deliveries: 'Rapport envoyé',
   sync: 'Synchronisation',

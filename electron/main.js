@@ -266,7 +266,12 @@ async function createWindow(url) {
   }
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F12') mainWindow.webContents.toggleDevTools();
+    // Outils de développement : uniquement hors installation (ou DEBUG=1).
+    // Dans la version installée, F12 ne doit pas ouvrir une console permettant
+    // de manipuler la page (correctif de sécurité).
+    if (input.key === 'F12' && (!app.isPackaged || process.env.DEBUG)) {
+      mainWindow.webContents.toggleDevTools();
+    }
     if ((input.control && input.key.toLowerCase() === 'r') || input.key === 'F5') {
       mainWindow.webContents.reload();
     }
@@ -290,9 +295,23 @@ async function createWindow(url) {
     );
   });
 
+  if (app.isPackaged && !process.env.DEBUG) {
+    mainWindow.webContents.on('devtools-opened', () => mainWindow.webContents.closeDevTools());
+  }
+
+  // Liens externes : seuls http(s), mailto, tel, sms et WhatsApp sont ouverts
+  // dans le navigateur du système ; tout autre protocole est refusé.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    shell.openExternal(target);
+    if (/^(https?:|mailto:|tel:|sms:|whatsapp:)/i.test(target)) shell.openExternal(target);
     return { action: 'deny' };
+  });
+
+  // La fenêtre ne quitte jamais l'application locale.
+  mainWindow.webContents.on('will-navigate', (event, target) => {
+    if (!target.startsWith(`http://127.0.0.1:${serverPort}`) && !target.startsWith(`http://localhost:${serverPort}`)) {
+      event.preventDefault();
+      if (/^(https?:|mailto:|tel:|sms:|whatsapp:)/i.test(target)) shell.openExternal(target);
+    }
   });
 
   // Injection du jeton dans TOUTES les requêtes de la fenêtre (navigation

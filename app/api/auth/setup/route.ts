@@ -3,6 +3,9 @@ import { createUser, hasAdminUser } from '@/lib/auth';
 import { writeAudit } from '@/lib/audit';
 import { createSessionResponse } from '@/lib/session';
 import { ensureDefaultSettings } from '@/lib/settings';
+import { countStores, createStore, listStores, userStoreSyncId } from '@/lib/stores';
+import { db } from '@/db';
+import { userStores } from '@/db/schema';
 
 /** GET /api/auth/setup — l'installation du premier administrateur est-elle requise ? */
 export async function GET() {
@@ -58,6 +61,32 @@ export async function POST(request: Request) {
     // Les valeurs par défaut des paramètres sont écrites au premier lancement.
     await ensureDefaultSettings();
 
+    // Premier magasin (§18) : créé avec l'administrateur si la base n'en a aucun.
+    // Une base migrée depuis la v1.3 a déjà son « Magasin principal ».
+    if ((await countStores()) === 0) {
+      await createStore(
+        {
+          code: String(body?.storeCode ?? 'PRINC').trim() || 'PRINC',
+          name: String(body?.storeName ?? '').trim() || 'Magasin principal',
+          kind: body?.storeKind === 'headquarters' ? 'headquarters' : 'store',
+        },
+        { id: user.id, name: user.name },
+      );
+    }
+    const firstStore = (await listStores())[0] ?? null;
+    if (firstStore) {
+      await db
+        .insert(userStores)
+        .values({
+          userId: user.id,
+          storeId: firstStore.id,
+          isManager: true,
+          isActive: true,
+          syncId: await userStoreSyncId(user.id, firstStore.id),
+        })
+        .onConflictDoNothing();
+    }
+
     const sessionUser = {
       id: user.id,
       name: user.name,
@@ -73,7 +102,7 @@ export async function POST(request: Request) {
       details: { role: 'admin', raison: 'Premier administrateur' },
     });
 
-    return await createSessionResponse(sessionUser, 201);
+    return await createSessionResponse(sessionUser, 201, { storeId: firstStore?.id ?? null });
   } catch (error: any) {
     console.error('[auth] Erreur de setup :', error?.message ?? error);
     return NextResponse.json({ error: error?.message ?? 'Erreur serveur' }, { status: 500 });

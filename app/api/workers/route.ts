@@ -18,8 +18,7 @@ import { parseListSort } from '@/lib/list-sort';
  * GET /api/workers — liste paginée du référentiel de main-d'œuvre.
  *
  * Lecture ouverte à tout utilisateur authentifié : les chantiers
- * (`jobs.view`), la briqueterie (`brick.view`) et l'atelier doivent tous
- * pouvoir désigner un ouvrier dans une équipe. **Seules les écritures** sont
+ * (`jobs.view`) doivent pouvoir désigner un ouvrier dans une équipe. **Seules les écritures** sont
  * gardées par `workers.manage` — masquer n'est pas protéger, mais ici la
  * lecture n'est pas une opération sensible (nom, téléphone, tarif journalier).
  */

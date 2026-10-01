@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, required, requireAction } from '@/lib/api';
+import { fail, ok, parseId, readJson, required, requireAction, requireCentralEdit } from '@/lib/api';
+import { assertCanManageUser } from '@/lib/user-scope';
 import { changePassword, getUser } from '@/lib/users';
 import { writeAudit } from '@/lib/audit';
 
@@ -20,11 +21,16 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const user = await requireAction('users.manage');
     const { id } = await params;
     const userId = parseId(id);
+    await requireCentralEdit();
+    await assertCanManageUser(user, userId);
     const body = await readJson<any>(request);
 
     const password = required(body.password, 'Nouveau mot de passe');
 
-    await changePassword(userId, password);
+    // Les autres sessions du compte sont fermées ; on garde la sienne si on change son propre mot de passe.
+    await changePassword(userId, password, {
+      keepSessionId: userId === user.id ? user.sessionId : undefined,
+    });
 
     const target = await getUser(userId);
 

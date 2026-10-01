@@ -7,6 +7,8 @@ import {
   readJson,
   toNumber,
   requireAction,
+  requireActiveStore,
+  assertStoreVisible,
   NotFoundError,
 } from '@/lib/api';
 import { cancelExpense, getExpense, updateExpense } from '@/lib/expenses';
@@ -17,11 +19,12 @@ type Params = { params: Promise<{ id: string }> };
 /** GET /api/depenses/[id] — une dépense (utile pour une fiche ou une impression). */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('expenses.view');
+    const user = await requireAction('expenses.view');
     const { id } = await params;
 
     const expense = await getExpense(parseId(id));
     if (!expense) throw new NotFoundError('Dépense introuvable');
+    assertStoreVisible(user, expense.storeId);
 
     return ok(expense);
   } catch (error) {
@@ -53,7 +56,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.referenceType !== undefined) patch.referenceType = body.referenceType;
     if (body.referenceId !== undefined) patch.referenceId = body.referenceId;
 
-    const expense = await updateExpense(expenseId, patch as any, { userId: user.id });
+    const storeId = await requireActiveStore(user);
+    const expense = await updateExpense(expenseId, patch as any, { userId: user.id, storeId });
 
     await writeAudit({
       user,
@@ -97,7 +101,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     // Le motif obligatoire est vérifié dans `cancelExpense` (lib/) : un motif
     // vide renvoie un 400 explicite, en français, sans rien écrire.
-    const result = await cancelExpense(expenseId, { reason, userId: user.id });
+    const storeId = await requireActiveStore(user);
+    const result = await cancelExpense(expenseId, { reason, userId: user.id, storeId });
 
     await writeAudit({
       user,

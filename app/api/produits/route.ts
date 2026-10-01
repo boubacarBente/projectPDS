@@ -8,6 +8,8 @@ import {
   requireAction,
   toBool,
   toNumber,
+  scopeFromRequest,
+  requireCentralEdit,
 } from '@/lib/api';
 import { createProduct, isCategoryKind, listProducts } from '@/lib/products';
 import { writeAudit } from '@/lib/audit';
@@ -20,7 +22,7 @@ import { parseListSort } from '@/lib/list-sort';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('products.view');
+    const user = await requireAction('products.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -29,6 +31,8 @@ export async function GET(request: NextRequest) {
     const categoryId = toNumber(params.get('categoryId') ?? params.get('category'), 0);
 
     const result = await listProducts({
+      // Stock, seuil et prix affichés pour la portée demandée (magasin actif par défaut).
+      scope: scopeFromRequest(user, request),
       search: params.get('search')?.trim() || undefined,
       categoryId: categoryId > 0 ? categoryId : undefined,
       kind: isCategoryKind(rawKind) ? rawKind : undefined,
@@ -50,6 +54,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('products.create');
+    // Le catalogue est commun : il se crée au siège (ou en installation autonome).
+    await requireCentralEdit();
     const body = await readJson<any>(request);
 
     const categoryId = toNumber(body.categoryId, 0);
@@ -63,10 +69,12 @@ export async function POST(request: NextRequest) {
         salePrice: toNumber(body.salePrice, 0),
         stock: toNumber(body.stock, 0),
         stockMin: toNumber(body.stockMin, 0),
+        barcode: body.barcode ?? null,
         description: body.description ?? null,
         isActive: toBool(body.isActive, true),
       },
-      { userId: user.id },
+      // Le stock initial éventuel est enregistré dans le magasin actif.
+      { userId: user.id, storeId: user.storeId },
     );
 
     await writeAudit({

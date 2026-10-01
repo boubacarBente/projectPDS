@@ -10,6 +10,7 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { useAuth } from '@/components/auth-provider';
 import { AppVersionDisplay } from '@/components/update-status';
 import { SyncIndicator } from '@/components/sync-indicator';
+import { StoreSwitcher } from '@/components/store-switcher';
 import { NavIcon } from '@/components/nav-icons';
 import { Tooltip } from '@/components/tooltip';
 import { NAVIGATION, STORAGE_KEYS, labelForPath } from '@/lib/navigation';
@@ -152,6 +153,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
             )}
           </Link>
+        </div>
+
+        {/* Magasin actif (contexte de toutes les opérations) */}
+        <div className={`border-b ${collapsed ? 'px-2 py-3' : 'px-5 py-3'}`} style={{ borderColor: 'var(--sidebar-border)' }}>
+          <StoreSwitcher collapsed={collapsed} />
         </div>
 
         {/* Navigation groupée */}
@@ -409,6 +415,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
+              </div>
+
+              <div className="border-b px-5 py-3" style={{ borderColor: 'var(--sidebar-border)' }}>
+                <StoreSwitcher />
               </div>
 
               <nav className="p-4" aria-label="Navigation mobile">

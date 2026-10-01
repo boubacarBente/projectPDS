@@ -13,14 +13,18 @@
  * Invariants :
  *  - **aucune suppression physique** d'une facture : l'annulation est un statut
  *    (`cancelled`) avec motif, auteur et date ;
- *  - `products.stock` n'est **jamais** écrit ici : tout passe par
- *    `addStockMovement()` (§6.5 règle 4) ;
+ *  - le stock n'est **jamais** écrit ici : tout passe par `addStockMovement()`,
+ *    dans le magasin de la vente ;
+ *  - **toute la chaîne s'exécute dans une transaction** : une erreur à la
+ *    ligne 3 annule aussi la facture, les lignes 1-2 et l'encaissement ;
+ *  - une vente appartient à **un** magasin (`store_id`) : elle ne peut être
+ *    modifiée, validée, encaissée ou annulée que depuis ce magasin.
  *  - `amount_paid` / `remaining_amount` / `payment_status` sont recalculés
  *    depuis la somme réelle des `payments` (`recomputeDocumentPayments`) ;
  *  - aucun total n'est inventé en plus de ce que prévoit le schéma (§15).
  */
 
-import { db, rawAll, rawGet } from '@/db';
+import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { salesInvoices, salesInvoiceItems } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ValidationError, businessDate, toInt, toNumber } from '@/lib/api';
@@ -38,41 +42,34 @@ import {
 import { getProduct } from '@/lib/products';
 import { type Role, can } from '@/lib/permissions';
 import { getSettings, nextDocumentNumber } from '@/lib/settings';
-import { addStockMovement } from '@/lib/stock';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { addStockMovement, getStoreStock } from '@/lib/stock';
 import { getEffectivePermissions } from '@/lib/user-permissions';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /* ------------------------------------------------------------------ *
  * Types exposés (contrat d'API — ne pas renommer les champs)
  * ------------------------------------------------------------------ */
 
 /**
- * **Canaux de vente** — un module, une liste (§20).
- *
- * `general` : commerce général (quincaillerie, décoration) → `/ventes`.
- * `brick`   : briqueterie → `/briqueterie/ventes`.
- *
- * La vente de briques est créée par `/ventes/nouvelle?canal=briqueterie` : elle
- * réutilise **tout** le moteur de vente (contrôle de stock, numérotation,
- * encaissement, reçu, paiements ultérieurs, export PDF) et n'en diffère que par
- * ce discriminant — c'est ce qui la rend invisible dans `/ventes` sans
- * dupliquer une ligne de logique.
+ * Canal de vente — un seul canal depuis le retrait de la briqueterie. Le champ
+ * est conservé pour la compatibilité des données et de l'API.
  */
-export type SalesChannel = 'general' | 'brick';
+export type SalesChannel = 'general';
 
-export const SALES_CHANNELS: SalesChannel[] = ['general', 'brick'];
+export const SALES_CHANNELS: SalesChannel[] = ['general'];
 
 export function isSalesChannel(value: unknown): value is SalesChannel {
-  return value === 'general' || value === 'brick';
+  return value === 'general';
 }
 
 export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
   general: 'Commerce général',
-  brick: 'Briqueterie',
 };
 
 export type SalesInvoiceRow = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   invoiceNumber: string;
   customerId: number | null;
   customerName: string;
@@ -91,12 +88,6 @@ export type SalesInvoiceRow = {
   paymentStatus: string;
   paymentMethod: string;
   status: 'draft' | 'active' | 'cancelled';
-  /**
-   * **Canal de vente** (§20) : `general` (commerce général, ce que montre
-   * `/ventes`) ou `brick` (briqueterie, liste dédiée `/briqueterie/ventes`).
-   * C'est un simple discriminant d'affichage : stock, caisse, reçus et
-   * paiements suivent exactement le même chemin pour les deux canaux.
-   */
   channel: SalesChannel;
   cancelReason: string | null;
   notes: string | null;
@@ -151,10 +142,11 @@ export type SalesInvoiceInput = {
   taxRate?: number;
   notes?: string | null;
   status?: 'draft' | 'active';
-  /** `general` par défaut ; `brick` pour une vente de la briqueterie (§20). */
   channel?: SalesChannel;
   lines: SalesLineInput[];
   userId?: number | null;
+  /** Magasin actif de l'utilisateur (obligatoire pour écrire). */
+  storeId?: number | null;
 };
 
 /** Ligne validée par `buildSalesItems` : instantanés + montant calculé. */
@@ -192,7 +184,7 @@ export type SalesStats = {
 };
 
 /** Référence utilisateur minimale (audit + mouvements). */
-export type SalesUserRef = { id: number; name?: string } | null;
+export type SalesUserRef = { id: number; name?: string; storeId?: number | null } | null;
 
 const STATUSES: SalesInvoiceRow['status'][] = ['draft', 'active', 'cancelled'];
 const PERIOD_KEYS: PeriodKey[] = ['day', 'week', 'month', 'year', 'total'];
@@ -206,7 +198,7 @@ const EPSILON = 0.0001;
  * ------------------------------------------------------------------ */
 
 const INVOICE_COLUMNS = `
-  v.id, v.invoice_number, v.customer_id, v.customer_name, v.user_id, v.date, v.due_date,
+  v.id, v.store_id, st.name AS store_name, v.invoice_number, v.customer_id, v.customer_name, v.user_id, v.date, v.due_date,
   v.sub_total, v.discount, v.total_ht, v.tax_rate, v.tax_amount, v.total,
   v.amount_paid, v.remaining_amount, v.payment_status, v.payment_method, v.status,
   v.channel, v.cancel_reason, v.cancelled_by, v.cancelled_at, v.notes, v.created_at, v.sync_id,
@@ -235,6 +227,7 @@ const INVOICE_COLUMNS = `
 const INVOICE_FROM = `
   FROM sales_invoices v
   LEFT JOIN users u ON u.id = v.user_id
+  LEFT JOIN stores st ON st.id = v.store_id
 `;
 
 function roundQty(value: number): number {
@@ -260,6 +253,8 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
 
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
     invoiceNumber: row.invoice_number,
     customerId: row.customer_id == null ? null : Number(row.customer_id),
     customerName: row.customer_name,
@@ -278,7 +273,7 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
     paymentStatus: row.payment_status,
     paymentMethod: row.payment_method,
     status: row.status as SalesInvoiceRow['status'],
-    channel: isSalesChannel(row.channel) ? row.channel : 'general',
+    channel: 'general',
     cancelReason: row.cancel_reason ?? null,
     notes: row.notes ?? null,
     itemCount: Number(row.item_count ?? 0),
@@ -354,6 +349,7 @@ async function resolveCustomer(input: {
 
 type InvoiceRecord = {
   id: number;
+  storeId: number | null;
   syncId: string;
   invoiceNumber: string;
   status: SalesInvoiceRow['status'];
@@ -367,7 +363,7 @@ type InvoiceRecord = {
 
 async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
   const row = await rawGet<any>(
-    `SELECT id, sync_id, invoice_number, status, customer_id, customer_name,
+    `SELECT id, store_id, sync_id, invoice_number, status, customer_id, customer_name,
             amount_paid, tax_rate, payment_method, date
      FROM sales_invoices WHERE id = ?`,
     [id],
@@ -376,6 +372,7 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
 
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
     syncId: row.sync_id,
     invoiceNumber: row.invoice_number,
     status: row.status as SalesInvoiceRow['status'],
@@ -386,6 +383,20 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
     paymentMethod: row.payment_method,
     date: row.date,
   };
+}
+
+/**
+ * Cloisonnement (§5) : une facture ne se modifie que depuis **son** magasin.
+ * Renvoie le magasin de la facture.
+ */
+function assertSameStore(record: { storeId: number | null }, storeId: number | null | undefined): number {
+  if (!storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
+  if (record.storeId !== Number(storeId)) {
+    throw new ValidationError(
+      'Cette facture appartient à un autre magasin : elle ne peut être modifiée que depuis ce magasin.',
+    );
+  }
+  return Number(storeId);
 }
 
 async function getItemRecords(invoiceId: number): Promise<any[]> {
@@ -444,7 +455,7 @@ export function areQuantityMapsEqual(a: Map<number, number>, b: Map<number, numb
  */
 export async function buildSalesItems(
   lines: SalesLineInput[],
-  options: { allowances?: Record<number, number> } = {},
+  options: { storeId: number; allowances?: Record<number, number> },
 ): Promise<SalesItemDraft[]> {
   if (!Array.isArray(lines) || lines.length === 0) {
     throw new ValidationError('Une vente doit contenir au moins une ligne');
@@ -511,7 +522,8 @@ export async function buildSalesItems(
   for (const [productId, quantity] of requested) {
     const product = products.get(productId);
     if (!product) continue;
-    const available = roundQty(Number(product.stock ?? 0) + Number(options.allowances?.[productId] ?? 0));
+    const inStore = await getStoreStock(options.storeId, productId);
+    const available = roundQty(inStore + Number(options.allowances?.[productId] ?? 0));
     if (quantity - available > EPSILON) {
       shortages.push(
         `• ${product.name} : stock insuffisant (disponible: ${plainNumber(available)}, demandé: ${plainNumber(quantity)})`,
@@ -571,19 +583,6 @@ function computeTotals(
  * Écriture des lignes (instantanés)
  * ------------------------------------------------------------------ */
 
-function itemPayload(invoiceNumber: string, item: SalesItemDraft): Record<string, unknown> {
-  // Règle §11.3 : jamais de référence par `id` local dans un payload de synchro.
-  return {
-    invoice_number: invoiceNumber,
-    product_name: item.productName,
-    unit: item.unit,
-    quantity: item.quantity,
-    unit_price: item.unitPrice,
-    discount: item.discount,
-    amount: item.amount,
-  };
-}
-
 async function insertInvoiceItems(
   invoiceId: number,
   invoiceNumber: string,
@@ -604,12 +603,6 @@ async function insertInvoiceItems(
       })
       .returning({ id: salesInvoiceItems.id, syncId: salesInvoiceItems.syncId });
 
-    await enqueueSyncWrite(
-      'sales_invoice_items',
-      inserted[0]?.syncId,
-      'insert',
-      itemPayload(invoiceNumber, item),
-    );
   }
 }
 
@@ -648,13 +641,6 @@ async function reconcileInvoiceItems(
           updatedAt: new Date(),
         })
         .where(eq(salesInvoiceItems.id, Number(previous.id)));
-
-      await enqueueSyncWrite(
-        'sales_invoice_items',
-        previous.sync_id,
-        'update',
-        itemPayload(invoiceNumber, item),
-      );
       continue;
     }
 
@@ -672,21 +658,11 @@ async function reconcileInvoiceItems(
       })
       .returning({ id: salesInvoiceItems.id, syncId: salesInvoiceItems.syncId });
 
-    await enqueueSyncWrite(
-      'sales_invoice_items',
-      inserted[0]?.syncId,
-      'insert',
-      itemPayload(invoiceNumber, item),
-    );
   }
 
   for (let index = items.length; index < existing.length; index += 1) {
     const surplus = existing[index];
     await db.delete(salesInvoiceItems).where(eq(salesInvoiceItems.id, Number(surplus.id)));
-    await enqueueSyncWrite('sales_invoice_items', surplus.sync_id, 'delete', {
-      invoice_number: invoiceNumber,
-      product_name: surplus.product_name,
-    });
   }
 }
 
@@ -702,7 +678,7 @@ async function applyStockDelta(
   invoiceId: number,
   from: Map<number, number>,
   to: Map<number, number>,
-  options: { userId?: number | null; motifExit: string; motifEntry: string },
+  options: { storeId: number; userId?: number | null; motifExit: string; motifEntry: string },
 ): Promise<void> {
   if (areQuantityMapsEqual(from, to)) return;
 
@@ -714,6 +690,7 @@ async function applyStockDelta(
 
     if (delta > 0) {
       await addStockMovement(productId, 'exit', delta, {
+        storeId: options.storeId,
         referenceType: 'sale',
         referenceId: invoiceId,
         motif: options.motifExit,
@@ -721,6 +698,7 @@ async function applyStockDelta(
       });
     } else {
       await addStockMovement(productId, 'entry', Math.abs(delta), {
+        storeId: options.storeId,
         referenceType: 'sale',
         referenceId: invoiceId,
         motif: options.motifEntry,
@@ -742,15 +720,12 @@ export async function listSalesInvoices(options: {
   to?: string;
   paymentStatus?: string;
   status?: string;
-  /**
-   * Canal : `general` (défaut) ne montre que le commerce général, `brick` que la
-   * briqueterie, `all` les deux. Le défaut est **volontairement restrictif** :
-   * `/ventes` ne doit jamais afficher une vente de briques (§20).
-   */
+  /** Magasins visibles (obligatoire). */
+  scope: StoreScope;
   channel?: SalesChannel | 'all';
   page?: number;
   limit?: number;
-} = {}): Promise<{
+}): Promise<{
   data: SalesInvoiceRow[];
   total: number;
   page: number;
@@ -761,14 +736,8 @@ export async function listSalesInvoices(options: {
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const where: string[] = [];
+  const where: string[] = [scopeSql('v.store_id', options.scope)];
   const args: (string | number)[] = [];
-
-  const channel = options.channel ?? 'general';
-  if (channel !== 'all') {
-    where.push('v.channel = ?');
-    args.push(channel);
-  }
 
   if (options.search) {
     where.push('(v.invoice_number LIKE ? OR v.customer_name LIKE ?)');
@@ -833,7 +802,9 @@ export async function getSalesInvoice(id: number): Promise<SalesInvoiceDetail | 
 
   const invoice = mapInvoiceRow(row);
   const items = (await getItemRecords(id)).map(mapItemRow);
-  const payments = (await listPayments({ type: 'sale', referenceId: id, limit: 200 })).data;
+  const payments = (
+    await listPayments({ scope: invoice.storeId ? [invoice.storeId] : [], type: 'sale', referenceId: id, limit: 200 })
+  ).data;
   const schedule = await getPaymentSchedule('sale', id);
 
   return { invoice, items, payments, schedule };
@@ -892,9 +863,7 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
         : toNumber(body.taxRate, 0),
     notes: body?.notes ?? null,
     status,
-    // Canal explicite uniquement : une valeur inconnue retombe sur `general`,
-    // c'est-à-dire le commerce général — jamais sur « aucune liste ».
-    channel: isSalesChannel(body?.channel) ? body.channel : 'general',
+    channel: 'general',
     lines: rawLines.map((line: any) => ({
       productId: toInt(line?.productId, 0),
       quantity: toNumber(line?.quantity, 0),
@@ -909,14 +878,20 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
  * ------------------------------------------------------------------ */
 
 export async function createSalesInvoice(input: SalesInvoiceInput): Promise<SalesInvoiceRow> {
+  return withTransaction(() => createSalesInvoiceInTx(input));
+}
+
+async function createSalesInvoiceInTx(input: SalesInvoiceInput): Promise<SalesInvoiceRow> {
   const settings = await getSettings();
+  const storeId = Number(input.storeId);
+  if (!storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
 
   // 1 + 2. Validation des lignes et contrôle de stock AVANT toute écriture.
-  const items = await buildSalesItems(input.lines);
+  const items = await buildSalesItems(input.lines, { storeId });
 
   const date = businessDate(input.date, 'date');
   const status = normalizeStatus(input.status, 'active');
-  const channel: SalesChannel = isSalesChannel(input.channel) ? input.channel : 'general';
+  const channel: SalesChannel = 'general';
   const paymentMethod = String(input.paymentMethod ?? '').trim() || 'Espèces';
   const taxRate = input.taxRate === undefined ? Number(settings.defaultTaxRate ?? 0) : Number(input.taxRate);
 
@@ -942,12 +917,13 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
   });
 
   // 3. Numérotation (compteur `settings`, sans trou).
-  const invoiceNumber = await nextDocumentNumber('invoice');
+  const invoiceNumber = await nextDocumentNumber('invoice', storeId);
 
   // 4. Facture, puis lignes avec instantanés.
   const inserted = await db
     .insert(salesInvoices)
     .values({
+      storeId,
       invoiceNumber,
       customerId: customer.customerId,
       customerName: customer.customerName,
@@ -972,22 +948,6 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
 
   const invoiceId = Number(inserted[0].id);
 
-  await enqueueSyncWrite('sales_invoices', inserted[0].syncId, 'insert', {
-    invoice_number: invoiceNumber,
-    customer_name: customer.customerName,
-    date,
-    due_date: input.dueDate ?? null,
-    sub_total: totals.subTotal,
-    discount: totals.discount,
-    total_ht: totals.totalHt,
-    tax_rate: totals.taxRate,
-    tax_amount: totals.taxAmount,
-    total: totals.total,
-    payment_method: paymentMethod,
-    status,
-    channel,
-    notes: input.notes ?? null,
-  });
 
   await insertInvoiceItems(invoiceId, invoiceNumber, items);
 
@@ -996,6 +956,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
     // 5. Sorties de stock, un `exit` par ligne.
     for (const item of items) {
       await addStockMovement(item.productId, 'exit', item.quantity, {
+        storeId,
         referenceType: 'sale',
         referenceId: invoiceId,
         motif: `vente ${invoiceNumber}`,
@@ -1006,6 +967,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
     // 6. Encaissement initial : `createPayment` gère la caisse **et** le reçu.
     if (amountPaid > 0) {
       await createPayment({
+        storeId,
         type: 'sale',
         referenceId: invoiceId,
         amount: amountPaid,
@@ -1022,6 +984,7 @@ export async function createSalesInvoice(input: SalesInvoiceInput): Promise<Sale
   // journal rendrait l'historique menteur (§12).
   await writeAudit({
     user: await auditUser(input.userId),
+    storeId,
     action: 'create',
     entity: 'sales_invoice',
     entityId: invoiceId,
@@ -1057,8 +1020,13 @@ export async function updateSalesInvoice(
   id: number,
   input: SalesInvoiceInput,
 ): Promise<SalesInvoiceRow> {
+  return withTransaction(() => updateSalesInvoiceInTx(id, input));
+}
+
+async function updateSalesInvoiceInTx(id: number, input: SalesInvoiceInput): Promise<SalesInvoiceRow> {
   const existing = await getInvoiceRecord(id);
   if (!existing) throw new NotFoundError('Facture introuvable');
+  const storeId = assertSameStore(existing, input.storeId);
   if (existing.status === 'cancelled') {
     throw new ValidationError('Une facture annulée ne peut pas être modifiée');
   }
@@ -1078,7 +1046,7 @@ export async function updateSalesInvoice(
     }
   }
 
-  const items = await buildSalesItems(input.lines, { allowances });
+  const items = await buildSalesItems(input.lines, { storeId, allowances });
   const date = businessDate(input.date, 'date');
   const paymentMethod = String(input.paymentMethod ?? '').trim() || existing.paymentMethod;
   const totals = computeTotals(items, {
@@ -1135,21 +1103,6 @@ export async function updateSalesInvoice(
     })
     .where(eq(salesInvoices.id, id));
 
-  await enqueueSyncWrite('sales_invoices', existing.syncId, 'update', {
-    invoice_number: existing.invoiceNumber,
-    customer_name: customer.customerName,
-    date,
-    due_date: input.dueDate ?? null,
-    sub_total: totals.subTotal,
-    discount: totals.discount,
-    total_ht: totals.totalHt,
-    tax_rate: totals.taxRate,
-    tax_amount: totals.taxAmount,
-    total: totals.total,
-    payment_method: paymentMethod,
-    status: willBeActive ? 'active' : 'draft',
-    notes: input.notes ?? null,
-  });
 
   await reconcileInvoiceItems(id, existing.invoiceNumber, items);
 
@@ -1161,6 +1114,7 @@ export async function updateSalesInvoice(
     }))) : new Map(),
     willBeActive ? quantitiesByProduct(items) : new Map(),
     {
+      storeId,
       userId: input.userId ?? null,
       motifExit: `vente ${existing.invoiceNumber}`,
       motifEntry: `correction vente ${existing.invoiceNumber}`,
@@ -1169,6 +1123,7 @@ export async function updateSalesInvoice(
 
   if (willBeActive && targetPaid !== null && targetPaid > currentPaid + 0.01) {
     await createPayment({
+      storeId,
       type: 'sale',
       referenceId: id,
       amount: roundMoney(targetPaid - currentPaid),
@@ -1231,8 +1186,13 @@ export async function validateSalesInvoice(
   id: number,
   user: SalesUserRef = null,
 ): Promise<SalesInvoiceRow> {
+  return withTransaction(() => validateSalesInvoiceInTx(id, user));
+}
+
+async function validateSalesInvoiceInTx(id: number, user: SalesUserRef): Promise<SalesInvoiceRow> {
   const existing = await getInvoiceRecord(id);
   if (!existing) throw new NotFoundError('Facture introuvable');
+  const storeId = assertSameStore(existing, user?.storeId);
   if (existing.status === 'cancelled') {
     throw new ValidationError('Une facture annulée ne peut pas être validée');
   }
@@ -1266,7 +1226,7 @@ export async function validateSalesInvoice(
   // 1. Contrôle de stock AVANT toute écriture (mêmes règles et même message
   // agrégé que la création). Une rupture entre-temps refuse la validation :
   // c'est précisément à cet instant que la marchandise sort réellement.
-  const items = await buildSalesItems(lines);
+  const items = await buildSalesItems(lines, { storeId });
 
   // 2. Statut : le brouillon devient définitif.
   await db
@@ -1274,14 +1234,11 @@ export async function validateSalesInvoice(
     .set({ status: 'active', updatedAt: new Date() })
     .where(eq(salesInvoices.id, id));
 
-  await enqueueSyncWrite('sales_invoices', existing.syncId, 'update', {
-    invoice_number: existing.invoiceNumber,
-    status: 'active',
-  });
 
   // 3. Sorties de stock : le brouillon n'en avait aucune.
   for (const item of items) {
     await addStockMovement(item.productId, 'exit', item.quantity, {
+      storeId,
       referenceType: 'sale',
       referenceId: id,
       motif: `vente ${existing.invoiceNumber}`,
@@ -1334,8 +1291,10 @@ export async function cancelSalesInvoice(
     throw new ValidationError("Le motif d'annulation est obligatoire");
   }
 
+  return withTransaction(async () => {
   const existing = await getInvoiceRecord(id);
   if (!existing) throw new NotFoundError('Facture introuvable');
+  const storeId = assertSameStore(existing, user?.storeId);
   if (existing.status === 'cancelled') {
     throw new ValidationError('Cette facture est déjà annulée');
   }
@@ -1354,12 +1313,6 @@ export async function cancelSalesInvoice(
     })
     .where(eq(salesInvoices.id, id));
 
-  await enqueueSyncWrite('sales_invoices', existing.syncId, 'update', {
-    invoice_number: existing.invoiceNumber,
-    status: 'cancelled',
-    cancel_reason: cleanReason,
-    cancelled_at: new Date().toISOString(),
-  });
 
   let reversedStock = false;
   let refundedAmount = 0;
@@ -1373,6 +1326,7 @@ export async function cancelSalesInvoice(
       if (!productId || quantity <= 0) continue;
 
       await addStockMovement(productId, 'entry', quantity, {
+        storeId,
         referenceType: 'sale',
         referenceId: id,
         motif: `annulation vente ${existing.invoiceNumber}`,
@@ -1392,6 +1346,7 @@ export async function cancelSalesInvoice(
   refundedAmount = roundMoney(Number(existing.amountPaid ?? 0));
   if (refundedAmount > 0) {
     await addCashMovement({
+      storeId,
       type: 'expense',
       amount: refundedAmount,
       paymentMethod: existing.paymentMethod,
@@ -1419,6 +1374,7 @@ export async function cancelSalesInvoice(
   const cancelled = await getSalesInvoice(id);
   if (!cancelled) throw new Error('Facture introuvable après annulation');
   return cancelled.invoice;
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -1428,16 +1384,14 @@ export async function cancelSalesInvoice(
 /** Statistiques de ventes sur une période nommée (`resolvePeriod` de `lib/dashboard.ts`). */
 export async function getSalesStats(
   period: PeriodKey = 'month',
-  options: { channel?: SalesChannel | 'all' } = {},
+  options: { scope: StoreScope },
 ): Promise<SalesStats> {
   const key: PeriodKey = PERIOD_KEYS.includes(period) ? period : 'month';
   const bounds = resolvePeriod(key);
 
-  // Par défaut, les cartes de `/ventes` comptent **le même périmètre** que sa
-  // liste : le commerce général. La briqueterie demande `channel: 'brick'`.
-  const channel = options.channel ?? 'general';
-  const channelSql = channel === 'all' ? '' : ' AND channel = ?';
-  const channelArgs: string[] = channel === 'all' ? [] : [channel];
+  // Périmètre : les magasins demandés (filtre identique à la liste).
+  const channelSql = ` AND ${scopeSql('store_id', options.scope)}`;
+  const channelArgs: string[] = [];
 
   const totals = await rawGet<any>(
     `SELECT COUNT(*) AS count,
@@ -1463,15 +1417,11 @@ export async function getSalesStats(
             SUM(i.amount)   AS amount
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?${
-       channel === 'all' ? '' : ' AND v.channel = ?'
-     }
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', options.scope)}
      GROUP BY i.product_name
      ORDER BY amount DESC
      LIMIT ?`,
-    channel === 'all'
-      ? [bounds.from, bounds.to, MAX_TOP_PRODUCTS]
-      : [bounds.from, bounds.to, channel, MAX_TOP_PRODUCTS],
+    [bounds.from, bounds.to, MAX_TOP_PRODUCTS],
   );
 
   const byDayRows = await rawAll<{ date: string; revenue: number; count: number }>(
@@ -1526,9 +1476,9 @@ export async function getSalesStats(
  * que le serveur reste seul juge (§9). Un vendeur lit donc ses ventes sans
  * jamais recevoir le coût ni la marge.
  */
-export async function canViewSalesProfit(user: { id: number; role: Role }): Promise<boolean> {
-  const permissions = await getEffectivePermissions({ id: user.id, role: user.role });
-  return can(user, 'balances.view', permissions);
+export async function canViewSalesProfit(user: { id: number; role: Role; permissions?: string[] }): Promise<boolean> {
+  const permissions = user.permissions ?? (await getEffectivePermissions({ id: user.id, role: user.role }));
+  return can(user, 'balances.view', permissions as any);
 }
 
 /**

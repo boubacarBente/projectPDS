@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, requireAction } from '@/lib/api';
+import { fail, ok, parsePagination, requireAction, scopeFromRequest } from '@/lib/api';
 import { listReceipts, type PaymentType } from '@/lib/payments';
 
 const PAYMENT_TYPES: PaymentType[] = ['sale', 'purchase', 'service_job'];
@@ -23,7 +23,7 @@ const PAYMENT_TYPES: PaymentType[] = ['sale', 'purchase', 'service_job'];
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('payments.view');
+    const user = await requireAction('payments.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
         : undefined;
 
     const result = await listReceipts({
+      scope: scopeFromRequest(user, request),
       type,
       paymentMethod: params.get('paymentMethod') ?? undefined,
       from: params.get('from') ?? undefined,

@@ -14,7 +14,6 @@
 
 import { db, rawAll, rawRun } from '@/db';
 import { settings as settingsTable } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 import {
   DEFAULT_SETTINGS,
   deserializeSetting,
@@ -111,45 +110,82 @@ export async function getSetting<K extends keyof Settings>(key: K): Promise<Sett
   return all[key];
 }
 
-/** Applique le gabarit de numérotation (Q1 : `{PREFIX}-{YYYY}-{NNNNNN}`). */
+/** Applique le gabarit de numérotation (`{PREFIX}-{STORE}-{YYYY}-{NNNNNN}`). */
 export function renderDocumentNumber(
   prefix: string,
   sequence: number,
   template: string,
   year = new Date().getFullYear(),
+  storeTag = '',
 ): string {
-  return template
+  // Anciens gabarits sans `{STORE}` : le magasin est inséré après le préfixe,
+  // sinon deux magasins produiraient le même numéro.
+  let pattern = template;
+  if (storeTag && !pattern.includes('{STORE}')) {
+    pattern = pattern.includes('{PREFIX}') ? pattern.replace('{PREFIX}', '{PREFIX}-{STORE}') : `{STORE}-${pattern}`;
+  }
+  return pattern
     .replace('{PREFIX}', prefix)
+    .replace('{STORE}', storeTag)
     .replace('{YYYY}', String(year))
     .replace('{YY}', String(year).slice(-2))
     .replace('{NNNNNN}', String(sequence).padStart(6, '0'))
-    .replace('{NNNN}', String(sequence).padStart(4, '0'));
+    .replace('{NNNN}', String(sequence).padStart(4, '0'))
+    .replace(/--+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 /**
- * Compteur atomique de numérotation, stocké dans `settings` sous la clé
- * technique `seq_<nom>_<année>` — donc **sans trou** et **sans table dédiée**.
+ * Compteur de numérotation **atomique**, local au poste (`doc_sequences`).
+ *
+ * Correctif : l'ancien compteur lisait puis réécrivait la valeur — deux
+ * requêtes simultanées obtenaient le même numéro. L'incrément se fait
+ * désormais en une seule instruction (`UPSERT … RETURNING`).
  */
 export async function nextSequence(name: string, year = new Date().getFullYear()): Promise<number> {
-  const key = `seq_${name}_${year}`;
-  const row = await db.select().from(settingsTable).where(eq(settingsTable.key, key)).limit(1);
-  const current = row[0] ? Number(row[0].value) : 0;
-  const next = Number.isFinite(current) ? current + 1 : 1;
-
-  await rawRun(
-    `INSERT INTO settings (key, value, updated_at, sync_id)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    [key, String(next), Date.now(), crypto.randomUUID()],
+  const key = `${name}:${year}`;
+  const row = await rawAll<{ value: number }>(
+    `INSERT INTO doc_sequences (key, value) VALUES (?, 1)
+     ON CONFLICT(key) DO UPDATE SET value = value + 1
+     RETURNING value`,
+    [key],
   );
-
-  return next;
+  return Number(row[0]?.value ?? 1);
 }
 
-/** Numéro de document prêt à l'emploi, selon le type de pièce. */
-export async function nextDocumentNumber(
-  kind: 'invoice' | 'purchase' | 'receipt' | 'job' | 'brick' | 'brick_order' | 'furniture',
-): Promise<string> {
+export type DocumentKind = 'invoice' | 'purchase' | 'receipt' | 'job' | 'transfer' | 'inventory';
+
+/** Table et colonne portant le numéro, pour vérifier qu'il est libre. */
+const DOCUMENT_TARGETS: Record<DocumentKind, { table: string; column: string }> = {
+  invoice: { table: 'sales_invoices', column: 'invoice_number' },
+  purchase: { table: 'purchase_invoices', column: 'reference' },
+  receipt: { table: 'payments', column: 'receipt_number' },
+  job: { table: 'service_jobs', column: 'reference' },
+  transfer: { table: 'stock_transfers', column: 'reference' },
+  inventory: { table: 'inventories', column: 'reference' },
+};
+
+/** Étiquette de magasin dans les numéros : code du magasin + numéro de poste. */
+export async function storeNumberTag(storeId: number | null | undefined): Promise<string> {
+  if (!storeId) return '';
+  const store = await rawAll<{ code: string }>(`SELECT code FROM stores WHERE id = ?`, [storeId]);
+  const code = store[0]?.code ?? '';
+  const device = await rawAll<{ value: string | null }>(
+    `SELECT value FROM sync_state WHERE key = 'device_code'`,
+  );
+  const deviceCode = String(device[0]?.value ?? '').trim();
+  return `${code}${deviceCode}`;
+}
+
+/**
+ * Numéro de document prêt à l'emploi, **propre au magasin et au poste** :
+ * `FAC-KAL3-2026-000042`. Unique à l'échelle de l'entreprise, même quand
+ * plusieurs postes travaillent hors ligne (§9).
+ *
+ * Si le numéro existe déjà (base restaurée, poste réinstallé qui a reçu
+ * l'historique du serveur), on avance jusqu'au premier numéro libre.
+ */
+export async function nextDocumentNumber(kind: DocumentKind, storeId?: number | null): Promise<string> {
   const settings = await getSettings();
 
   const prefix = {
@@ -157,15 +193,25 @@ export async function nextDocumentNumber(
     purchase: settings.purchasePrefix,
     receipt: settings.receiptPrefix,
     job: settings.jobPrefix,
-    brick: settings.brickPrefix,
-    brick_order: settings.brickOrderPrefix,
-    furniture: settings.furniturePrefix,
+    transfer: settings.transferPrefix,
+    inventory: settings.inventoryPrefix,
   }[kind];
 
-  const sequence = await nextSequence(kind);
-  return renderDocumentNumber(prefix, sequence, settings.invoiceNumberFormat);
-}
+  const tag = await storeNumberTag(storeId);
+  const year = new Date().getFullYear();
+  const target = DOCUMENT_TARGETS[kind];
 
+  for (let attempt = 0; attempt < 10_000; attempt += 1) {
+    const sequence = await nextSequence(`${kind}:${storeId ?? 0}`, year);
+    const number = renderDocumentNumber(prefix, sequence, settings.invoiceNumberFormat, year, tag);
+    const taken = await rawAll(
+      `SELECT 1 FROM ${target.table} WHERE ${target.column} = ? LIMIT 1`,
+      [number],
+    );
+    if (taken.length === 0) return number;
+  }
+  throw new Error('Numérotation impossible : trop de numéros déjà utilisés');
+}
 /**
  * Enregistre le logo en base64 dans `settings` (§7 : logo sur les factures).
  * Le README §23.12 précise que les fichiers binaires ne sont pas synchronisés

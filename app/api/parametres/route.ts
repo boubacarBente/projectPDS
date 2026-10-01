@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, readJson, requireAction } from '@/lib/api';
+import { fail, ok, readJson, requireAction, CentralDataError } from '@/lib/api';
+import { canEditCentralData } from '@/lib/device';
 import { ensureDefaultSettings, getSettings, updateSettings } from '@/lib/settings';
 import { getStorageInfo } from '@/lib/backup';
 import { writeAudit } from '@/lib/audit';
@@ -29,11 +30,13 @@ export async function PUT(request: NextRequest) {
     const user = await requireAction('settings.update');
     const body = await readJson<Record<string, unknown>>(request);
 
-    // Un gérant ne peut pas modifier les réglages critiques de synchronisation.
-    if (user.role !== 'admin') {
-      for (const key of ['syncMode', 'syncApiUrl', 'syncDeviceId']) {
-        if (key in body) delete body[key];
-      }
+    // Les paramètres de l'entreprise sont centraux : sur un poste de magasin,
+    // seuls les réglages propres au poste (thème, sauvegarde…) sont modifiables.
+    if (!(await canEditCentralData())) {
+      const central = Object.keys(body).filter(
+        (k) => !(LOCAL_ONLY_SETTINGS_KEYS as string[]).includes(k),
+      );
+      if (central.length > 0) throw new CentralDataError();
     }
 
     const touched = Object.keys(body);

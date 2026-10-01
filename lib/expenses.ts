@@ -1,114 +1,84 @@
 /**
- * Dépenses (§7.9, §9, §14).
+ * Dépenses (§7.9, §9, §14 ; multi-magasins §12).
  *
- * Deux invariants portent tout le module :
+ * Invariants :
  *
- *  1. **Une dépense sort de la caisse — systématiquement.** Chaque écriture
- *     (création, modification, annulation) laisse une trace dans
- *     `cash_movements` via `addCashMovement()` ; c'est ce qui permet le
- *     rapprochement caisse ↔ dépense (§13) et le calcul du **bénéfice net**
- *     (§15 : bénéfice brut − dépenses de la période).
+ *  1. **Une dépense approuvée sort de la caisse de son magasin.** Création,
+ *     modification et annulation laissent une trace dans `cash_movements`
+ *     (rapprochement caisse ↔ dépense, §13 ; bénéfice net, §15).
+ *  2. **Une dépense ne touche JAMAIS le stock.**
+ *  3. **Chaque dépense appartient à un magasin** (`store_id`). Les charges
+ *     centrales sont saisies dans le magasin « siège » (`stores.kind =
+ *     'headquarters'`) : elles restent distinctes des charges locales, et les
+ *     rapports consolidés peuvent les répartir.
+ *  4. **Circuit d'approbation** (§12) : au-delà du seuil
+ *     `settings.expenseApprovalThreshold`, une dépense saisie par quelqu'un qui
+ *     n'a pas `expenses.update` est créée `pending` — **sans** sortie de caisse.
+ *     Une fois approuvée elle passe `to_pay` (à décaisser) ; le décaissement
+ *     crée alors le mouvement de caisse et la dépense devient `approved`.
+ *     Une dépense rejetée (`rejected`) n'est jamais comptée.
  *
- *  2. **Une dépense ne touche JAMAIS le stock.** Ce fichier n'importe pas
- *     `lib/stock.ts` et n'écrit pas une seule ligne dans `stock_movements` :
- *     c'est exactement la différence de fond avec un achat (§5, §14), qui, lui,
- *     fait entrer des marchandises et suit une dette fournisseur.
+ * Toutes les écritures s'exécutent dans une transaction : la dépense et son
+ * mouvement de caisse sont enregistrés ensemble, ou pas du tout.
  *
- * La **catégorie** est une liste fermée issue de `settings.expenseCategories`
- * (§6.6 : pas de table `expense_categories`) : jamais de saisie libre, sinon
- * les rapports par catégorie deviennent faux — « Transport » ≠ « transport ».
- * La valeur enregistrée est toujours celle des paramètres (casse canonique).
- *
- * **Annulation, jamais de suppression physique** (§6.5 règle 4, §26.13) : un
- * `DELETE` ferait ressusciter la ligne au prochain pull de synchronisation.
- * La table `expenses` ne porte pas de colonnes `status` / `cancel_reason` /
- * `cancelled_at` (schéma figé — hors périmètre de ce module), l'annulation
- * s'appuie donc sur le **tombstone** `deleted_at` prévu au §6.7 : la dépense
- * n'est plus comptée, rien n'est effacé, la caisse est contre-passée, et le
- * motif obligatoire est journalisé par `writeAudit` côté Route Handler.
+ * Annulation : tombstone `deleted_at` (jamais de suppression physique) et
+ * contre-passation de caisse si l'argent était sorti.
  */
 
-import { db, rawAll, rawGet } from '@/db';
+import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { expenses } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { ValidationError, NotFoundError } from '@/lib/api';
 import { addCashMovement } from '@/lib/caisse';
 import { getSettings } from '@/lib/settings';
 import { roundMoney } from '@/lib/format';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /* ------------------------------------------------------------------ *
  * Types
  * ------------------------------------------------------------------ */
 
-/**
- * **Portée d'une dépense** — la distinction qui structure tout le module (§9, §14).
- *
- *  - `general` : dépense de fonctionnement (transport, loyer, électricité…).
- *    C'est ce que montre `/depenses`. Rattachée à la liste fermée
- *    `settings.expenseCategories`.
- *  - `production` : dépense engagée **pour une fabrication précise** (ciment,
- *    sable, carburant, main-d'œuvre…). Elle est saisie dans la fiche du lot de
- *    briqueterie (`/briqueterie/[id]`), rattachée par
- *    `reference_type = 'brick_production'` + `reference_id = <lot>` et validée
- *    contre `PRODUCTION_EXPENSE_CATEGORIES`.
- *
- * **Pourquoi réutiliser la table `expenses` plutôt qu'en créer une ?** Pour
- * garder un seul moteur de sortie de caisse, une seule annulation motivée, une
- * seule file de synchronisation et un seul rapport par catégorie. La portée
- * n'est pas un nouveau type de dépense : c'est une **origine**.
- */
-export type ExpenseScope = 'general' | 'production';
+export type ExpenseApprovalStatus = 'approved' | 'pending' | 'to_pay' | 'rejected';
 
-/** Valeur de `reference_type` qui rattache une dépense à un lot de fabrication. */
-export const PRODUCTION_EXPENSE_REFERENCE = 'brick_production';
+export const EXPENSE_APPROVAL_LABELS: Record<ExpenseApprovalStatus, string> = {
+  approved: 'Décaissée',
+  pending: 'En attente d’approbation',
+  to_pay: 'Approuvée — à décaisser',
+  rejected: 'Rejetée',
+};
 
-/**
- * Catégories **fermées** des dépenses de production (briqueterie).
- *
- * Elles sont distinctes de `settings.expenseCategories` à dessein : le client a
- * demandé une liste métier (ciment, sable, carburant, main-d'œuvre, électricité,
- * eau, transport, entretien…) et surtout **aucun module de matières premières** —
- * la matière n'est plus un produit du stock, c'est une dépense rattachée à un lot.
- */
-export const PRODUCTION_EXPENSE_CATEGORIES = [
-  'Ciment',
-  'Sable',
-  'Argile / terre',
-  'Bois de chauffe',
-  'Carburant',
-  "Main-d'œuvre",
-  'Électricité',
-  'Eau',
-  'Transport',
-  'Entretien',
-  'Autre',
-] as const;
+/** Conservé pour compatibilité de l'API : une seule portée depuis le retrait de la briqueterie. */
+export type ExpenseScope = 'general';
 
 export function isExpenseScope(value: unknown): value is ExpenseScope {
-  return value === 'general' || value === 'production';
+  return value === 'general';
 }
 
 export type ExpenseRow = {
   id: number;
+  storeId: number | null;
+  storeName: string | null;
   category: string;
   amount: number;
   description: string | null;
   paymentMethod: string;
-  /** `expense` pour un mouvement né d'une dépense ; colonne polymorphe (§6.3). */
   referenceType: string | null;
   referenceId: number | null;
   beneficiary: string | null;
-  /** Date **métier** `YYYY-MM-DD` — le seul champ filtré (§6.5 règle 2). */
+  /** Date **métier** `YYYY-MM-DD`. */
   date: string;
   userId: number | null;
   userName: string | null;
+  approvalStatus: ExpenseApprovalStatus;
+  approvedBy: number | null;
+  approvedByName: string | null;
   /** Annulée = tombstone `deleted_at` posé : plus comptée, jamais effacée. */
   cancelled: boolean;
   createdAt: Date | null;
 };
 
 export type ExpenseInput = {
+  storeId: number;
   category: string;
   amount: number;
   description?: string | null;
@@ -117,12 +87,9 @@ export type ExpenseInput = {
   referenceId?: number | null;
   beneficiary?: string | null;
   date: string;
-  /** Auteur de l'opération — reporté sur la dépense et sur le mouvement de caisse. */
   userId?: number | null;
-  /**
-   * Portée de validation de la catégorie. `production` = liste métier de la
-   * briqueterie, `general` (défaut) = liste des paramètres.
-   */
+  /** L'auteur peut-il dépasser le seuil sans approbation ? */
+  canSkipApproval?: boolean;
   scope?: ExpenseScope;
 };
 
@@ -138,20 +105,16 @@ export type ExpensePatch = {
 };
 
 export type ExpenseListOptions = {
+  scope: StoreScope;
   search?: string;
   category?: string;
   paymentMethod?: string;
+  approvalStatus?: ExpenseApprovalStatus | 'all';
   from?: string;
   to?: string;
   page?: number;
   limit?: number;
-  /** Réservé aux rapports d'audit : par défaut, une dépense annulée disparaît. */
   includeCancelled?: boolean;
-  /**
-   * Portée : `production` ne renvoie que les dépenses rattachées à un lot,
-   * `general` **exclut** ces dernières. Par défaut : tout.
-   */
-  scope?: ExpenseScope;
 };
 
 export type ExpenseListResult = {
@@ -166,82 +129,34 @@ export type ExpensesSummary = {
   totalAmount: number;
   expensesCount: number;
   averageAmount: number;
+  pendingCount: number;
+  pendingAmount: number;
   byCategory: { category: string; total: number; count: number }[];
   byMonth: { month: string; total: number }[];
+  byStore: { storeId: number; storeName: string; total: number }[];
 };
 
 /* ------------------------------------------------------------------ *
- * Validation — tout est vérifié AVANT la moindre écriture
+ * Validation
  * ------------------------------------------------------------------ */
 
-/**
- * Vérifie la catégorie contre la **liste fermée** correspondant à la portée :
- * `settings.expenseCategories` pour une dépense générale,
- * `PRODUCTION_EXPENSE_CATEGORIES` pour une dépense de production.
- *
- * On renvoie toujours la **casse canonique** de la liste (jamais la saisie
- * brute) : sinon « ciment » et « Ciment » créeraient deux lignes de rapport.
- */
-export async function validateExpenseCategory(
-  value: unknown,
-  scope: ExpenseScope = 'general',
-): Promise<string> {
+/** Catégorie validée contre la liste fermée des paramètres (casse canonique). */
+export async function validateExpenseCategory(value: unknown): Promise<string> {
   const category = String(value ?? '').trim();
   if (!category) throw new ValidationError('La catégorie est obligatoire');
 
-  if (scope === 'production') {
-    const canonical = PRODUCTION_EXPENSE_CATEGORIES.find(
-      (item) => item.toLocaleLowerCase('fr-FR') === category.toLocaleLowerCase('fr-FR'),
-    );
-    if (!canonical) {
-      throw new ValidationError(
-        `Catégorie de dépense de production « ${category} » inconnue. Choisissez parmi : ${PRODUCTION_EXPENSE_CATEGORIES.join(', ')}.`,
-      );
-    }
-    return canonical;
-  }
-
   const settings = await getSettings();
   const allowed = settings.expenseCategories ?? [];
-
   const canonical = allowed.find(
     (item) => item.toLocaleLowerCase('fr-FR') === category.toLocaleLowerCase('fr-FR'),
   );
-
   if (!canonical) {
     const liste = allowed.length > 0 ? allowed.join(', ') : 'aucune catégorie définie';
     throw new ValidationError(
       `Catégorie « ${category} » inconnue. Choisissez une catégorie de la liste des paramètres (${liste}).`,
     );
   }
-
   return canonical;
-}
-
-/** Portée déduite d'une dépense existante, pour les chemins de modification. */
-export function expenseScopeOf(expense: { referenceType: string | null }): ExpenseScope {
-  return expense.referenceType === PRODUCTION_EXPENSE_REFERENCE ? 'production' : 'general';
-}
-
-/** Fragment SQL de filtrage par portée, avec ses arguments. */
-function scopeCondition(
-  scope: ExpenseScope | undefined,
-  prefix = '',
-): { sql: string; args: string[] } {
-  const column = `${prefix}reference_type`;
-  if (scope === 'production') {
-    return { sql: `${column} = ?`, args: [PRODUCTION_EXPENSE_REFERENCE] };
-  }
-  if (scope === 'general') {
-    // Une dépense générale est une dépense **non rattachée** à un lot. Le test
-    // `IS NULL` est indispensable : `<> ?` seul écarterait les lignes à
-    // `reference_type` nul, c'est-à-dire l'essentiel des dépenses générales.
-    return {
-      sql: `(${column} IS NULL OR ${column} <> ?)`,
-      args: [PRODUCTION_EXPENSE_REFERENCE],
-    };
-  }
-  return { sql: '', args: [] };
 }
 
 function validateAmount(value: unknown): number {
@@ -266,9 +181,15 @@ function optionalText(value: unknown): string | null {
   return text || null;
 }
 
+function normalizeStatus(value: unknown): ExpenseApprovalStatus {
+  return value === 'pending' || value === 'to_pay' || value === 'rejected' ? value : 'approved';
+}
+
 function mapExpenseRow(row: any): ExpenseRow {
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
     category: row.category,
     amount: Number(row.amount ?? 0),
     description: row.description ?? null,
@@ -279,41 +200,41 @@ function mapExpenseRow(row: any): ExpenseRow {
     date: row.date,
     userId: row.user_id == null ? null : Number(row.user_id),
     userName: row.user_name ?? null,
+    approvalStatus: normalizeStatus(row.approval_status),
+    approvedBy: row.approved_by == null ? null : Number(row.approved_by),
+    approvedByName: row.approved_by_name ?? null,
     cancelled: row.deleted_at != null,
     createdAt: row.created_at ? new Date(Number(row.created_at) * 1000) : null,
   };
 }
 
+const EXPENSE_SELECT = `
+  SELECT e.*, u.name AS user_name, a.name AS approved_by_name, s.name AS store_name
+    FROM expenses e
+    LEFT JOIN users u ON u.id = e.user_id
+    LEFT JOIN users a ON a.id = e.approved_by
+    LEFT JOIN stores s ON s.id = e.store_id`;
+
+/** Une dépense **comptée** : approuvée et non annulée. */
+export const COUNTED_EXPENSE_SQL = `deleted_at IS NULL AND approval_status = 'approved'`;
+
 /* ------------------------------------------------------------------ *
  * Lecture
  * ------------------------------------------------------------------ */
 
-/**
- * Liste paginée, filtrée, avec le nom de l'utilisateur (README §27.2).
- *
- * Le filtre de période porte sur `date` (date métier), **jamais** sur
- * `created_at` : `BETWEEN '2026-01-15' AND '2026-01-15'` sur un horodatage
- * renverrait zéro ligne (§6.5 règle 2).
- */
-export async function listExpenses(options: ExpenseListOptions = {}): Promise<ExpenseListResult> {
+export async function listExpenses(options: ExpenseListOptions): Promise<ExpenseListResult> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
   const offset = (page - 1) * limit;
 
-  const where: string[] = [];
+  const where: string[] = [scopeSql('e.store_id', options.scope)];
   const args: (string | number)[] = [];
 
-  // Une dépense annulée n'est plus comptée : elle sort de la liste par défaut.
   if (!options.includeCancelled) where.push('e.deleted_at IS NULL');
-
-  // Portée : `/depenses` montre les dépenses **générales** par défaut, la
-  // briqueterie lit ses dépenses de production rattachées à un lot.
-  const scope = scopeCondition(options.scope, 'e.');
-  if (scope.sql) {
-    where.push(scope.sql);
-    args.push(...scope.args);
+  if (options.approvalStatus && options.approvalStatus !== 'all') {
+    where.push('e.approval_status = ?');
+    args.push(options.approvalStatus);
   }
-
   if (options.category) {
     where.push('e.category = ?');
     args.push(options.category);
@@ -338,25 +259,13 @@ export async function listExpenses(options: ExpenseListOptions = {}): Promise<Ex
     args.push(like, like, like, like);
   }
 
-  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const whereSql = `WHERE ${where.join(' AND ')}`;
 
   const rows = await rawAll<any>(
-    `SELECT e.id, e.category, e.amount, e.description, e.payment_method, e.reference_type,
-            e.reference_id, e.beneficiary, e.date, e.user_id, e.created_at, e.deleted_at,
-            u.name AS user_name
-     FROM expenses e
-     LEFT JOIN users u ON u.id = e.user_id
-     ${whereSql}
-     ORDER BY e.date DESC, e.id DESC
-     LIMIT ? OFFSET ?`,
+    `${EXPENSE_SELECT} ${whereSql} ORDER BY e.date DESC, e.id DESC LIMIT ? OFFSET ?`,
     [...args, limit, offset],
   );
-
-  const countRow = await rawGet<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM expenses e ${whereSql}`,
-    args,
-  );
-
+  const countRow = await rawGet<{ total: number }>(`SELECT COUNT(*) AS total FROM expenses e ${whereSql}`, args);
   const total = Number(countRow?.total ?? 0);
 
   return {
@@ -369,114 +278,160 @@ export async function listExpenses(options: ExpenseListOptions = {}): Promise<Ex
 }
 
 export async function getExpense(id: number): Promise<ExpenseRow | null> {
-  const row = await rawGet<any>(
-    `SELECT e.id, e.category, e.amount, e.description, e.payment_method, e.reference_type,
-            e.reference_id, e.beneficiary, e.date, e.user_id, e.created_at, e.deleted_at,
-            u.name AS user_name
-     FROM expenses e
-     LEFT JOIN users u ON u.id = e.user_id
-     WHERE e.id = ?`,
-    [id],
-  );
-
+  const row = await rawGet<any>(`${EXPENSE_SELECT} WHERE e.id = ?`, [id]);
   return row ? mapExpenseRow(row) : null;
+}
+
+function assertSameStore(expense: ExpenseRow, storeId: number | null | undefined) {
+  if (!storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
+  if (expense.storeId !== Number(storeId)) {
+    throw new ValidationError(
+      'Cette dépense appartient à un autre magasin : elle ne peut être modifiée que depuis ce magasin.',
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ *
  * Écriture — création
  * ------------------------------------------------------------------ */
 
-/**
- * Création d'une dépense. Ordre imposé (§14) :
- *  1. valider la catégorie contre la liste fermée des paramètres ;
- *  2. insérer la dépense ;
- *  3. **sortir l'argent de la caisse** (`cash_movements`, type `expense`) ;
- *  4. mettre l'écriture en file de synchronisation.
- *
- * Aucune ligne de stock n'est écrite — ni ici, ni nulle part dans ce module.
- */
 export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
-  const scope: ExpenseScope = isExpenseScope(input.scope) ? input.scope : 'general';
-  const category = await validateExpenseCategory(input.category, scope);
+  if (!input.storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
+
+  const category = await validateExpenseCategory(input.category);
   const amount = validateAmount(input.amount);
   const date = validateBusinessDate(input.date);
   const paymentMethod = optionalText(input.paymentMethod) ?? 'Espèces';
   const description = optionalText(input.description);
   const beneficiary = optionalText(input.beneficiary);
 
-  const inserted = await db
-    .insert(expenses)
-    .values({
-      category,
-      amount,
-      description,
-      paymentMethod,
-      referenceType: input.referenceType ?? 'expense',
-      referenceId: input.referenceId ?? null,
-      beneficiary,
-      date,
-      userId: input.userId ?? null,
-    })
-    .returning({ id: expenses.id, syncId: expenses.syncId });
+  const settings = await getSettings();
+  const threshold = Number(settings.expenseApprovalThreshold ?? 0) || 0;
+  const needsApproval = threshold > 0 && amount > threshold && !input.canSkipApproval;
 
-  const id = inserted[0].id;
+  return withTransaction(async () => {
+    const inserted = await db
+      .insert(expenses)
+      .values({
+        storeId: input.storeId,
+        category,
+        amount,
+        description,
+        paymentMethod,
+        referenceType: input.referenceType ?? 'expense',
+        referenceId: input.referenceId ?? null,
+        beneficiary,
+        date,
+        userId: input.userId ?? null,
+        approvalStatus: needsApproval ? 'pending' : 'approved',
+        approvedBy: needsApproval ? null : (input.userId ?? null),
+        approvedAt: needsApproval ? null : new Date(),
+      })
+      .returning({ id: expenses.id });
 
-  try {
-    // Sortie de caisse **systématique** (§14) : c'est le cœur du module.
-    await addCashMovement({
-      type: 'expense',
-      amount,
-      paymentMethod,
-      motif: `Dépense — ${category}`,
-      referenceType: 'expense',
-      referenceId: id,
-      date,
-      userId: input.userId ?? null,
-    });
-  } catch (error) {
-    // Compensation : sans mouvement de caisse, la dépense ne doit pas compter,
-    // sinon la caisse et les dépenses divergent (le solde serait trop haut).
-    // Rien n'est effacé : la ligne est marquée annulée (tombstone, §6.7).
-    const now = new Date();
+    const id = inserted[0].id;
+
+    if (!needsApproval) {
+      await addCashMovement({
+        storeId: input.storeId,
+        type: 'expense',
+        amount,
+        paymentMethod,
+        motif: `Dépense — ${category}`,
+        referenceType: 'expense',
+        referenceId: id,
+        date,
+        userId: input.userId ?? null,
+      });
+    }
+
+    const created = await getExpense(id);
+    if (!created) throw new Error('Dépense créée mais introuvable');
+    return created;
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Approbation (§12)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Décision d'approbation. `approve` → la dépense devient « à décaisser » ;
+ * si l'approbateur travaille dans le magasin de la dépense (`payNow`), elle
+ * est décaissée immédiatement.
+ */
+export async function decideExpense(
+  id: number,
+  decision: 'approve' | 'reject',
+  options: { userId: number; payNow?: boolean; activeStoreId?: number | null; reason?: string | null },
+): Promise<ExpenseRow> {
+  return withTransaction(async () => {
+    const expense = await getExpense(id);
+    if (!expense) throw new NotFoundError('Dépense introuvable');
+    if (expense.cancelled) throw new ValidationError('Cette dépense est annulée');
+    if (expense.approvalStatus !== 'pending') {
+      throw new ValidationError('Cette dépense n’est pas en attente d’approbation');
+    }
+
+    if (decision === 'reject') {
+      await db
+        .update(expenses)
+        .set({
+          approvalStatus: 'rejected',
+          approvedBy: options.userId,
+          approvedAt: new Date(),
+          description: options.reason
+            ? [expense.description, `Rejet : ${options.reason}`].filter(Boolean).join(' — ')
+            : expense.description,
+        })
+        .where(eq(expenses.id, id));
+      return (await getExpense(id))!;
+    }
+
     await db
       .update(expenses)
-      .set({ deletedAt: now, updatedAt: now })
+      .set({ approvalStatus: 'to_pay', approvedBy: options.userId, approvedAt: new Date() })
       .where(eq(expenses.id, id));
 
-    await enqueueSyncWrite('expenses', inserted[0]?.syncId, 'delete', {
-      deleted_at: now.toISOString(),
-      reason: "Échec de l'écriture en caisse",
+    if (options.payNow && options.activeStoreId && options.activeStoreId === expense.storeId) {
+      return payExpense(id, { userId: options.userId, storeId: options.activeStoreId });
+    }
+    return (await getExpense(id))!;
+  });
+}
+
+/** Décaissement d'une dépense approuvée : sortie de caisse du magasin. */
+export async function payExpense(id: number, options: { userId: number; storeId: number }): Promise<ExpenseRow> {
+  return withTransaction(async () => {
+    const expense = await getExpense(id);
+    if (!expense) throw new NotFoundError('Dépense introuvable');
+    assertSameStore(expense, options.storeId);
+    if (expense.cancelled) throw new ValidationError('Cette dépense est annulée');
+    if (expense.approvalStatus !== 'to_pay') {
+      throw new ValidationError('Seule une dépense approuvée « à décaisser » peut être décaissée');
+    }
+
+    await addCashMovement({
+      storeId: options.storeId,
+      type: 'expense',
+      amount: expense.amount,
+      paymentMethod: expense.paymentMethod,
+      motif: `Dépense — ${expense.category}`,
+      referenceType: 'expense',
+      referenceId: id,
+      date: expense.date,
+      userId: options.userId,
     });
 
-    const message = error instanceof Error ? error.message : String(error);
-    throw new ValidationError(
-      `La dépense n'a pas été enregistrée : la sortie de caisse a échoué (${message}). Aucune dépense n'a été conservée.`,
-    );
-  }
-
-  await enqueueSyncWrite('expenses', inserted[0]?.syncId, 'insert', {
-    category,
-    amount,
-    description,
-    payment_method: paymentMethod,
-    beneficiary,
-    date,
+    await db.update(expenses).set({ approvalStatus: 'approved' }).where(eq(expenses.id, id));
+    return (await getExpense(id))!;
   });
-
-  const created = await getExpense(id);
-  if (!created) throw new Error('Dépense créée mais introuvable');
-  return created;
 }
 
 /* ------------------------------------------------------------------ *
  * Écriture — modification
  * ------------------------------------------------------------------ */
 
-/**
- * Champs qui apparaissent **sur le mouvement de caisse** : s'ils changent, la
- * caisse doit être réécrite, sinon elle raconte une autre histoire que la
- * dépense (montant, moyen de paiement, date du mouvement, catégorie du motif).
- */
 function cashRelevantChanges(previous: ExpenseRow, next: ExpenseRow): boolean {
   return (
     next.amount !== previous.amount ||
@@ -487,99 +442,58 @@ function cashRelevantChanges(previous: ExpenseRow, next: ExpenseRow): boolean {
 }
 
 /**
- * Modification d'une dépense déjà sortie de caisse.
- *
- * **Décision assumée** : on ne modifie jamais le mouvement de caisse existant
- * (il est immuable, comme toute pièce comptable) ; on **contre-passe** l'ancien
- * par un mouvement inverse motivé, puis on enregistre le nouveau. La caisse
- * porte donc l'historique complet de la correction, et son solde reste juste :
- *
- *   dépense initiale   : sortie de 500 000 GNF
- *   modification à 700 000 : entrée de 500 000 (contre-passation) puis sortie de 700 000
- *
- * Le contre-passé d'une dépense est une **entrée** (`income`) : l'argent
- * revient en caisse avant que le nouveau montant n'en sorte.
- *
- * Si rien de « caisse » ne change (description, bénéficiaire), aucun mouvement
- * n'est créé : ce serait du bruit dans l'historique de caisse.
- *
- * ⚠️ Limite connue : l'idéal serait une transaction unique (ligne + caisse).
- * `addCashMovement()` ouvre sa propre écriture et vit dans `lib/caisse.ts`, qui
- * est **hors périmètre** de ce module : les écritures sont donc séquentielles.
- * Toutes les validations sont faites **avant** la première écriture, ce qui
- * élimine tout échec métier en cours de route ; seul un échec brut de la base
- * pourrait laisser la caisse en retard, et le message le dit explicitement.
+ * Modification d'une dépense. Une dépense déjà décaissée n'a jamais son
+ * mouvement de caisse modifié : on le **contre-passe** puis on enregistre le
+ * nouveau, dans la même transaction.
  */
 export async function updateExpense(
   id: number,
   patch: ExpensePatch,
-  options: { userId?: number | null } = {},
+  options: { userId?: number | null; storeId?: number | null } = {},
 ): Promise<ExpenseRow> {
-  const previous = await getExpense(id);
-  if (!previous) throw new NotFoundError('Dépense introuvable');
-  if (previous.cancelled) {
-    throw new ValidationError('Cette dépense est annulée : elle ne peut plus être modifiée');
-  }
+  return withTransaction(async () => {
+    const previous = await getExpense(id);
+    if (!previous) throw new NotFoundError('Dépense introuvable');
+    assertSameStore(previous, options.storeId);
+    if (previous.cancelled) {
+      throw new ValidationError('Cette dépense est annulée : elle ne peut plus être modifiée');
+    }
+    if (previous.approvalStatus === 'rejected') {
+      throw new ValidationError('Une dépense rejetée ne peut plus être modifiée');
+    }
 
-  // 1. Tout valider d'abord (aucune écriture partielle possible).
-  // La portée suit la dépense existante : une dépense de production se valide
-  // contre la liste métier, jamais contre celle des paramètres (§9).
-  const scope = expenseScopeOf(previous);
-  const next: ExpenseRow = {
-    ...previous,
-    category:
-      patch.category !== undefined
-        ? await validateExpenseCategory(patch.category, scope)
-        : previous.category,
-    amount: patch.amount !== undefined ? validateAmount(patch.amount) : previous.amount,
-    paymentMethod:
-      patch.paymentMethod !== undefined
-        ? optionalText(patch.paymentMethod) ?? 'Espèces'
-        : previous.paymentMethod,
-    date: patch.date !== undefined ? validateBusinessDate(patch.date) : previous.date,
-    description: patch.description !== undefined ? optionalText(patch.description) : previous.description,
-    beneficiary: patch.beneficiary !== undefined ? optionalText(patch.beneficiary) : previous.beneficiary,
-    referenceType:
-      patch.referenceType !== undefined ? patch.referenceType : previous.referenceType,
-    referenceId: patch.referenceId !== undefined ? patch.referenceId : previous.referenceId,
-  };
+    const next: ExpenseRow = {
+      ...previous,
+      category: patch.category !== undefined ? await validateExpenseCategory(patch.category) : previous.category,
+      amount: patch.amount !== undefined ? validateAmount(patch.amount) : previous.amount,
+      paymentMethod:
+        patch.paymentMethod !== undefined ? optionalText(patch.paymentMethod) ?? 'Espèces' : previous.paymentMethod,
+      date: patch.date !== undefined ? validateBusinessDate(patch.date) : previous.date,
+      description: patch.description !== undefined ? optionalText(patch.description) : previous.description,
+      beneficiary: patch.beneficiary !== undefined ? optionalText(patch.beneficiary) : previous.beneficiary,
+      referenceType: patch.referenceType !== undefined ? patch.referenceType : previous.referenceType,
+      referenceId: patch.referenceId !== undefined ? patch.referenceId : previous.referenceId,
+    };
 
-  // 2. Mettre à jour la dépense (source de vérité de l'intention).
-  const dbPatch: Record<string, unknown> = {
-    category: next.category,
-    amount: next.amount,
-    paymentMethod: next.paymentMethod,
-    date: next.date,
-    description: next.description,
-    beneficiary: next.beneficiary,
-    referenceType: next.referenceType,
-    referenceId: next.referenceId,
-    updatedAt: new Date(),
-  };
+    await db
+      .update(expenses)
+      .set({
+        category: next.category,
+        amount: next.amount,
+        paymentMethod: next.paymentMethod,
+        date: next.date,
+        description: next.description,
+        beneficiary: next.beneficiary,
+        referenceType: next.referenceType,
+        referenceId: next.referenceId,
+      })
+      .where(eq(expenses.id, id));
 
-  const updated = await db
-    .update(expenses)
-    .set(dbPatch as any)
-    .where(eq(expenses.id, id))
-    .returning({ id: expenses.id, syncId: expenses.syncId });
-
-  if (updated.length === 0) throw new NotFoundError('Dépense introuvable');
-
-  await enqueueSyncWrite('expenses', updated[0].syncId, 'update', {
-    category: next.category,
-    amount: next.amount,
-    description: next.description,
-    payment_method: next.paymentMethod,
-    beneficiary: next.beneficiary,
-    date: next.date,
-  });
-
-  // 3. Réécrire la caisse uniquement si un champ monétaire a bougé.
-  if (cashRelevantChanges(previous, next)) {
-    const userId = options.userId ?? previous.userId ?? null;
-
-    try {
+    if (previous.approvalStatus === 'approved' && cashRelevantChanges(previous, next)) {
+      const userId = options.userId ?? previous.userId ?? null;
+      const storeId = Number(previous.storeId);
       await addCashMovement({
+        storeId,
         type: 'income',
         amount: previous.amount,
         paymentMethod: previous.paymentMethod,
@@ -589,8 +503,8 @@ export async function updateExpense(
         date: previous.date,
         userId,
       });
-
       await addCashMovement({
+        storeId,
         type: 'expense',
         amount: next.amount,
         paymentMethod: next.paymentMethod,
@@ -600,111 +514,63 @@ export async function updateExpense(
         date: next.date,
         userId,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new ValidationError(
-        `La dépense a été modifiée, mais la caisse n'a pas pu être réécrite (${message}). Vérifiez la caisse : elle doit être corrigée manuellement.`,
-      );
     }
-  }
 
-  const result = await getExpense(id);
-  if (!result) throw new Error('Dépense introuvable après modification');
-  return result;
+    const result = await getExpense(id);
+    if (!result) throw new Error('Dépense introuvable après modification');
+    return result;
+  });
 }
 
 /* ------------------------------------------------------------------ *
- * Écriture — annulation (jamais de suppression physique)
+ * Écriture — annulation
  * ------------------------------------------------------------------ */
 
-/**
- * Annulation d'une dépense (§6.5 règle 4, §26.13).
- *
- *  - la dépense n'est **plus comptée** (tombstone `deleted_at`) ;
- *  - l'argent **revient en caisse** par un mouvement inverse motivé ;
- *  - **rien n'est effacé** : la ligne reste, le motif obligatoire et l'auteur
- *    sont tracés (audit + payload de synchronisation).
- */
 export async function cancelExpense(
   id: number,
-  options: { reason: string; userId?: number | null },
+  options: { reason: string; userId?: number | null; storeId?: number | null },
 ): Promise<{ id: number; reason: string }> {
   const reason = String(options.reason ?? '').trim();
   if (!reason) throw new ValidationError("Le motif d'annulation est obligatoire");
 
-  const previous = await getExpense(id);
-  if (!previous) throw new NotFoundError('Dépense introuvable');
-  if (previous.cancelled) throw new ValidationError('Cette dépense est déjà annulée');
+  return withTransaction(async () => {
+    const previous = await getExpense(id);
+    if (!previous) throw new NotFoundError('Dépense introuvable');
+    assertSameStore(previous, options.storeId);
+    if (previous.cancelled) throw new ValidationError('Cette dépense est déjà annulée');
 
-  const now = new Date();
+    await db.update(expenses).set({ deletedAt: new Date() }).where(eq(expenses.id, id));
 
-  const updated = await db
-    .update(expenses)
-    .set({ deletedAt: now, updatedAt: now })
-    .where(eq(expenses.id, id))
-    .returning({ syncId: expenses.syncId });
+    // L'argent n'est rendu à la caisse que s'il en était sorti.
+    if (previous.approvalStatus === 'approved') {
+      await addCashMovement({
+        storeId: Number(previous.storeId),
+        type: 'income',
+        amount: previous.amount,
+        paymentMethod: previous.paymentMethod,
+        motif: `Annulation dépense — ${previous.category} : ${reason}`,
+        referenceType: 'expense',
+        referenceId: id,
+        date: previous.date,
+        userId: options.userId ?? null,
+      });
+    }
 
-  try {
-    // Mouvement inverse : la sortie de caisse d'origine est contre-passée par
-    // une entrée du même montant, au même moyen de paiement et à la même date.
-    await addCashMovement({
-      type: 'income',
-      amount: previous.amount,
-      paymentMethod: previous.paymentMethod,
-      motif: `Annulation dépense — ${previous.category} : ${reason}`,
-      referenceType: 'expense',
-      referenceId: id,
-      date: previous.date,
-      userId: options.userId ?? null,
-    });
-  } catch (error) {
-    // Compensation : sans retour en caisse, l'annulation ne doit pas être
-    // conservée, sinon la caisse resterait débitée d'une dépense non comptée.
-    const restored = new Date();
-    await db
-      .update(expenses)
-      .set({ deletedAt: null, updatedAt: restored })
-      .where(eq(expenses.id, id));
-
-    await enqueueSyncWrite('expenses', updated[0]?.syncId, 'update', {
-      deleted_at: null,
-      restored_at: restored.toISOString(),
-    });
-
-    const message = error instanceof Error ? error.message : String(error);
-    throw new ValidationError(
-      `L'annulation a échoué : le retour en caisse n'a pas pu être enregistré (${message}). La dépense reste valide.`,
-    );
-  }
-
-  await enqueueSyncWrite('expenses', updated[0]?.syncId, 'delete', {
-    deleted_at: now.toISOString(),
-    cancel_reason: reason,
-    cancelled_by: options.userId ?? null,
+    return { id, reason };
   });
-
-  return { id, reason };
 }
 
 /* ------------------------------------------------------------------ *
- * Synthèse — toujours calculée à la lecture, jamais stockée (§6.5 règle 6)
+ * Synthèse — calculée à la lecture
  * ------------------------------------------------------------------ */
 
-/**
- * Synthèse d'une période : total, nombre, moyenne, répartition par catégorie
- * et par mois (`YYYY-MM`). Les dépenses annulées sont exclues.
- */
-export async function getExpensesSummary(
-  options: { from?: string; to?: string; scope?: ExpenseScope } = {},
-): Promise<ExpensesSummary> {
-  const where: string[] = ['deleted_at IS NULL'];
+export async function getExpensesSummary(options: {
+  scope: StoreScope;
+  from?: string;
+  to?: string;
+}): Promise<ExpensesSummary> {
+  const where: string[] = [COUNTED_EXPENSE_SQL, scopeSql('store_id', options.scope)];
   const args: (string | number)[] = [];
-
-  const scope = scopeCondition(options.scope);
-  if (scope.sql) {
-    where.push(scope.sql);
-    args.push(...scope.args);
-  }
 
   if (options.from) {
     where.push('date >= ?');
@@ -717,7 +583,7 @@ export async function getExpensesSummary(
 
   const whereSql = `WHERE ${where.join(' AND ')}`;
 
-  const [totals, byCategoryRows, byMonthRows] = await Promise.all([
+  const [totals, byCategoryRows, byMonthRows, byStoreRows, pending] = await Promise.all([
     rawGet<{ count: number; total: number | null }>(
       `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM expenses ${whereSql}`,
       args,
@@ -736,6 +602,17 @@ export async function getExpensesSummary(
        ORDER BY month ASC`,
       args,
     ),
+    rawAll<{ store_id: number; name: string; total: number | null }>(
+      `SELECT e.store_id, s.name, COALESCE(SUM(e.amount), 0) AS total
+         FROM expenses e JOIN stores s ON s.id = e.store_id
+        ${whereSql.replace(/\b(deleted_at|approval_status|store_id|date)\b/g, 'e.$1')}
+        GROUP BY e.store_id, s.name ORDER BY total DESC`,
+      args,
+    ),
+    rawGet<{ count: number; total: number | null }>(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM expenses
+        WHERE deleted_at IS NULL AND approval_status IN ('pending', 'to_pay') AND ${scopeSql('store_id', options.scope)}`,
+    ),
   ]);
 
   const expensesCount = Number(totals?.count ?? 0);
@@ -745,13 +622,17 @@ export async function getExpensesSummary(
     totalAmount,
     expensesCount,
     averageAmount: expensesCount > 0 ? totalAmount / expensesCount : 0,
+    pendingCount: Number(pending?.count ?? 0),
+    pendingAmount: Number(pending?.total ?? 0),
     byCategory: byCategoryRows.map((row) => ({
       category: row.category,
       total: Number(row.total ?? 0),
       count: Number(row.count ?? 0),
     })),
-    byMonth: byMonthRows.map((row) => ({
-      month: row.month,
+    byMonth: byMonthRows.map((row) => ({ month: row.month, total: Number(row.total ?? 0) })),
+    byStore: byStoreRows.map((row) => ({
+      storeId: Number(row.store_id),
+      storeName: String(row.name),
       total: Number(row.total ?? 0),
     })),
   };

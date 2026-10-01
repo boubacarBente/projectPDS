@@ -7,6 +7,7 @@ import {
   required,
   toBool,
   requireAction,
+  scopeFromRequest,
 } from '@/lib/api';
 import { createSupplier, listSuppliers } from '@/lib/suppliers';
 import { writeAudit } from '@/lib/audit';
@@ -15,12 +16,13 @@ import { parseListSort } from '@/lib/list-sort';
 /** GET /api/fournisseurs — liste paginée, filtrable, avec dettes calculées. */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('suppliers.view');
+    const user = await requireAction('suppliers.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
 
     const result = await listSuppliers({
+      scope: scopeFromRequest(user, request),
       search: params.get('search') ?? undefined,
       page,
       limit,

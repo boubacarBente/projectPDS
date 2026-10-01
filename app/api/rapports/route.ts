@@ -6,6 +6,7 @@ import {
   ok,
   requireAction,
   toInt,
+  scopeFromRequest,
 } from '@/lib/api';
 import { can } from '@/lib/permissions';
 import { today } from '@/lib/format';
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
       throw new ValidationError('La date de début doit précéder la date de fin');
     }
 
-    if (!can(user, 'reports.viewAll') && (from !== reference || to !== reference)) {
+    if (!can(user, 'reports.viewAll', user.permissions) && (from !== reference || to !== reference)) {
       throw new ValidationError(
         "Votre rôle ne permet de consulter que le rapport du jour. Sélectionnez la période « Aujourd'hui », ou demandez la permission « Voir tous les rapports ».",
       );
@@ -58,7 +59,12 @@ export async function GET(request: NextRequest) {
     const supplierId = toInt(params.get('supplierId'), 0);
     const paymentStatus = params.get('paymentStatus');
 
+    // `?store=all` : rapport consolidé (avec comparaison par magasin) ;
+    // `?store=<id>` : un magasin ; défaut : magasin actif.
+    const storeIds = scopeFromRequest(user, request);
+
     const report = await getRapportData({
+      storeIds,
       from,
       to,
       previousFrom: previousFrom ? businessDate(previousFrom, 'date de début de comparaison') : null,

@@ -7,6 +7,7 @@ import {
   readJson,
   required,
   requireAction,
+  requireCentralEdit,
   toBool,
 } from '@/lib/api';
 import { createCategory, listCategories } from '@/lib/products';
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('products.create');
+    await requireCentralEdit();
     const body = await readJson<any>(request);
 
     const category = await createCategory({

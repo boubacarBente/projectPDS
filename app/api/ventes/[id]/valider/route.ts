@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, requireAction } from '@/lib/api';
+import { fail, ok, parseId, requireAction, requireActiveStore } from '@/lib/api';
 import { validateSalesInvoice } from '@/lib/sales';
 
 type Params = { params: Promise<{ id: string }> };
@@ -28,6 +28,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
     const user = await requireAction('sales.update');
     const { id } = await params;
 
+    await requireActiveStore(user);
     const invoice = await validateSalesInvoice(parseId(id), user);
 
     return ok({ success: true, invoice });

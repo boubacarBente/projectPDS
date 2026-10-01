@@ -1,10 +1,9 @@
 /**
- * Ouvriers — **une seule table pour les 3 modules** (README §6.3, §19, §20).
+ * Ouvriers — référentiel de main-d'œuvre des chantiers (README §6.3, §19).
  *
- * `workers` est partagée par les chantiers (`service_job_workers`), la
- * briqueterie (`brick_production_workers`) et l'atelier
- * (`furniture_order_workers`) : le référentiel de main-d'œuvre est saisi une
- * fois, et les affectations portent leurs propres `days` / `daily_rate`.
+ * Le référentiel est saisi une fois (partagé entre magasins) et les
+ * affectations (`service_job_workers`) portent leurs propres `days` /
+ * `daily_rate`.
  *
  * ⚠️ `worker_name` reste saisissable dans les tables de liaison : un
  * **journalier ponctuel** qui n'est pas enregistré ici doit pouvoir être payé
@@ -20,7 +19,6 @@
 import { db, rawAll, rawGet } from '@/db';
 import { workers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { enqueueSyncWrite } from '@/lib/sync';
 import { NotFoundError, ValidationError } from '@/lib/api';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
@@ -96,18 +94,9 @@ type WorkerSqlRow = {
  */
 const WORKER_SELECT = `
   SELECT w.id, w.name, w.phone, w.role, w.specialty, w.daily_rate, w.is_active, w.created_at,
-         (
-           (SELECT COUNT(*) FROM service_job_workers sjw WHERE sjw.worker_id = w.id)
-           + (SELECT COUNT(*) FROM brick_production_workers bpw WHERE bpw.worker_id = w.id)
-         ) AS assignment_count,
-         (
-           COALESCE((SELECT SUM(sjw.days) FROM service_job_workers sjw WHERE sjw.worker_id = w.id), 0)
-           + COALESCE((SELECT SUM(bpw.days) FROM brick_production_workers bpw WHERE bpw.worker_id = w.id), 0)
-         ) AS total_days,
-         (
-           COALESCE((SELECT SUM(sjw.amount) FROM service_job_workers sjw WHERE sjw.worker_id = w.id), 0)
-           + COALESCE((SELECT SUM(bpw.amount) FROM brick_production_workers bpw WHERE bpw.worker_id = w.id), 0)
-         ) AS total_labor_cost
+         (SELECT COUNT(*) FROM service_job_workers sjw WHERE sjw.worker_id = w.id) AS assignment_count,
+         COALESCE((SELECT SUM(sjw.days) FROM service_job_workers sjw WHERE sjw.worker_id = w.id), 0) AS total_days,
+         COALESCE((SELECT SUM(sjw.amount) FROM service_job_workers sjw WHERE sjw.worker_id = w.id), 0) AS total_labor_cost
   FROM workers w
 `;
 
@@ -221,15 +210,6 @@ export async function createWorker(input: WorkerInput): Promise<WorkerRow> {
     })
     .returning({ id: workers.id, syncId: workers.syncId });
 
-  await enqueueSyncWrite('workers', inserted[0]?.syncId, 'insert', {
-    name: normalizeName(input.name),
-    phone: input.phone?.trim() || null,
-    role: isWorkerRole(input.role) ? input.role : 'worker',
-    specialty: input.specialty?.trim() || null,
-    daily_rate: normalizeRate(input.dailyRate),
-    is_active: input.isActive ?? true,
-  });
-
   const created = await getWorker(inserted[0].id);
   if (!created) throw new NotFoundError('Ouvrier créé mais introuvable');
   return created;
@@ -256,8 +236,6 @@ export async function updateWorker(id: number, patch: Partial<WorkerInput>): Pro
 
   if (updated.length === 0) throw new NotFoundError('Ouvrier introuvable');
 
-  await enqueueSyncWrite('workers', updated[0].syncId, 'update', values);
-
   const result = await getWorker(id);
   if (!result) throw new NotFoundError('Ouvrier introuvable après modification');
   return result;
@@ -276,9 +254,6 @@ export async function deactivateWorker(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Ouvrier introuvable');
 
-  await enqueueSyncWrite('workers', updated[0].syncId, 'delete', {
-    deleted_at: new Date().toISOString(),
-  });
 }
 
 export async function reactivateWorker(id: number): Promise<void> {
@@ -290,5 +265,4 @@ export async function reactivateWorker(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Ouvrier introuvable');
 
-  await enqueueSyncWrite('workers', updated[0].syncId, 'update', { is_active: true });
 }

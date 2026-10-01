@@ -1,0 +1,179 @@
+/**
+ * Registre des tables synchronisées (option B : base locale par magasin +
+ * serveur central PostgreSQL).
+ *
+ * Fichier **sans dépendance** (pas d'import de `@/db`) : il est lu par les
+ * triggers de capture (`db/triggers.ts`), par le moteur de synchronisation
+ * (`lib/sync-engine.ts`), par la sauvegarde et par les scripts de test.
+ *
+ * Chaque table déclare sa **portée** — c'est elle qui décide quels postes
+ * reçoivent la ligne :
+ *  - `global`   : référentiel partagé (catalogue, clients, utilisateurs…),
+ *                 reçu par tous les postes ;
+ *  - `store`    : opération d'un magasin (colonne `store_id`), reçue par les
+ *                 postes de ce magasin et par le siège ;
+ *  - `child`    : ligne rattachée à un document parent ; elle hérite de la
+ *                 portée du parent ;
+ *  - `transfer` : transfert intermagasins, reçu par **les deux** magasins.
+ *
+ * `hqOnly` : la table ne peut être modifiée que depuis un poste « siège »
+ * (ou une installation autonome). Un poste de magasin ne la pousse jamais :
+ * c'est ce qui garantit un catalogue, des comptes et des paramètres centraux.
+ *
+ * L'ordre du tableau est l'ordre d'application : les parents avant les enfants.
+ */
+
+export type SyncScope =
+  | { kind: 'global' }
+  | { kind: 'store'; column: string }
+  | { kind: 'child'; parentTable: string; parentColumn: string }
+  | { kind: 'transfer' };
+
+export type SyncedTable = {
+  name: string;
+  scope: SyncScope;
+  hqOnly?: boolean;
+  /**
+   * Clé naturelle : si une ligne reçue n'existe pas localement par `sync_id`
+   * mais qu'une ligne locale porte la même clé naturelle (créée hors ligne sur
+   * ce poste), on **fusionne** : la ligne locale adopte l'identité reçue.
+   * Évite les doublons sur les contraintes d'unicité.
+   */
+  naturalKey?: string[];
+  /**
+   * Références polymorphes (`type` + `reference_id`) : colonne de type,
+   * colonne d'identifiant, et table cible selon la valeur du type.
+   */
+  polymorphic?: { typeColumn: string; idColumn: string; targets: Record<string, string> }[];
+};
+
+export const SYNCED_TABLES: SyncedTable[] = [
+  { name: 'users', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['username'] },
+  { name: 'stores', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['code'] },
+  { name: 'user_stores', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['user_id', 'store_id'] },
+  { name: 'user_permissions', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['user_id', 'action'] },
+  { name: 'settings', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['key'] },
+  { name: 'categories', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['name'] },
+  { name: 'products', scope: { kind: 'global' }, hqOnly: true },
+  { name: 'customers', scope: { kind: 'global' } },
+  { name: 'suppliers', scope: { kind: 'global' } },
+  { name: 'workers', scope: { kind: 'global' } },
+  { name: 'product_stocks', scope: { kind: 'store', column: 'store_id' }, naturalKey: ['store_id', 'product_id'] },
+  { name: 'sales_invoices', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'sales_invoice_items',
+    scope: { kind: 'child', parentTable: 'sales_invoices', parentColumn: 'invoice_id' },
+  },
+  { name: 'purchase_invoices', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'purchase_invoice_items',
+    scope: { kind: 'child', parentTable: 'purchase_invoices', parentColumn: 'invoice_id' },
+  },
+  { name: 'service_jobs', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'service_job_materials',
+    scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
+  },
+  {
+    name: 'service_job_workers',
+    scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
+  },
+  { name: 'stock_transfers', scope: { kind: 'transfer' } },
+  {
+    name: 'stock_transfer_items',
+    scope: { kind: 'child', parentTable: 'stock_transfers', parentColumn: 'transfer_id' },
+  },
+  {
+    name: 'stock_transfer_events',
+    scope: { kind: 'child', parentTable: 'stock_transfers', parentColumn: 'transfer_id' },
+  },
+  { name: 'inventories', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'inventory_items',
+    scope: { kind: 'child', parentTable: 'inventories', parentColumn: 'inventory_id' },
+  },
+  {
+    name: 'payments',
+    scope: { kind: 'store', column: 'store_id' },
+    polymorphic: [
+      {
+        typeColumn: 'type',
+        idColumn: 'reference_id',
+        targets: {
+          sale: 'sales_invoices',
+          purchase: 'purchase_invoices',
+          service_job: 'service_jobs',
+        },
+      },
+    ],
+  },
+  { name: 'cash_sessions', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'cash_movements',
+    scope: { kind: 'store', column: 'store_id' },
+    polymorphic: [
+      {
+        typeColumn: 'reference_type',
+        idColumn: 'reference_id',
+        targets: {
+          sale: 'sales_invoices',
+          purchase: 'purchase_invoices',
+          payment: 'payments',
+          expense: 'expenses',
+          service_job: 'service_jobs',
+        },
+      },
+    ],
+  },
+  {
+    name: 'stock_movements',
+    scope: { kind: 'store', column: 'store_id' },
+    polymorphic: [
+      {
+        typeColumn: 'reference_type',
+        idColumn: 'reference_id',
+        targets: {
+          sale: 'sales_invoices',
+          purchase: 'purchase_invoices',
+          service_job: 'service_jobs',
+          inventory: 'inventories',
+          transfer: 'stock_transfers',
+        },
+      },
+    ],
+  },
+  {
+    name: 'expenses',
+    scope: { kind: 'store', column: 'store_id' },
+    polymorphic: [
+      {
+        typeColumn: 'reference_type',
+        idColumn: 'reference_id',
+        targets: { service_job: 'service_jobs' },
+      },
+    ],
+  },
+  { name: 'report_deliveries', scope: { kind: 'store', column: 'store_id' } },
+  { name: 'audit_logs', scope: { kind: 'store', column: 'store_id' } },
+];
+
+export const SYNCED_TABLE_NAMES = SYNCED_TABLES.map((t) => t.name);
+
+export function syncedTable(name: string): SyncedTable | undefined {
+  return SYNCED_TABLES.find((t) => t.name === name);
+}
+
+/**
+ * Tables purement locales, jamais synchronisées : sessions, compteurs,
+ * file d'envoi, quarantaine, conflits, état de synchronisation.
+ */
+export const LOCAL_TABLES = [
+  'sessions',
+  'doc_sequences',
+  'login_attempts',
+  'devices',
+  'sync_state',
+  'sync_changes',
+  'sync_pending',
+  'sync_conflicts',
+];

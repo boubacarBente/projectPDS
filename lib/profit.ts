@@ -17,7 +17,10 @@
  *    jamais comptés deux fois ;
  *  - le coût des marchandises est celui du **jour du calcul**, lu sur
  *    `products.purchase_price` (compromis V1 assumé, Q20) ;
- *  - une dépense **annulée** (tombstone `deleted_at`) n'est plus comptée ;
+ *  - une dépense **annulée** (tombstone `deleted_at`) ou non encore approuvée
+ *    n'est pas comptée ;
+ *  - tout est calculé sur une **portée de magasins** (un magasin, ou la vue
+ *    consolidée).
  *  - un chantier **annulé** ne compte ni sa recette, ni ses matériaux, ni sa
  *    main-d'œuvre.
  *
@@ -28,6 +31,7 @@
  */
 
 import { rawAll, rawGet } from '@/db';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /* ------------------------------------------------------------------ *
  * Types publics
@@ -56,7 +60,7 @@ export type PeriodResult = {
   grossMarginPercent: number;
   /** Dépenses de fonctionnement de la période (annulées exclues). */
   expenses: number;
-  /** Main-d'œuvre des chantiers, fabrications et commandes d'atelier. */
+  /** Main-d'œuvre des chantiers. */
   laborCost: number;
   /** Bénéfice net = bénéfice brut − dépenses − main-d'œuvre (§15). */
   netProfit: number;
@@ -76,13 +80,13 @@ export type PeriodResult = {
  * V1 (Q20 : l'instantané du coût pourra être ajouté si les marges historiques
  * doivent être figées).
  */
-async function computeCogs(from: string, to: string): Promise<number> {
+async function computeCogs(from: string, to: string, scope: StoreScope): Promise<number> {
   const row = await rawGet<{ cogs: number | null }>(
     `SELECT SUM(i.quantity * COALESCE(p.purchase_price, 0)) AS cogs
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
      LEFT JOIN products p ON p.id = i.product_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?`,
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', scope)}`,
     [from, to],
   );
   return Number(row?.cogs ?? 0);
@@ -97,16 +101,16 @@ async function computeCogs(from: string, to: string): Promise<number> {
  * rapports par produit. Le résultat d'activité complet — celui affiché par le
  * tableau de bord et `/soldes` — est `getPeriodResult()`, en bas de ce fichier.
  */
-export async function calculateSalesProfitMetrics(from: string, to: string) {
+export async function calculateSalesProfitMetrics(from: string, to: string, scope: StoreScope) {
   const revenueRow = await rawGet<{ revenue: number | null; quantity: number | null }>(
     `SELECT COALESCE(SUM(i.amount), 0) AS revenue, COALESCE(SUM(i.quantity), 0) AS quantity
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?`,
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', scope)}`,
     [from, to],
   );
 
-  const cogs = await computeCogs(from, to);
+  const cogs = await computeCogs(from, to, scope);
   const revenue = Number(revenueRow?.revenue ?? 0);
 
   return {
@@ -121,7 +125,7 @@ export async function calculateSalesProfitMetrics(from: string, to: string) {
 }
 
 /** Marge par produit, triée par marge cumulée (README §15). */
-export async function getProductMargins(from: string, to: string, limit = 20) {
+export async function getProductMargins(from: string, to: string, scope: StoreScope, limit = 20) {
   const rows = await rawAll<any>(
     `SELECT i.product_id,
             i.product_name,
@@ -131,7 +135,7 @@ export async function getProductMargins(from: string, to: string, limit = 20) {
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
      LEFT JOIN products p ON p.id = i.product_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ?
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', scope)}
      GROUP BY i.product_id, i.product_name
      ORDER BY (SUM(i.amount) - SUM(i.quantity * COALESCE(p.purchase_price, 0))) DESC
      LIMIT ?`,
@@ -160,25 +164,16 @@ export async function getProductMargins(from: string, to: string, limit = 20) {
  * ------------------------------------------------------------------ */
 
 /**
- * Main-d'œuvre de la période : chantiers, fabrications de briques et commandes
- * d'atelier — les trois sources de `labor_cost` du §15, en une seule requête.
- *
- * ⚠️ `j.status <> 'cancelled'` est indispensable : un chantier annulé ne doit
- * pas laisser sa main-d'œuvre dans le bénéfice.
+ * Main-d'œuvre de la période : affectations des chantiers non annulés.
  */
-async function sumLaborCost(from: string, to: string): Promise<number> {
+async function sumLaborCost(from: string, to: string, scope: StoreScope): Promise<number> {
   const row = await rawGet<{ labor: number | null }>(
-    `SELECT
-       (SELECT COALESCE(SUM(labor_cost), 0) FROM brick_productions
-         WHERE date(start_date) >= date(?) AND date(start_date) <= date(?)) +
-       (SELECT COALESCE(SUM(labor_cost), 0) FROM furniture_orders
-         WHERE date(start_date) >= date(?) AND date(start_date) <= date(?)) +
-       (SELECT COALESCE(SUM(amount), 0) FROM service_job_workers w
-          JOIN service_jobs j ON j.id = w.job_id
-         WHERE j.status <> 'cancelled'
-           AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?))
-       AS labor`,
-    [from, to, from, to, from, to],
+    `SELECT COALESCE(SUM(w.amount), 0) AS labor
+       FROM service_job_workers w
+       JOIN service_jobs j ON j.id = w.job_id
+      WHERE j.status <> 'cancelled' AND ${scopeSql('j.store_id', scope)}
+        AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)`,
+    [from, to],
   );
   return Number(row?.labor ?? 0);
 }
@@ -194,19 +189,21 @@ async function sumLaborCost(from: string, to: string): Promise<number> {
  * `getBalancesSummary()` (`/soldes`) : pour une même période, les deux écrans
  * affichent nécessairement le même chiffre.
  */
-export async function getPeriodResult(from: string, to: string): Promise<PeriodResult> {
+export async function getPeriodResult(from: string, to: string, scope: StoreScope): Promise<PeriodResult> {
+  const v = scopeSql('store_id', scope);
+  const jv = scopeSql('j.store_id', scope);
   const [salesRow, jobsRow, jobsMaterialsRow, marginMetrics, expensesRow, laborCost] =
     await Promise.all([
       rawGet<{ total: number | null }>(
         `SELECT COALESCE(SUM(total_ht), 0) AS total
          FROM sales_invoices
-         WHERE status = 'active' AND date >= ? AND date <= ?`,
+         WHERE status = 'active' AND date >= ? AND date <= ? AND ${v}`,
         [from, to],
       ),
       rawGet<{ count: number; total: number | null }>(
         `SELECT COUNT(*) AS count, COALESCE(SUM(total), 0) AS total
          FROM service_jobs
-         WHERE status <> 'cancelled'
+         WHERE status <> 'cancelled' AND ${v}
            AND date(start_date) >= date(?) AND date(start_date) <= date(?)`,
         [from, to],
       ),
@@ -214,18 +211,18 @@ export async function getPeriodResult(from: string, to: string): Promise<PeriodR
         `SELECT COALESCE(SUM(m.amount), 0) AS total
          FROM service_job_materials m
          JOIN service_jobs j ON j.id = m.job_id
-         WHERE j.status <> 'cancelled'
+         WHERE j.status <> 'cancelled' AND ${jv}
            AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)`,
         [from, to],
       ),
-      calculateSalesProfitMetrics(from, to),
+      calculateSalesProfitMetrics(from, to, scope),
       rawGet<{ total: number | null }>(
         `SELECT COALESCE(SUM(amount), 0) AS total
          FROM expenses
-         WHERE deleted_at IS NULL AND date >= ? AND date <= ?`,
+         WHERE deleted_at IS NULL AND approval_status = 'approved' AND date >= ? AND date <= ? AND ${v}`,
         [from, to],
       ),
-      sumLaborCost(from, to),
+      sumLaborCost(from, to, scope),
     ]);
 
   const revenueHt = Number(salesRow?.total ?? 0);

@@ -5,6 +5,8 @@ import {
   parseId,
   readJson,
   requireAction,
+  requireActiveStore,
+  assertStoreVisible,
   toNumber,
   NotFoundError,
   ValidationError,
@@ -24,11 +26,12 @@ type Params = { params: Promise<{ id: string }> };
 /** GET /api/chantiers/[id] — fiche complète : matériaux, équipe, paiements, coûts. */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('jobs.view');
+    const user = await requireAction('jobs.view');
     const { id } = await params;
 
     const detail = await getServiceJob(parseId(id));
     if (!detail) throw new NotFoundError('Chantier introuvable');
+    assertStoreVisible(user, detail.job.storeId);
 
     return ok(detail);
   } catch (error) {
@@ -64,7 +67,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
       throw new ValidationError('Aucune modification fournie');
     }
 
-    const job = await updateServiceJob(jobId, patch as any);
+    const storeId = await requireActiveStore(user);
+    const job = await updateServiceJob(jobId, patch as any, storeId);
 
     await writeAudit({
       user,
@@ -96,6 +100,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       request.nextUrl.searchParams.get('reason') ||
       '';
 
+    await requireActiveStore(user);
     const job = await cancelServiceJob(jobId, reason, user);
 
     await writeAudit({

@@ -28,10 +28,8 @@ export type Settings = {
   purchasePrefix: string;
   receiptPrefix: string;
   jobPrefix: string;
-  brickPrefix: string;
-  /** Préfixe des **commandes** de briqueterie (§20) — distinct des lots `BRI`. */
-  brickOrderPrefix: string;
-  furniturePrefix: string;
+  transferPrefix: string;
+  inventoryPrefix: string;
   defaultTaxRate: number;
   /* Référentiels — listes fermées (§6.6) */
   paymentMethods: string[];
@@ -54,12 +52,24 @@ export type Settings = {
   /* Règles métier */
   creditLimitEnforced: boolean;
   invoiceFooterNote: string;
-  /* Synchronisation (§23.9) — désactivée par défaut (Q21) */
-  syncMode: 'off' | 'backup' | 'multi';
-  syncApiUrl: string;
-  syncDeviceId: string;
-  syncIntervalMinutes: number;
-  syncNumberBlockSize: number;
+  /** Au-delà de ce montant, une dépense saisie par un non-administrateur attend une approbation (0 = jamais). */
+  expenseApprovalThreshold: number;
+  /** Les transferts exigent-ils une validation avant expédition ? */
+  transferApprovalRequired: boolean;
+  /** Répartition des charges du siège dans les rapports consolidés : prorata du CA, parts égales, ou aucune. */
+  centralChargesAllocation: 'revenue' | 'equal' | 'none';
+  /** Un gérant peut-il fixer un prix de vente local ? */
+  localPricesAllowed: boolean;
+  /* Sauvegarde (§18) — locaux au poste */
+  autoBackupEnabled: boolean;
+  /** Dossier de copie externe (clé USB, disque réseau, dossier Google Drive synchronisé). */
+  backupExternalDir: string;
+  backupRetentionDays: number;
+  /*
+   * La synchronisation n'est plus un paramètre : l'identité du poste, son mode
+   * (autonome / siège / magasin) et l'adresse du serveur vivent dans
+   * `sync_state` (voir `lib/device.ts`) et se règlent depuis /synchronisation.
+   */
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -74,13 +84,16 @@ export const DEFAULT_SETTINGS: Settings = {
   currencySymbol: 'GNF',
   dateFormat: 'DD/MM/YYYY',
   invoicePrefix: 'FAC',
-  invoiceNumberFormat: '{PREFIX}-{YYYY}-{NNNNNN}',
+  /**
+   * `{STORE}` = code du magasin + numéro de poste (ex. `KAL3`) : deux postes
+   * hors ligne ne peuvent jamais produire le même numéro (§9, §23.8).
+   */
+  invoiceNumberFormat: '{PREFIX}-{STORE}-{YYYY}-{NNNNNN}',
   purchasePrefix: 'ACH',
   receiptPrefix: 'REC',
   jobPrefix: 'CHA',
-  brickPrefix: 'BRI',
-  brickOrderPrefix: 'BCM',
-  furniturePrefix: 'MEU',
+  transferPrefix: 'TRF',
+  inventoryPrefix: 'INV',
   // Q2 : taux par défaut 0 % (facturation sans TVA), champ présent et configurable.
   defaultTaxRate: 0,
   paymentMethods: ['Espèces', 'Mobile Money', 'Virement', 'Crédit'],
@@ -100,23 +113,25 @@ export const DEFAULT_SETTINGS: Settings = {
   // Q18 : on avertit, on ne bloque pas, en V1.
   creditLimitEnforced: false,
   invoiceFooterNote: '',
-  syncMode: 'off',
-  syncApiUrl: '',
-  syncDeviceId: '',
-  syncIntervalMinutes: 15,
-  syncNumberBlockSize: 500,
+  expenseApprovalThreshold: 0,
+  transferApprovalRequired: true,
+  centralChargesAllocation: 'revenue',
+  localPricesAllowed: true,
+  autoBackupEnabled: true,
+  backupExternalDir: '',
+  backupRetentionDays: 30,
 };
 
 /** Clés de `settings` qui ne sont **jamais** synchronisées (§23.9). */
 export const LOCAL_ONLY_SETTINGS_KEYS: (keyof Settings)[] = [
-  'syncMode',
-  'syncApiUrl',
-  'syncDeviceId',
   'theme',
   'primaryColor',
   'sidebarColor',
   'sidebarCollapsed',
   'reportProviderConfig',
+  'autoBackupEnabled',
+  'backupExternalDir',
+  'backupRetentionDays',
 ];
 
 export const SETTINGS_KEY_LABELS: Partial<Record<keyof Settings, string>> = {
@@ -162,13 +177,16 @@ export const BOOLEAN_SETTINGS_KEYS: (keyof Settings)[] = [
   'lowStockAlert',
   'sidebarCollapsed',
   'creditLimitEnforced',
+  'transferApprovalRequired',
+  'localPricesAllowed',
+  'autoBackupEnabled',
 ];
 
 export const NUMBER_SETTINGS_KEYS: (keyof Settings)[] = [
   'defaultTaxRate',
   'defaultStockMin',
-  'syncIntervalMinutes',
-  'syncNumberBlockSize',
+  'expenseApprovalThreshold',
+  'backupRetentionDays',
 ];
 
 /** Valeur applicative → texte stocké (les listes sont séparées par des virgules). */

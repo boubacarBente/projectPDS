@@ -8,7 +8,11 @@ import {
   required,
   requireAction,
   toBool,
+  requireCentralEdit,
 } from '@/lib/api';
+import { assertAssignableRole, assertAssignableStores } from '@/lib/user-scope';
+import { setUserAssignments } from '@/lib/stores';
+import { withTransaction } from '@/db';
 import { createUser, getUserStats, listUsersPage } from '@/lib/users';
 import { writeAudit } from '@/lib/audit';
 import { isRole } from '@/lib/permissions';
@@ -29,7 +33,10 @@ import { parseListSort } from '@/lib/list-sort';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('users.manage');
+    const actor = await requireAction('users.manage');
+    // Un gérant ne voit que les comptes de ses magasins.
+    const scopeStoreIds = actor.allStores ? undefined : actor.storeIds;
+    const storeFilter = Number(request.nextUrl.searchParams.get('storeId'));
 
     const params = request.nextUrl.searchParams;
 
@@ -49,6 +56,7 @@ export async function GET(request: NextRequest) {
       const all = await listUsersPage({
         includeInactive: true,
         role,
+        storeIds: scopeStoreIds,
         limit: 200,
         page: 1,
         sort: parseListSort(params.get('sort'), ['recent', 'name'], 'name'),
@@ -59,6 +67,8 @@ export async function GET(request: NextRequest) {
     const result = await listUsersPage({
       search: params.get('search') ?? undefined,
       role,
+      storeIds: scopeStoreIds,
+      storeId: Number.isInteger(storeFilter) && storeFilter > 0 ? storeFilter : undefined,
       inactiveOnly: toBool(params.get('inactive'), false),
       includeInactive: toBool(params.get('includeInactive'), false),
       page,
@@ -82,18 +92,38 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('users.manage');
+    // Les comptes sont centraux : créés au siège (ou en installation autonome).
+    await requireCentralEdit();
     const body = await readJson<any>(request);
 
     if (!isRole(body.role)) {
-      throw new ValidationError('Rôle invalide : choisissez l’un des six rôles proposés');
+      throw new ValidationError('Rôle invalide : choisissez l’un des rôles proposés');
+    }
+    assertAssignableRole(user, body.role);
+
+    // Affectations : `stores: [{ storeId, isManager }]`, ou par défaut le magasin actif.
+    const requested: { storeId: number; isManager?: boolean }[] = Array.isArray(body.stores)
+      ? body.stores.map((s: any) => ({ storeId: Number(s.storeId ?? s), isManager: Boolean(s.isManager) }))
+      : user.storeId
+        ? [{ storeId: user.storeId, isManager: false }]
+        : [];
+    assertAssignableStores(user, requested.map((s) => s.storeId));
+    if (body.role !== 'admin' && requested.length === 0) {
+      throw new ValidationError('Affectez ce compte à au moins un magasin.');
     }
 
-    const created = await createUser({
-      name: required(body.name, 'Nom'),
-      username: required(body.username, 'Identifiant'),
-      password: required(body.password, 'Mot de passe'),
-      role: body.role,
-      phone: body.phone ?? null,
+    const created = await withTransaction(async () => {
+      const row = await createUser({
+        name: required(body.name, 'Nom'),
+        username: required(body.username, 'Identifiant'),
+        password: required(body.password, 'Mot de passe'),
+        role: body.role,
+        phone: body.phone ?? null,
+      });
+      if (requested.length > 0) {
+        await setUserAssignments(row.id, requested, { id: user.id, name: user.name });
+      }
+      return row;
     });
 
     await writeAudit({

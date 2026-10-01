@@ -29,7 +29,6 @@ import {
   type PermissionOverride,
   type Role,
 } from '@/lib/permissions';
-import { enqueueSyncWrite } from '@/lib/sync';
 import { writeAudit } from '@/lib/audit';
 
 /**
@@ -139,11 +138,6 @@ export async function setUserOverrides(
       })
       .returning({ syncId: userPermissions.syncId });
 
-    await enqueueSyncWrite('user_permissions', inserted[0]?.syncId, 'insert', {
-      user_id: userId,
-      action,
-      effect,
-    });
   }
 
   invalidatePermissionsCache(userId);

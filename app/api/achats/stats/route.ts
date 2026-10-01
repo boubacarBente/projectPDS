@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, requireAction } from '@/lib/api';
+import { fail, ok, requireAction, scopeFromRequest } from '@/lib/api';
 import { getPurchaseStats } from '@/lib/purchases';
 import type { PeriodKey } from '@/lib/dashboard';
 
@@ -15,12 +15,12 @@ const PERIODS: PeriodKey[] = ['day', 'week', 'month', 'year', 'total'];
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('purchases.view');
+    const user = await requireAction('purchases.view');
 
     const raw = request.nextUrl.searchParams.get('period') ?? 'month';
     const period: PeriodKey = (PERIODS as string[]).includes(raw) ? (raw as PeriodKey) : 'month';
 
-    return ok(await getPurchaseStats(period));
+    return ok(await getPurchaseStats(period, scopeFromRequest(user, request)));
   } catch (error) {
     return fail(error);
   }

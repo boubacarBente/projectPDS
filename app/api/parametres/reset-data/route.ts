@@ -1,7 +1,6 @@
 import { fail, ok, requireAction } from '@/lib/api';
 import { createBackup, resetBusinessData } from '@/lib/backup';
 import { writeAudit } from '@/lib/audit';
-import { resetDeviceIdCache } from '@/lib/sync';
 
 /**
  * POST /api/parametres/reset-data — réinitialise les données métier.
@@ -16,8 +15,6 @@ export async function POST() {
 
     const { path: safetyBackup } = await createBackup();
     const result = await resetBusinessData();
-
-    resetDeviceIdCache();
 
     await writeAudit({
       user,

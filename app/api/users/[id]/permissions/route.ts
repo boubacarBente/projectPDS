@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction, ValidationError } from '@/lib/api';
+import { fail, ok, parseId, readJson, requireAction, requireCentralEdit, ValidationError } from '@/lib/api';
+import { assertCanManageUser } from '@/lib/user-scope';
 import {
   clearUserOverrides,
   getPermissionMatrix,
@@ -18,8 +19,9 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('users.manage');
+    const actor = await requireAction('users.manage');
     const { id } = await params;
+    await assertCanManageUser(actor, parseId(id));
 
     return ok(await getPermissionMatrix(parseId(id)));
   } catch (error) {
@@ -38,6 +40,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const actor = await requireAction('users.manage');
     const { id } = await params;
+    await requireCentralEdit();
+    await assertCanManageUser(actor, parseId(id));
     const userId = parseId(id);
     const body = await readJson<any>(request);
 
@@ -83,6 +87,8 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   try {
     const actor = await requireAction('users.manage');
     const { id } = await params;
+    await requireCentralEdit();
+    await assertCanManageUser(actor, parseId(id));
 
     const effective = await clearUserOverrides(parseId(id), { id: actor.id, name: actor.name });
 

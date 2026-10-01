@@ -15,7 +15,7 @@
 import { db, rawAll, rawGet } from '@/db';
 import { suppliers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { scopeSql, type StoreScope } from '@/lib/stores';
 import { listPayments, type PaymentRow } from '@/lib/payments';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
@@ -54,7 +54,10 @@ export type SupplierStats = {
   lastPurchaseDate: string | null;
   /** Produits les plus achetés chez ce fournisseur (5 premiers, par montant). */
   topProducts: { productName: string; quantity: number; amount: number }[];
+  /** Dette et achats par magasin (§10). */
+  byStore: { storeId: number; storeName: string; balance: number; purchased: number }[];
   recentPurchases: {
+    storeName: string | null;
     id: number;
     reference: string;
     supplierReference: string | null;
@@ -91,6 +94,8 @@ export type PaginatedSuppliers = {
  */
 export async function listSuppliers(
   options: {
+    /** Magasins dont on additionne les achats (dettes par établissement, §10). */
+    scope?: StoreScope;
     search?: string;
     page?: number;
     limit?: number;
@@ -148,7 +153,7 @@ export async function listSuppliers(
              SUM(remaining_amount) AS balance,
              MAX(date)             AS last_purchase_date
       FROM purchase_invoices
-      WHERE status = 'active' AND supplier_id IS NOT NULL
+      WHERE status = 'active' AND supplier_id IS NOT NULL ${storeFilter(options.scope)}
       GROUP BY supplier_id
     ) inv ON inv.supplier_id = s.id
     ${whereSql}
@@ -207,7 +212,11 @@ function mapSupplierRow(row: any): SupplierRow {
   };
 }
 
-export async function getSupplier(id: number): Promise<SupplierRow | null> {
+function storeFilter(scope: StoreScope | undefined, column = 'store_id'): string {
+  return scope ? `AND ${scopeSql(column, scope)}` : '';
+}
+
+export async function getSupplier(id: number, scope?: StoreScope): Promise<SupplierRow | null> {
   const row = await rawGet<any>(
     `SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active, s.created_at,
             COALESCE(inv.purchase_count, 0)   AS purchase_count,
@@ -220,7 +229,7 @@ export async function getSupplier(id: number): Promise<SupplierRow | null> {
        SELECT supplier_id, COUNT(*) AS purchase_count, SUM(total) AS total_purchased,
               SUM(amount_paid) AS total_paid, SUM(remaining_amount) AS balance,
               MAX(date) AS last_purchase_date
-       FROM purchase_invoices WHERE status = 'active' AND supplier_id IS NOT NULL
+       FROM purchase_invoices WHERE status = 'active' AND supplier_id IS NOT NULL ${storeFilter(scope)}
        GROUP BY supplier_id
      ) inv ON inv.supplier_id = s.id
      WHERE s.id = ?`,
@@ -241,12 +250,6 @@ export async function createSupplier(input: SupplierInput): Promise<SupplierRow>
       isActive: input.isActive ?? true,
     })
     .returning({ id: suppliers.id, syncId: suppliers.syncId });
-
-  await enqueueSyncWrite('suppliers', inserted[0]?.syncId, 'insert', {
-    name: input.name.trim(),
-    phone: input.phone ?? null,
-    address: input.address ?? null,
-  });
 
   const created = await getSupplier(inserted[0].id);
   if (!created) throw new Error('Fournisseur créé mais introuvable');
@@ -270,8 +273,6 @@ export async function updateSupplier(id: number, input: Partial<SupplierInput>):
 
   if (updated.length === 0) throw new Error('Fournisseur introuvable');
 
-  await enqueueSyncWrite('suppliers', updated[0].syncId, 'update', patch);
-
   const result = await getSupplier(id);
   if (!result) throw new Error('Fournisseur introuvable après modification');
   return result;
@@ -292,9 +293,6 @@ export async function deactivateSupplier(id: number): Promise<void> {
 
   if (updated.length === 0) throw new Error('Fournisseur introuvable');
 
-  await enqueueSyncWrite('suppliers', updated[0].syncId, 'delete', {
-    deleted_at: new Date().toISOString(),
-  });
 }
 
 export async function reactivateSupplier(id: number): Promise<void> {
@@ -308,20 +306,18 @@ export async function reactivateSupplier(id: number): Promise<void> {
 
   // La réactivation est une écriture comme une autre : elle part en file aussi,
   // sinon le poste distant garderait la fiche désactivée.
-  await enqueueSyncWrite('suppliers', updated[0].syncId, 'update', {
-    is_active: true,
-    deleted_at: null,
-  });
 }
 
 /** Fiche détaillée : statistiques, produits les plus achetés, derniers achats. */
-export async function getSupplierStats(id: number): Promise<SupplierStats | null> {
-  const supplier = await getSupplier(id);
+export async function getSupplierStats(id: number, scope?: StoreScope): Promise<SupplierStats | null> {
+  const supplier = await getSupplier(id, scope);
   if (!supplier) return null;
+  const sf = storeFilter(scope);
+  const sfv = storeFilter(scope, 'v.store_id');
 
   const bounds = await rawGet<{ first_date: string | null; last_date: string | null }>(
     `SELECT MIN(date) AS first_date, MAX(date) AS last_date
-     FROM purchase_invoices WHERE supplier_id = ? AND status = 'active'`,
+     FROM purchase_invoices WHERE supplier_id = ? AND status = 'active' ${sf}`,
     [id],
   );
 
@@ -331,7 +327,7 @@ export async function getSupplierStats(id: number): Promise<SupplierStats | null
             SUM(i.amount)   AS amount
      FROM purchase_invoice_items i
      JOIN purchase_invoices v ON v.id = i.invoice_id
-     WHERE v.supplier_id = ? AND v.status = 'active'
+     WHERE v.supplier_id = ? AND v.status = 'active' ${sfv}
      GROUP BY i.product_name
      ORDER BY amount DESC
      LIMIT 5`,
@@ -339,12 +335,20 @@ export async function getSupplierStats(id: number): Promise<SupplierStats | null
   );
 
   const recentPurchases = await rawAll<any>(
-    `SELECT id, reference, supplier_reference, date, due_date, total,
-            amount_paid, remaining_amount, payment_status, status
-     FROM purchase_invoices
-     WHERE supplier_id = ?
-     ORDER BY date DESC, id DESC
+    `SELECT v.id, v.reference, v.supplier_reference, v.date, v.due_date, v.total,
+            v.amount_paid, v.remaining_amount, v.payment_status, v.status, st.name AS store_name
+     FROM purchase_invoices v LEFT JOIN stores st ON st.id = v.store_id
+     WHERE v.supplier_id = ? ${sfv}
+     ORDER BY v.date DESC, v.id DESC
      LIMIT 10`,
+    [id],
+  );
+
+  const byStoreRows = await rawAll<{ store_id: number; name: string; balance: number; purchased: number }>(
+    `SELECT v.store_id, st.name, COALESCE(SUM(v.remaining_amount), 0) AS balance, COALESCE(SUM(v.total), 0) AS purchased
+       FROM purchase_invoices v JOIN stores st ON st.id = v.store_id
+      WHERE v.supplier_id = ? AND v.status = 'active' ${sfv}
+      GROUP BY v.store_id, st.name ORDER BY st.name`,
     [id],
   );
 
@@ -363,8 +367,15 @@ export async function getSupplierStats(id: number): Promise<SupplierStats | null
       quantity: Number(p.quantity ?? 0),
       amount: Number(p.amount ?? 0),
     })),
+    byStore: byStoreRows.map((r) => ({
+      storeId: Number(r.store_id),
+      storeName: String(r.name),
+      balance: Number(r.balance ?? 0),
+      purchased: Number(r.purchased ?? 0),
+    })),
     recentPurchases: recentPurchases.map((p) => ({
       id: Number(p.id),
+      storeName: p.store_name ?? null,
       reference: p.reference,
       supplierReference: p.supplier_reference ?? null,
       date: p.date,
@@ -379,16 +390,16 @@ export async function getSupplierStats(id: number): Promise<SupplierStats | null
 }
 
 /** Statistiques globales de l'en-tête de page. */
-export async function getSuppliersSummary(): Promise<SuppliersSummary> {
+export async function getSuppliersSummary(scope?: StoreScope): Promise<SuppliersSummary> {
   const row = await rawGet<any>(
     `SELECT
        (SELECT COUNT(*) FROM suppliers) AS total_suppliers,
        (SELECT COUNT(*) FROM suppliers WHERE is_active = 1) AS active_suppliers,
        (SELECT COUNT(DISTINCT supplier_id) FROM purchase_invoices
-         WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL) AS debtors_count,
+         WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL ${storeFilter(scope)}) AS debtors_count,
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices
-         WHERE status = 'active' AND supplier_id IS NOT NULL) AS total_payables,
-       (SELECT COALESCE(SUM(total), 0) FROM purchase_invoices WHERE status = 'active') AS total_purchased`,
+         WHERE status = 'active' AND supplier_id IS NOT NULL ${storeFilter(scope)}) AS total_payables,
+       (SELECT COALESCE(SUM(total), 0) FROM purchase_invoices WHERE status = 'active' ${storeFilter(scope)}) AS total_purchased`,
   );
 
   return {
@@ -407,9 +418,10 @@ export async function getSuppliersSummary(): Promise<SuppliersSummary> {
  */
 export async function listSupplierPayments(
   supplierId: number,
-  options: { page?: number; limit?: number } = {},
+  options: { scope: StoreScope; page?: number; limit?: number },
 ): Promise<{ data: PaymentRow[]; total: number; page: number; limit: number; totalPages: number }> {
   return listPayments({
+    scope: options.scope,
     type: 'purchase',
     supplierId,
     page: options.page,
@@ -418,7 +430,7 @@ export async function listSupplierPayments(
 }
 
 /** Recherche rapide pour une modale de sélection (achat, dépense, chantier). */
-export async function searchSuppliers(term: string, limit = 20): Promise<SupplierRow[]> {
-  const { data } = await listSuppliers({ search: term, limit });
+export async function searchSuppliers(term: string, limit = 20, scope?: StoreScope): Promise<SupplierRow[]> {
+  const { data } = await listSuppliers({ search: term, limit, scope });
   return data;
 }

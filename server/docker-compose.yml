@@ -1,0 +1,65 @@
+# Déploiement sur un VPS (Ubuntu + Docker) :
+#   1. copier ce dossier `server/` sur le VPS ;
+#   2. créer un fichier `.env` (voir `.env.example`) ;
+#   3. pointer votre nom de domaine (ex. sync.planetedeco.com) vers l'IP du VPS ;
+#   4. `docker compose up -d`.
+# Caddy obtient et renouvelle automatiquement le certificat HTTPS.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: planete_deco
+      POSTGRES_USER: planete
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U planete -d planete_deco"]
+      interval: 10s
+      retries: 10
+
+  sync:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://planete:${POSTGRES_PASSWORD}@db:5432/planete_deco
+      ENROLL_MASTER_KEY: ${ENROLL_MASTER_KEY:?définir ENROLL_MASTER_KEY dans .env}
+      PORT: 8080
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [sync]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SYNC_DOMAIN: ${SYNC_DOMAIN:?définir SYNC_DOMAIN dans .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # Sauvegarde quotidienne de PostgreSQL (conservée 14 jours dans ./backups).
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      sh -c 'while true; do
+        pg_dump -h db -U planete -d planete_deco -Fc -f /backups/planete-deco-$$(date +%F).dump;
+        find /backups -name "*.dump" -mtime +14 -delete;
+        sleep 86400; done'
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

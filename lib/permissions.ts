@@ -6,33 +6,27 @@
  * chaque Route Handler.
  */
 
-export type Role = 'admin' | 'manager' | 'seller' | 'storekeeper' | 'carpenter' | 'brickmaker';
+export type Role = 'admin' | 'manager' | 'seller' | 'storekeeper';
 
 export const ROLES: Role[] = [
   'admin',
   'manager',
   'seller',
   'storekeeper',
-  'carpenter',
-  'brickmaker',
 ];
 
 export const ROLE_LABELS: Record<Role, string> = {
-  admin: 'Administrateur',
-  manager: 'Gérant',
+  admin: 'Administrateur général',
+  manager: 'Gérant de magasin',
   seller: 'Vendeur / Caissier',
   storekeeper: 'Magasinier',
-  carpenter: 'Menuisier',
-  brickmaker: 'Briquetier',
 };
 
 export const ROLE_LABELS_PLURAL: Record<Role, string> = {
-  admin: 'Administrateurs',
-  manager: 'Gérants',
+  admin: 'Administrateurs généraux',
+  manager: 'Gérants de magasin',
   seller: 'Vendeurs / Caissiers',
   storekeeper: 'Magasiniers',
-  carpenter: 'Menuisiers',
-  brickmaker: 'Briquetiers',
 };
 
 export type Action =
@@ -77,6 +71,7 @@ export type Action =
   | 'expenses.create'
   | 'expenses.update'
   | 'expenses.delete'
+  | 'expenses.approve'
   /* Paiements */
   | 'payments.view'
   | 'payments.create'
@@ -86,14 +81,18 @@ export type Action =
   | 'jobs.create'
   | 'jobs.update'
   | 'jobs.delete'
-  | 'brick.view'
-  | 'brick.create'
-  | 'brick.update'
-  | 'brick.delete'
-  | 'furniture.view'
-  | 'furniture.create'
-  | 'furniture.update'
-  | 'furniture.delete'
+  /* Multi-magasins */
+  | 'stores.view'
+  | 'stores.manage'
+  | 'stores.viewAll'
+  | 'transfers.view'
+  | 'transfers.create'
+  | 'transfers.approve'
+  | 'transfers.ship'
+  | 'transfers.receive'
+  | 'inventory.view'
+  | 'inventory.manage'
+  | 'inventory.validate'
   /* Administration */
   | 'users.manage'
   | 'audit.view'
@@ -144,6 +143,7 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'expenses.create',
     'expenses.update',
     'expenses.delete',
+    'expenses.approve',
     'payments.view',
     'payments.create',
     'workers.manage',
@@ -151,14 +151,6 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'jobs.create',
     'jobs.update',
     'jobs.delete',
-    'brick.view',
-    'brick.create',
-    'brick.update',
-    'brick.delete',
-    'furniture.view',
-    'furniture.create',
-    'furniture.update',
-    'furniture.delete',
     'users.manage',
     'audit.view',
     'settings.view',
@@ -166,6 +158,17 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'settings.critical',
     'backup.manage',
     'sync.manage',
+    'stores.view',
+    'stores.manage',
+    'stores.viewAll',
+    'transfers.view',
+    'transfers.create',
+    'transfers.approve',
+    'transfers.ship',
+    'transfers.receive',
+    'inventory.view',
+    'inventory.manage',
+    'inventory.validate',
   ],
   manager: [
     'dashboard.view',
@@ -198,21 +201,26 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'expenses.create',
     'expenses.update',
     'expenses.delete',
+    'expenses.approve',
     'payments.view',
     'payments.create',
     'workers.manage',
     'jobs.view',
     'jobs.create',
     'jobs.update',
-    'brick.view',
-    'brick.create',
-    'brick.update',
-    'furniture.view',
-    'furniture.create',
-    'furniture.update',
     'audit.view',
     'settings.view',
     'settings.update',
+    'stores.view',
+    'transfers.view',
+    'transfers.create',
+    'transfers.approve',
+    'transfers.ship',
+    'transfers.receive',
+    'inventory.view',
+    'inventory.manage',
+    'inventory.validate',
+    'users.manage',
   ],
   seller: [
     'dashboard.view',
@@ -237,6 +245,7 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'payments.create',
     'jobs.view',
     'settings.view',
+    'stores.view',
   ],
   storekeeper: [
     'dashboard.view',
@@ -253,42 +262,21 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'stock.adjust',
     'workers.manage',
     'jobs.view',
-    'brick.view',
-    'brick.create',
-    'brick.update',
-    'furniture.view',
-    'furniture.create',
-    'furniture.update',
     'settings.view',
-  ],
-  carpenter: [
-    'dashboard.view',
-    'customers.view',
-    'products.view',
-    'stock.view',
-    'workers.manage',
-    'furniture.view',
-    'furniture.create',
-    'furniture.update',
-    'settings.view',
-  ],
-  brickmaker: [
-    'dashboard.view',
-    'customers.view',
-    'products.view',
-    'stock.view',
-    'workers.manage',
-    'brick.view',
-    'brick.create',
-    'brick.update',
-    'settings.view',
+    'stores.view',
+    'transfers.view',
+    'transfers.create',
+    'transfers.ship',
+    'transfers.receive',
+    'inventory.view',
+    'inventory.manage',
   ],
 };
 
 export type PermissionUser = { role?: string | null } | null | undefined;
 
 /**
- * Les 57 actions de l'application, dans leur ordre d'affichage.
+ * Les actions de l'application, dans leur ordre d'affichage.
  * Cette liste est la **source unique** : l'écran de permissions la parcourt
  * pour construire sa matrice, ce qui garantit qu'aucune action n'est oubliée.
  */
@@ -328,6 +316,7 @@ export const ALL_ACTIONS: Action[] = [
   'expenses.create',
   'expenses.update',
   'expenses.delete',
+  'expenses.approve',
   'payments.view',
   'payments.create',
   'workers.manage',
@@ -335,14 +324,17 @@ export const ALL_ACTIONS: Action[] = [
   'jobs.create',
   'jobs.update',
   'jobs.delete',
-  'brick.view',
-  'brick.create',
-  'brick.update',
-  'brick.delete',
-  'furniture.view',
-  'furniture.create',
-  'furniture.update',
-  'furniture.delete',
+  'stores.view',
+  'stores.manage',
+  'stores.viewAll',
+  'transfers.view',
+  'transfers.create',
+  'transfers.approve',
+  'transfers.ship',
+  'transfers.receive',
+  'inventory.view',
+  'inventory.manage',
+  'inventory.validate',
   'users.manage',
   'audit.view',
   'settings.view',
@@ -362,6 +354,7 @@ export const ACTION_GROUPS = [
   'Caisse et dépenses',
   'Paiements',
   'Production',
+  'Magasins',
   'Administration',
 ] as const;
 
@@ -420,6 +413,7 @@ export const ACTION_META: Record<Action, ActionMeta> = {
   'expenses.view': { label: 'Consulter les dépenses', group: 'Caisse et dépenses', description: 'Frais de fonctionnement et rapports par catégorie.' },
   'expenses.create': { label: 'Enregistrer une dépense', group: 'Caisse et dépenses', description: 'Sortie de caisse (sans effet sur le stock).' },
   'expenses.update': { label: 'Modifier une dépense', group: 'Caisse et dépenses', description: 'Contre-passe et réenregistre le mouvement de caisse.' },
+  'expenses.approve': { label: 'Approuver les dépenses', group: 'Caisse et dépenses', description: 'Valider ou rejeter les dépenses au-dessus du seuil d’approbation.', dangerous: true },
   'expenses.delete': { label: 'Annuler une dépense', group: 'Caisse et dépenses', description: 'Annulation avec motif, contre-passation de la caisse.', dangerous: true },
 
   'payments.view': { label: 'Consulter les paiements', group: 'Paiements', description: 'Historique des encaissements et réimpression des reçus.' },
@@ -430,14 +424,18 @@ export const ACTION_META: Record<Action, ActionMeta> = {
   'jobs.create': { label: 'Créer un chantier ou un devis', group: 'Production', description: 'Nouvelle prestation, avec ses matériaux et sa main-d’œuvre.' },
   'jobs.update': { label: 'Modifier un chantier', group: 'Production', description: 'Avancement, devis, matériaux et équipe.' },
   'jobs.delete': { label: 'Annuler un chantier', group: 'Production', description: 'Annulation avec motif (aucune suppression).', dangerous: true },
-  'brick.view': { label: 'Consulter la briqueterie', group: 'Production', description: 'Lots, étapes, types de briques et coûts de revient.' },
-  'brick.create': { label: 'Lancer une fabrication', group: 'Production', description: 'Nouveau lot, avec matières premières et équipe.' },
-  'brick.update': { label: 'Suivre une fabrication', group: 'Production', description: 'Avancer les étapes, saisir les pertes et les coûts.' },
-  'brick.delete': { label: 'Annuler une fabrication', group: 'Production', description: 'Annulation avec motif (aucune suppression).', dangerous: true },
-  'furniture.view': { label: 'Consulter l’atelier', group: 'Production', description: 'Modèles, commandes, suivi et coûts.' },
-  'furniture.create': { label: 'Créer une commande de meuble', group: 'Production', description: 'Commande standard ou sur mesure, avec sa nomenclature.' },
-  'furniture.update': { label: 'Suivre une commande', group: 'Production', description: 'Étapes d’atelier, matériaux, chutes et équipe.' },
-  'furniture.delete': { label: 'Annuler une commande', group: 'Production', description: 'Annulation avec motif (aucune suppression).', dangerous: true },
+
+  'stores.view': { label: 'Voir ses magasins', group: 'Magasins', description: 'Fiche et indicateurs des magasins auxquels on est affecté.' },
+  'stores.manage': { label: 'Gérer les magasins', group: 'Magasins', description: 'Créer, modifier, suspendre ou archiver un magasin, désigner son gérant.', dangerous: true },
+  'stores.viewAll': { label: 'Vue consolidée tous magasins', group: 'Magasins', description: 'Consulter les opérations de tous les magasins, même sans affectation.', dangerous: true },
+  'transfers.view': { label: 'Consulter les transferts', group: 'Magasins', description: 'Transferts de stock entre magasins et leur historique.' },
+  'transfers.create': { label: 'Demander un transfert', group: 'Magasins', description: 'Créer une demande de transfert vers ou depuis son magasin.' },
+  'transfers.approve': { label: 'Valider un transfert', group: 'Magasins', description: 'Valider ou refuser une demande de transfert.', dangerous: true },
+  'transfers.ship': { label: 'Expédier un transfert', group: 'Magasins', description: 'Sortir les quantités du stock source (mise en transit).' },
+  'transfers.receive': { label: 'Réceptionner un transfert', group: 'Magasins', description: 'Réception totale ou partielle, signalement d’écart ou de litige.' },
+  'inventory.view': { label: 'Consulter les inventaires', group: 'Magasins', description: 'Inventaires physiques et écarts constatés.' },
+  'inventory.manage': { label: 'Préparer un inventaire', group: 'Magasins', description: 'Ouvrir un inventaire et saisir les comptages.' },
+  'inventory.validate': { label: 'Valider un inventaire', group: 'Magasins', description: 'Appliquer les écarts au stock. Action sensible.', dangerous: true },
 
   'users.manage': { label: 'Gérer les utilisateurs', group: 'Administration', description: 'Créer des comptes, changer les rôles et les permissions, réinitialiser les mots de passe. Action sensible.', dangerous: true },
   'audit.view': { label: 'Consulter l’historique des actions', group: 'Administration', description: 'Journal de toutes les opérations sensibles.' },

@@ -29,7 +29,8 @@ import {
 } from '@/lib/auth';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
 import { ROLES, isRole, type Role } from '@/lib/permissions';
-import { enqueueSyncWrite } from '@/lib/sync';
+import { revokeUserSessions } from '@/lib/session';
+import { rawAll } from '@/db';
 import { MIN_PASSWORD_LENGTH, USERNAME_PATTERN } from '@/lib/constants';
 import { DEFAULT_LIST_SORT, compareByListSort, type ListSort } from '@/lib/list-sort';
 
@@ -53,6 +54,8 @@ export type UserRow = {
   isActive: boolean;
   lastLoginAt: Date | null;
   createdAt: Date | null;
+  /** Magasins affectés (affectations actives). */
+  stores?: { id: number; code: string; name: string; isManager: boolean }[];
 };
 
 export type UserInput = {
@@ -170,12 +173,23 @@ export async function listUsersPage(options: {
   limit?: number;
   /** `recent` (défaut) = dernier compte créé ; `name` = ordre alphabétique. */
   sort?: ListSort;
+  /** Restreint aux comptes affectés à ces magasins (gérant de magasin). */
+  storeIds?: number[];
+  storeId?: number;
 } = {}): Promise<{ data: UserRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(200, options.limit ?? 20));
   const sort = options.sort ?? DEFAULT_LIST_SORT;
 
-  let rows = await listUsers();
+  let rows = await withAssignments(await listUsers());
+
+  if (options.storeIds) {
+    const allowed = new Set(options.storeIds);
+    rows = rows.filter((row) => (row.stores ?? []).some((store) => allowed.has(store.id)));
+  }
+  if (options.storeId) {
+    rows = rows.filter((row) => (row.stores ?? []).some((store) => store.id === options.storeId));
+  }
 
   if (options.inactiveOnly) {
     rows = rows.filter((row) => !row.isActive);
@@ -221,6 +235,34 @@ export async function listUsersPage(options: {
     limit,
     totalPages,
   };
+}
+
+/** Ajoute les magasins affectés à chaque compte. */
+async function withAssignments(rows: UserRow[]): Promise<UserRow[]> {
+  let assignments: any[] = [];
+  try {
+    assignments = await rawAll<any>(
+      `SELECT us.user_id, s.id, s.code, s.name, us.is_manager
+         FROM user_stores us JOIN stores s ON s.id = us.store_id
+        WHERE us.is_active = 1 AND us.deleted_at IS NULL AND s.status <> 'archived'
+        ORDER BY s.name`,
+    );
+  } catch {
+    assignments = [];
+  }
+  const byUser = new Map<number, NonNullable<UserRow['stores']>>();
+  for (const a of assignments) {
+    const list = byUser.get(Number(a.user_id)) ?? [];
+    list.push({ id: Number(a.id), code: String(a.code), name: String(a.name), isManager: Boolean(a.is_manager) });
+    byUser.set(Number(a.user_id), list);
+  }
+  return rows.map((row) => ({ ...row, stores: byUser.get(row.id) ?? [] }));
+}
+
+export async function getUserWithStores(id: number): Promise<UserRow | null> {
+  const user = await getUser(id);
+  if (!user) return null;
+  return (await withAssignments([user]))[0];
 }
 
 /** Compteurs de l'en-tête de page : totaux et répartition par rôle. */
@@ -339,14 +381,6 @@ export async function createUser(input: UserInput): Promise<UserRow> {
 
   if (inserted.length === 0) throw new ValidationError('Création de l’utilisateur impossible');
 
-  await enqueueSyncWrite('users', inserted[0].syncId, 'insert', {
-    name,
-    username,
-    role: input.role,
-    phone: normalizePhone(input.phone),
-    is_active: true,
-  });
-
   const created = await getUser(inserted[0].id);
   if (!created) throw new NotFoundError('Utilisateur créé mais introuvable');
   return created;
@@ -408,14 +442,13 @@ export async function updateUser(id: number, patch: UserPatch): Promise<UserRow>
 
   if (updated.length === 0) throw new NotFoundError('Utilisateur introuvable');
 
+  // Désactivation ou changement de rôle : les sessions ouvertes sont révoquées
+  // immédiatement (§5 « révocation de ses sessions »).
+  if (values.isActive === false || values.role !== undefined) {
+    await revokeUserSessions(id);
+  }
+
   // Payload de synchronisation sans aucune donnée d'authentification.
-  await enqueueSyncWrite('users', updated[0].syncId, 'update', {
-    name: values.name ?? existing.name,
-    username: values.username ?? existing.username,
-    role: values.role ?? existing.role,
-    phone: values.phone ?? existing.phone,
-    is_active: values.isActive ?? existing.isActive,
-  });
 
   const result = await getUser(id);
   if (!result) throw new NotFoundError('Utilisateur introuvable après modification');
@@ -428,7 +461,11 @@ export async function updateUser(id: number, patch: UserPatch): Promise<UserRow>
  * Le mot de passe n'est ni journalisé, ni mis en file de synchronisation : les
  * empreintes scrypt ne sont pas propagées entre postes par ce canal.
  */
-export async function changePassword(id: number, newPassword: string): Promise<void> {
+export async function changePassword(
+  id: number,
+  newPassword: string,
+  options: { keepSessionId?: string } = {},
+): Promise<void> {
   const existing = await getUser(id);
   if (!existing) throw new NotFoundError('Utilisateur introuvable');
 
@@ -440,6 +477,9 @@ export async function changePassword(id: number, newPassword: string): Promise<v
     .update(users)
     .set({ passwordHash: hashPassword(newPassword), updatedAt: new Date() })
     .where(eq(users.id, id));
+
+  // Un mot de passe changé ferme les sessions ouvertes ailleurs.
+  await revokeUserSessions(id, options.keepSessionId);
 }
 
 /**
@@ -456,6 +496,7 @@ export async function deactivateUser(id: number): Promise<void> {
   await assertNotLastActiveAdmin(id, existing, 'deactivate');
 
   await deactivateUserFromAuth(id);
+  await revokeUserSessions(id);
 
   const row = await db
     .select({ syncId: users.syncId })
@@ -463,10 +504,6 @@ export async function deactivateUser(id: number): Promise<void> {
     .where(eq(users.id, id))
     .limit(1);
 
-  await enqueueSyncWrite('users', row[0]?.syncId, 'delete', {
-    id,
-    deleted_at: new Date().toISOString(),
-  });
 }
 
 /** Réactivation d'un compte désactivé (aucune donnée n'a été supprimée). */
@@ -483,9 +520,4 @@ export async function reactivateUser(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Utilisateur introuvable');
 
-  await enqueueSyncWrite('users', updated[0].syncId, 'update', {
-    id,
-    is_active: true,
-    deleted_at: null,
-  });
 }
