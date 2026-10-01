@@ -1,57 +1,59 @@
 'use client';
 
 /**
- * Écran `/synchronisation` (README §23.10).
+ * Écran `/synchronisation` — multi-magasins, option B (README §23).
  *
- * ⚠️ **La synchronisation est optionnelle et désactivée par défaut**, et le
- * service PostgreSQL en ligne **n'existe pas**. Cet écran ne prétend donc jamais
- * que des données sont parties : il montre l'**état réel** du poste — mode,
- * file d'attente locale, quarantaine, conflits, appareils connus — et propose
- * les actions qui fonctionnent réellement, dont l'**export / import manuel**
- * d'un paquet `.json` (transport par clé USB).
+ * Chaque poste garde sa propre base SQLite (source de vérité locale) ; le
+ * serveur central ne fait que relayer les changements entre postes. Cet écran
+ * montre l'état **réel** du poste et propose les seules actions qui existent :
+ *  - inscrire un poste autonome (siège : clé maîtresse ; magasin : code) ;
+ *  - synchroniser maintenant, déconnecter ;
+ *  - au siège : générer les codes d'inscription des magasins, voir et révoquer
+ *    les postes connectés ;
+ *  - arbitrer les conflits, consulter la quarantaine.
  *
- * L'application reste pleinement utilisable avec `sync_mode = 'off'` : rien ici
- * n'est un prérequis d'une opération métier.
+ * ⚠️ Aucun import runtime d'un module serveur (`lib/sync-engine.ts`,
+ * `lib/device.ts` importent `@/db`) : uniquement des `import type`.
  *
- * ⚠️ Aucun import runtime d'un module serveur (§11 bis) : les routes de
- * `lib/sync.ts` et `lib/sync-export.ts` ne sont atteintes que par `fetch`.
+ * `GET /api/sync/status` renvoie un **résumé** aux utilisateurs sans
+ * `sync.manage` (pas de bloc `device`) : l'écran se réduit alors à l'état.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { ConfirmDialog } from '@/components/confirm-dialog';
-import { Modal } from '@/components/modal';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
-import { Pagination } from '@/components/search-filter';
 import {
   Badge,
   Card,
-  EmptyState,
   ErrorState,
+  FormField,
   InfoRow,
   MiniStat,
   PageSection,
   SkeletonCards,
-  SkeletonTable,
+  type BadgeTone,
 } from '@/components/design-system';
-import { useSettings } from '@/app/parametres/page';
-import { formatDateShort, formatDateTime } from '@/lib/date-format';
+import { useAuth } from '@/components/auth-provider';
+import { formatDateTime } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
+import type { SyncResult, SyncStatus } from '@/lib/sync-engine';
+import type { DeviceMode } from '@/lib/device';
 
 /* ------------------------------------------------------------------ *
- * Types — miroir de `GET /api/sync/status`
+ * Types — miroir des routes `app/api/sync/**`
  * ------------------------------------------------------------------ */
 
-type OutboxRow = {
+type ConflictRow = {
   id: number;
   tableName: string;
   syncId: string;
-  operation: string;
-  attempts: number;
-  lastAttemptAt: string | Date | null;
-  lastError: string | null;
-  createdAt: string | Date | null;
+  localPayload: Record<string, unknown> | null;
+  remotePayload: Record<string, unknown> | null;
+  resolution: string;
+  createdAt: string | null;
 };
 
 type QuarantineRow = {
@@ -60,102 +62,132 @@ type QuarantineRow = {
   syncId: string;
   missingParent: string | null;
   attempts: number;
-  lastError: string | null;
-  createdAt: string | Date | null;
+  createdAt: string | null;
 };
 
-type DeviceRow = {
-  deviceId: string;
-  name: string;
-  isCurrent: boolean;
-  lastSeenAt: string | Date | null;
-  lastPushAt: string | Date | null;
-  lastPullAt: string | Date | null;
-};
-
-type StateRow = { key: string; value: string | null; updatedAt: string | Date | null };
-
-type SyncStatus = {
-  mode: 'off' | 'backup' | 'multi';
-  online: boolean;
+/** Résumé renvoyé à tout utilisateur connecté. */
+type StatusSummary = {
+  mode: DeviceMode;
+  connected: boolean;
   pending: number;
-  failed: number;
-  lastSyncAt: string | null;
-  lastSyncError: string | null;
-  pendingQuarantine: number;
-  pendingPreview: QuarantineRow[];
-  queued: number;
-  oldestPendingAt: string | Date | null;
-  deviceId: string;
-  deviceName: string;
-  apiUrl: string;
-  intervalMinutes: number;
-  numberBlockSize: number;
-  outbox: OutboxRow[];
-  devices: DeviceRow[];
-  state: StateRow[];
-  message: string;
-};
-
-type ConflictRow = {
-  id: number;
-  tableName: string;
-  syncId: string;
-  localPayload: string;
-  remotePayload: string;
-  resolution: string;
-  resolvedAt: string | Date | null;
-  resolvedBy: number | null;
-  createdAt: string | Date | null;
-};
-
-type ImportReport = {
-  tablesImported: number;
-  rowsInserted: number;
-  rowsUpdated: number;
-  quarantined: number;
   conflicts: number;
-  errors: string[];
-  message?: string;
+  lastSuccessAt: string | null;
+  hasError: boolean;
 };
 
-const VIEW_LIMIT = 10;
+/** Détail réservé à `sync.manage`. */
+type StatusFull = SyncStatus &
+  StatusSummary & {
+    conflictsList: ConflictRow[];
+    quarantineList: QuarantineRow[];
+  };
 
-const MODE_LABELS: Record<string, string> = {
-  off: 'Désactivée',
-  backup: 'Mode A — Sauvegarde en ligne (unidirectionnel)',
-  multi: 'Mode B — Multi-postes (bidirectionnel)',
-};
+type StatusResponse = StatusSummary | StatusFull;
 
-const QUARANTINE_LIMIT = 10;
-const CONFLICTS_LIMIT = 10;
-
-async function readJson<T>(response: Response): Promise<T> {
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((payload as any)?.error ?? 'Requête impossible');
-  return payload as T;
+function isFull(status: StatusResponse | null): status is StatusFull {
+  return Boolean(status && 'device' in status);
 }
 
-/** Extrait lisible d'une charge utile JSON, pour comparer local et distant. */
-function payloadSummary(raw: string): { label: string; value: string }[] {
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return [];
-    return Object.entries(parsed as Record<string, unknown>)
-      .filter(([key]) => key !== 'id' && key !== 'sync_id')
-      .slice(0, 12)
-      .map(([key, value]) => ({
-        label: key.replace(/_/g, ' '),
-        value:
-          value === null || value === undefined
-            ? '—'
-            : typeof value === 'object'
-              ? JSON.stringify(value)
-              : String(value),
-      }));
-  } catch {
-    return [{ label: 'charge utile', value: raw.slice(0, 200) }];
+/** Poste tel que listé par le serveur central (`GET /api/admin/devices`). */
+type ServerDevice = {
+  id: string;
+  name: string;
+  mode: 'hq' | 'store';
+  storeSyncId: string | null;
+  storeName: string | null;
+  deviceCode: string;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  lastPushAt: string | null;
+  lastPullAt: string | null;
+  revokedAt: string | null;
+  isCurrent: boolean;
+};
+
+type StoreOption = { id: number; syncId: string; code: string; name: string; kind: string; status: string };
+
+type EnrollKind = 'hq' | 'store';
+
+/* ------------------------------------------------------------------ *
+ * Libellés
+ * ------------------------------------------------------------------ */
+
+const MODE_LABELS: Record<DeviceMode, string> = {
+  standalone: 'Autonome',
+  hq: 'Siège',
+  store: 'Magasin',
+};
+
+const MODE_TONES: Record<DeviceMode, BadgeTone> = {
+  standalone: 'neutral',
+  hq: 'primary',
+  store: 'info',
+};
+
+/** Tables synchronisées → libellé lisible (les noms techniques restent en repli). */
+const TABLE_LABELS: Record<string, string> = {
+  stores: 'Magasins',
+  users: 'Utilisateurs',
+  settings: 'Paramètres',
+  categories: 'Catégories',
+  products: 'Produits',
+  product_store_stock: 'Stock par magasin',
+  store_prices: 'Prix locaux',
+  customers: 'Clients',
+  suppliers: 'Fournisseurs',
+  sales_invoices: 'Ventes',
+  sales_invoice_items: 'Lignes de vente',
+  purchase_invoices: 'Achats',
+  purchase_invoice_items: 'Lignes d’achat',
+  payments: 'Paiements',
+  expenses: 'Dépenses',
+  stock_movements: 'Mouvements de stock',
+  stock_transfers: 'Transferts',
+  stock_transfer_items: 'Lignes de transfert',
+  inventories: 'Inventaires',
+  inventory_items: 'Lignes d’inventaire',
+  cash_sessions: 'Sessions de caisse',
+  cash_movements: 'Mouvements de caisse',
+  workers: 'Ouvriers',
+  service_jobs: 'Chantiers',
+};
+
+function tableLabel(name: string): string {
+  return TABLE_LABELS[name] ?? name;
+}
+
+/** Champs techniques ignorés dans la comparaison local / serveur. */
+const TECHNICAL_FIELDS = new Set(['id', 'sync_id', 'syncId', 'updated_at', 'updatedAt', 'created_at', 'createdAt']);
+
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/** Champs qui diffèrent entre la version locale et celle du serveur. */
+function diffFields(local: unknown, remote: unknown): { key: string; local: string; remote: string }[] {
+  const l = (local && typeof local === 'object' ? local : {}) as Record<string, unknown>;
+  const r = (remote && typeof remote === 'object' ? remote : {}) as Record<string, unknown>;
+  const keys = Array.from(new Set([...Object.keys(l), ...Object.keys(r)])).filter((k) => !TECHNICAL_FIELDS.has(k));
+  return keys
+    .filter((k) => JSON.stringify(l[k] ?? null) !== JSON.stringify(r[k] ?? null))
+    .map((k) => ({ key: k, local: formatValue(l[k]), remote: formatValue(r[k]) }));
+}
+
+/** Désignation lisible d'un enregistrement (nom, référence…) quand le contenu en porte une. */
+function recordLabel(row: ConflictRow): string {
+  const source = (row.localPayload ?? row.remotePayload ?? {}) as Record<string, unknown>;
+  for (const key of ['name', 'reference', 'invoice_number', 'receipt_number', 'username', 'code', 'key']) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value;
   }
+  return row.syncId.slice(0, 8);
+}
+
+async function readError(res: Response, fallback: string): Promise<string> {
+  const payload = await res.json().catch(() => ({}));
+  return (payload as { error?: string })?.error ?? fallback;
 }
 
 /* ------------------------------------------------------------------ *
@@ -163,1276 +195,895 @@ function payloadSummary(raw: string): { label: string; value: string }[] {
  * ------------------------------------------------------------------ */
 
 export default function SynchronisationPage() {
-  const { settings, updateSettings, refreshSettings } = useSettings();
+  const { can, stores: authStores, permissions, isLoading: authLoading } = useAuth();
+  const canManage = can('sync.manage');
+  const canManageStores = can('stores.manage');
+  const canViewStores = can('stores.view');
 
-  const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [conflicts, setConflicts] = useState<ConflictRow[]>([]);
-  const [conflictsLoading, setConflictsLoading] = useState(true);
-  const [conflictsError, setConflictsError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [lastResult, setLastResult] = useState<SyncResult | null>(null);
 
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-  const [isDisabling, setIsDisabling] = useState(false);
-  const [isResolving, setIsResolving] = useState<number | null>(null);
+  const [storeOptions, setStoreOptions] = useState<StoreOption[]>([]);
 
-  const [outboxPage, setOutboxPage] = useState(1);
-  const [conflictPage, setConflictPage] = useState(1);
-
-  const [lastReport, setLastReport] = useState<ImportReport | null>(null);
-  const [lastAction, setLastAction] = useState<string | null>(null);
-
-  /* Modales : un état booléen chacune (§8.3). */
-  const [isResetOpen, setIsResetOpen] = useState(false);
-  const [isDisableOpen, setIsDisableOpen] = useState(false);
-  const [selectedConflict, setSelectedConflict] = useState<ConflictRow | null>(null);
-  const [isConflictOpen, setIsConflictOpen] = useState(false);
-  const [isImportOpen, setIsImportOpen] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importRetryFirst, setImportRetryFirst] = useState(true);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const loadStatus = useCallback(async (signal?: AbortSignal) => {
-    setIsLoading(true);
-    setError(null);
-
+  const loadStatus = useCallback(async () => {
     try {
-      const response = await fetch('/api/sync/status', {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        signal,
-      });
-      setStatus(await readJson<SyncStatus>(response));
-    } catch (caught) {
-      if (caught instanceof Error && caught.name === 'AbortError') return;
-      setStatus(null);
-      setError(caught instanceof Error ? caught.message : 'État de synchronisation indisponible');
+      const res = await fetch('/api/sync/status', { cache: 'no-store', credentials: 'same-origin' });
+      if (!res.ok) throw new Error(await readError(res, 'Chargement de l’état impossible'));
+      setStatus((await res.json()) as StatusResponse);
+      setLoadError(null);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Chargement de l’état impossible');
     } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const loadConflicts = useCallback(async (signal?: AbortSignal) => {
-    setConflictsLoading(true);
-    setConflictsError(null);
-
-    try {
-      const response = await fetch('/api/sync/conflits?pendingOnly=false', {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        signal,
-      });
-      const payload = await readJson<{ data: ConflictRow[] }>(response);
-      setConflicts(Array.isArray(payload.data) ? payload.data : []);
-    } catch (caught) {
-      if (caught instanceof Error && caught.name === 'AbortError') return;
-      setConflicts([]);
-      setConflictsError(caught instanceof Error ? caught.message : 'Conflits indisponibles');
-    } finally {
-      setConflictsLoading(false);
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void loadStatus(controller.signal);
-    void loadConflicts(controller.signal);
-    return () => controller.abort();
-  }, [loadStatus, loadConflicts, reloadToken]);
+    void loadStatus();
+    // Un cycle automatique peut tourner en arrière-plan : on rafraîchit l'état.
+    const timer = setInterval(() => void loadStatus(), 30_000);
+    return () => clearInterval(timer);
+  }, [loadStatus]);
 
-  const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
+  const mode: DeviceMode = status?.mode ?? 'standalone';
+  const linked = Boolean(status && status.mode !== 'standalone' && status.connected);
 
-  /* ── Actions ─────────────────────────────────────────────────────── */
-
-  const handleSyncNow = useCallback(async () => {
-    setIsSyncing(true);
-    setLastAction(null);
-
-    try {
-      const response = await fetch('/api/sync/now', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-      const payload = await readJson<any>(response);
-
-      if (payload.skipped) {
-        toast.info(payload.reason ?? 'Synchronisation désactivée');
-        setLastAction(payload.message ?? payload.reason ?? null);
-      } else if (payload.status === 'error') {
-        toast.warning(payload.error ?? 'Synchronisation impossible');
-        setLastAction(payload.message ?? payload.error ?? null);
-      } else if (payload.status === 'ok') {
-        toast.success('Synchronisation effectuée');
-        setLastAction(payload.message ?? null);
-      } else {
-        toast.info(payload.message ?? 'Aucun envoi effectué');
-        setLastAction(payload.message ?? null);
-      }
-
-      refresh();
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Synchronisation impossible');
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [refresh]);
-
-  const handleTestConnection = useCallback(async () => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
-
-    try {
-      const response = await fetch('/api/sync/status', {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error('Le service local ne répond pas');
-
-      const payload = (await response.json()) as SyncStatus;
-
-      if (payload.mode === 'off') {
-        toast.info('Synchronisation désactivée : rien à tester, l’application travaille en local.');
-        setLastAction(
-          'Synchronisation désactivée — aucun service distant à tester. L’application reste pleinement utilisable.',
-        );
-      } else if (!payload.apiUrl?.trim()) {
-        toast.warning('Aucune adresse d’API configurée.');
-        setLastAction('Aucune adresse d’API configurée dans les paramètres.');
-      } else {
-        toast.warning(
-          'Adresse configurée, mais aucun service de synchronisation n’est déployé : la connexion échoue.',
-        );
-        setLastAction(
-          `Adresse configurée (${payload.apiUrl}) mais aucun service déployé. Utilisez l’export / import manuel.`,
-        );
-      }
-    } catch (caught) {
-      toast.error(
-        caught instanceof Error ? caught.message : 'Test de connexion impossible',
-      );
-      setLastAction('Le service local n’a pas répondu : l’application reste utilisable hors ligne.');
-    } finally {
-      clearTimeout(timer);
-    }
-  }, []);
-
-  const handleExport = useCallback(async () => {
-    setIsExporting(true);
-    setLastReport(null);
-
-    try {
-      const response = await fetch('/api/sync/export', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-
-      if (!response.ok) {
-        throw new Error(await readJson<any>(response).then((p) => p?.error ?? 'Export impossible'));
-      }
-
-      const blob = await response.blob();
-      const disposition = response.headers.get('Content-Disposition') ?? '';
-      const match = /filename="([^"]+)"/.exec(disposition);
-      const filename = match?.[1] ?? `planete-deco-sync-${new Date().toISOString().slice(0, 10)}.json`;
-
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-
-      toast.success(`Paquet exporté : ${filename}`);
-      setLastAction(
-        `Paquet « ${filename} » téléchargé. Transportez-le sur clé USB, puis importez-le sur l’autre poste.`,
-      );
-      refresh();
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Export impossible');
-    } finally {
-      setIsExporting(false);
-    }
-  }, [refresh]);
-
-  const handleImport = useCallback(async () => {
-    if (!importFile) return;
-
-    setIsImporting(true);
-    setLastReport(null);
-
-    try {
-      const form = new FormData();
-      form.append('file', importFile);
-
-      const response = await fetch(
-        `/api/sync/import${importRetryFirst ? '?retryQuarantine=true' : ''}`,
-        {
-          method: 'POST',
-          credentials: 'same-origin',
-          body: form,
-        },
-      );
-
-      const payload = await readJson<ImportReport>(response);
-      setLastReport(payload);
-      setIsImportOpen(false);
-      setImportFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-
-      toast.success(payload.message ?? 'Paquet importé.');
-      refresh();
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Import impossible');
-    } finally {
-      setIsImporting(false);
-    }
-  }, [importFile, importRetryFirst, refresh]);
-
-  const handleReset = useCallback(async () => {
-    setIsResetting(true);
-
-    try {
-      const response = await fetch('/api/sync/reset', {
-        method: 'POST',
-        credentials: 'same-origin',
-      });
-      const payload = await readJson<any>(response);
-
-      toast.success(
-        payload.message ?? 'Watermarks réinitialisés — aucune donnée supprimée.',
-      );
-      setLastAction(
-        `${formatNumber(payload.outboxReset ?? 0)} ligne(s) de la file remises « à envoyer », ${payload.tables?.length ?? 0} watermarks réinitialisés, 0 suppression.`,
-      );
-      setIsResetOpen(false);
-      refresh();
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Réinitialisation impossible');
-    } finally {
-      setIsResetting(false);
-    }
-  }, [refresh]);
-
-  const handleDisable = useCallback(async () => {
-    setIsDisabling(true);
-
-    try {
-      const saved = await updateSettings({ syncMode: 'off' }, { silent: true });
-      if (!saved) throw new Error('Le mode n’a pas pu être enregistré');
-
-      toast.success('Synchronisation désactivée : l’application continue en local.');
-      setLastAction(
-        'Synchronisation désactivée. Aucune donnée n’a été supprimée : la file d’attente et les conflits sont conservés.',
-      );
-      setIsDisableOpen(false);
-      await refreshSettings();
-      refresh();
-    } catch (caught) {
-      toast.error(caught instanceof Error ? caught.message : 'Désactivation impossible');
-    } finally {
-      setIsDisabling(false);
-    }
-  }, [refresh, refreshSettings, updateSettings]);
-
-  const handleResolve = useCallback(
-    async (conflict: ConflictRow, resolution: 'local' | 'remote') => {
-      setIsResolving(conflict.id);
-
+  // Magasins : nom du magasin du poste et choix du magasin pour un code.
+  useEffect(() => {
+    if (authLoading || permissions === null || !canViewStores || mode === 'standalone') return;
+    let cancelled = false;
+    void (async () => {
       try {
-        const response = await fetch(`/api/sync/conflits/${conflict.id}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ resolution }),
-        });
-        const payload = await readJson<any>(response);
-
-        toast.success(payload.message ?? 'Conflit tranché.');
-        setIsConflictOpen(false);
-        setSelectedConflict(null);
-        refresh();
-      } catch (caught) {
-        toast.error(caught instanceof Error ? caught.message : 'Arbitrage impossible');
-      } finally {
-        setIsResolving(null);
+        const res = await fetch('/api/magasins', { cache: 'no-store', credentials: 'same-origin' });
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!cancelled) setStoreOptions(Array.isArray(payload.data) ? payload.data : []);
+      } catch {
+        /* le nom du magasin restera « — » */
       }
-    },
-    [refresh],
-  );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, permissions, canViewStores, mode]);
 
-  /* ── Colonnes ────────────────────────────────────────────────────── */
+  const deviceStoreName = useMemo(() => {
+    if (!isFull(status)) return null;
+    const { storeId, storeSyncId } = status.device;
+    const byId = storeId ? authStores.find((s) => s.id === storeId) : null;
+    if (byId) return byId.name;
+    const bySync = storeSyncId ? storeOptions.find((s) => s.syncId === storeSyncId) : null;
+    return bySync?.name ?? null;
+  }, [status, authStores, storeOptions]);
 
-  const outboxColumns = useMemo<Column<OutboxRow>[]>(
-    () => [
-      {
-        key: 'tableName',
-        label: 'Table',
-        primary: true,
-        render: (row) => (
-          <div className="min-w-0">
-            <div className="truncate font-mono text-xs">{row.tableName}</div>
-            <div className="truncate font-mono text-[11px] text-base-content/50">{row.syncId}</div>
-          </div>
-        ),
-      },
-      {
-        key: 'operation',
-        label: 'Opération',
-        render: (row) => (
-          <Badge
-            tone={
-              row.operation === 'insert' ? 'success' : row.operation === 'delete' ? 'error' : 'info'
-            }
-          >
-            {row.operation === 'insert'
-              ? 'Création'
-              : row.operation === 'delete'
-                ? 'Suppression'
-                : 'Modification'}
-          </Badge>
-        ),
-      },
-      {
-        key: 'attempts',
-        label: 'Essais',
-        className: 'text-right whitespace-nowrap',
-        render: (row) => (
-          <Badge tone={row.attempts >= 5 ? 'error' : row.attempts > 0 ? 'warning' : 'neutral'}>
-            {formatNumber(row.attempts)}
-          </Badge>
-        ),
-      },
-      {
-        key: 'lastAttemptAt',
-        label: 'Dernier essai',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.lastAttemptAt ? formatDateTime(row.lastAttemptAt as string) : 'Jamais'}
-          </span>
-        ),
-      },
-      {
-        key: 'lastError',
-        label: 'Dernière erreur',
-        hideOnMobile: true,
-        render: (row) => (
-          <span className="text-xs text-error">{row.lastError || <span className="text-base-content/40">—</span>}</span>
-        ),
-      },
-    ],
-    [],
-  );
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/sync/now', { method: 'POST', credentials: 'same-origin' });
+      if (!res.ok) throw new Error(await readError(res, 'Synchronisation impossible'));
+      const result = (await res.json()) as SyncResult;
+      setLastResult(result);
+      if (result.ok) {
+        toast.success(
+          `Synchronisation terminée : ${formatNumber(result.sent)} envoyé(s), ${formatNumber(result.received)} reçu(s)`,
+        );
+      } else {
+        toast.error(result.error ?? 'Synchronisation impossible', { autoClose: 10000 });
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Synchronisation impossible', { autoClose: 10000 });
+    } finally {
+      setSyncing(false);
+      void loadStatus();
+    }
+  };
 
-  const conflictColumns = useMemo<Column<ConflictRow>[]>(
-    () => [
-      {
-        key: 'createdAt',
-        label: 'Détecté le',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.createdAt ? formatDateTime(row.createdAt as string) : '—'}
-          </span>
-        ),
-      },
-      {
-        key: 'tableName',
-        label: 'Table',
-        primary: true,
-        render: (row) => (
-          <div className="min-w-0">
-            <div className="truncate font-mono text-xs">{row.tableName}</div>
-            <div className="truncate font-mono text-[11px] text-base-content/50">{row.syncId}</div>
-          </div>
-        ),
-      },
-      {
-        key: 'resolution',
-        label: 'État',
-        render: (row) =>
-          row.resolution === 'pending' ? (
-            <Badge tone="warning">À trancher</Badge>
-          ) : row.resolution === 'local' ? (
-            <Badge tone="primary">Local conservé</Badge>
-          ) : (
-            <Badge tone="info">Distant appliqué</Badge>
-          ),
-      },
-      {
-        key: 'resolvedAt',
-        label: 'Tranché le',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.resolvedAt ? formatDateTime(row.resolvedAt as string) : '—'}
-          </span>
-        ),
-      },
-    ],
-    [],
-  );
-
-  const deviceColumns = useMemo<Column<DeviceRow>[]>(
-    () => [
-      {
-        key: 'name',
-        label: 'Poste',
-        primary: true,
-        render: (row) => (
-          <div className="min-w-0">
-            <div className="truncate font-medium">{row.name}</div>
-            <div className="truncate font-mono text-[11px] text-base-content/50">{row.deviceId}</div>
-          </div>
-        ),
-      },
-      {
-        key: 'current',
-        label: 'Ce poste',
-        render: (row) =>
-          row.isCurrent ? <Badge tone="success">Poste courant</Badge> : <Badge tone="neutral">Distant</Badge>,
-      },
-      {
-        key: 'lastSeenAt',
-        label: 'Dernière activité',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.lastSeenAt ? formatDateTime(row.lastSeenAt as string) : '—'}
-          </span>
-        ),
-      },
-      {
-        key: 'lastPushAt',
-        label: 'Dernier envoi',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.lastPushAt ? formatDateTime(row.lastPushAt as string) : 'Jamais'}
-          </span>
-        ),
-      },
-      {
-        key: 'lastPullAt',
-        label: 'Dernière réception',
-        hideOnMobile: true,
-        className: 'whitespace-nowrap',
-        render: (row) => (
-          <span className="tabular text-xs text-base-content/70">
-            {row.lastPullAt ? formatDateTime(row.lastPullAt as string) : 'Jamais'}
-          </span>
-        ),
-      },
-    ],
-    [],
-  );
-
-  const pendingConflicts = conflicts.filter((row) => row.resolution === 'pending');
-  const conflictTotalPages = Math.max(1, Math.ceil(conflicts.length / CONFLICTS_LIMIT));
-  const visibleConflicts = conflicts.slice(
-    (conflictPage - 1) * CONFLICTS_LIMIT,
-    conflictPage * CONFLICTS_LIMIT,
-  );
-
-  const outboxTotalPages = Math.max(1, Math.ceil((status?.outbox.length ?? 0) / VIEW_LIMIT));
-  const visibleOutbox = (status?.outbox ?? []).slice(
-    (outboxPage - 1) * VIEW_LIMIT,
-    outboxPage * VIEW_LIMIT,
-  );
-
-  const mode = status?.mode ?? settings.syncMode;
-  const isOff = mode === 'off';
-
-  /* État affiché : Désactivé / Connecté / Hors ligne — toujours avec un libellé. */
-  const connectionState = isOff
-    ? { label: 'Désactivé', tone: 'neutral' as const, hint: 'L’application travaille en local, sans perte de fonctionnalité.' }
-    : status?.online
-      ? { label: 'Connecté', tone: 'success' as const, hint: 'Une adresse d’API est configurée.' }
-      : { label: 'Hors ligne', tone: 'warning' as const, hint: 'Aucune adresse d’API configurée : rien ne peut être envoyé.' };
-
-  const watermarkRows = (status?.state ?? []).filter((row) => row.key.startsWith('last_pulled_at:'));
-  const lastExport = (status?.state ?? []).find((row) => row.key === 'last_export_at');
-  const lastImport = (status?.state ?? []).find((row) => row.key === 'last_import_at');
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <PageHeader eyebrow="Administration" title="Synchronisation" description="État de la liaison de ce poste avec le serveur central." />
+        <SkeletonCards count={4} />
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="space-y-6">
       <PageHeader
         eyebrow="Administration"
         title="Synchronisation"
-        description="Synchronisation PostgreSQL optionnelle, désactivée par défaut. Le poste reste la source de vérité : cet écran montre la file d'attente locale, les conflits et le dépannage par export / import manuel."
+        description="Chaque poste travaille sur sa propre base, même sans Internet ; le serveur central échange les opérations entre le siège et les magasins."
         actions={
-          <>
-            <button
-              type="button"
-              className="btn btn-ghost min-h-11 border border-base-300 sm:min-h-0"
-              onClick={() => void handleTestConnection()}
-            >
-              Tester la connexion
+          linked ? (
+            <button type="button" className="btn btn-primary" disabled={syncing} onClick={() => void syncNow()}>
+              {syncing ? <span className="loading loading-spinner loading-sm" /> : 'Synchroniser maintenant'}
             </button>
-            <button
-              type="button"
-              className="btn btn-primary min-h-11 sm:min-h-0"
-              onClick={() => void handleSyncNow()}
-              disabled={isSyncing}
-            >
-              {isSyncing ? <span className="loading loading-spinner loading-sm" /> : 'Synchroniser maintenant'}
-            </button>
-          </>
+          ) : undefined
         }
       />
 
-      {/* 1 · État */}
-      {isLoading && !status ? (
-        <SkeletonCards count={6} />
-      ) : error ? (
-        <ErrorState title="État de synchronisation indisponible" description={error} onRetry={refresh} />
+      {loadError && !status ? (
+        <Card>
+          <ErrorState title="État de la synchronisation indisponible" description={loadError} onRetry={() => void loadStatus()} />
+        </Card>
       ) : (
         <>
-          <Card className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-base font-semibold">État</h2>
-                <Badge tone={connectionState.tone}>{connectionState.label}</Badge>
-                <Badge tone={isOff ? 'neutral' : 'info'}>{MODE_LABELS[mode] ?? mode}</Badge>
-              </div>
-              <span className="text-xs text-base-content/50">
-                {isOff ? 'Aucune action requise.' : `Tentative toutes les ${status?.intervalMinutes ?? 15} minutes.`}
+          <DeviceCard status={status} storeName={deviceStoreName} lastResult={lastResult} />
+
+          {!canManage && (
+            <div className="alert border border-info/30 bg-info/10 text-sm">
+              <span>
+                La configuration de la synchronisation (inscription du poste, conflits, postes connectés) est réservée
+                aux comptes disposant du droit <strong>« Gérer la synchronisation »</strong>.
               </span>
             </div>
+          )}
 
-            <p
-              className={`rounded-xl border px-3 py-2.5 text-sm ${
-                connectionState.tone === 'success'
-                  ? 'border-success/30 bg-success/10 text-success'
-                  : connectionState.tone === 'warning'
-                    ? 'border-warning/30 bg-warning/10 text-warning'
-                    : 'border-base-200 bg-base-200/40 text-base-content/70'
-              }`}
-            >
-              {status?.message ?? connectionState.hint}
-            </p>
+          {canManage && isFull(status) && (
+            <>
+              {mode === 'standalone' && <EnrollSection onEnrolled={() => void loadStatus()} />}
 
-            {lastAction && (
-              <p className="rounded-xl border border-info/30 bg-info/10 px-3 py-2.5 text-sm text-info">
-                {lastAction}
-              </p>
-            )}
-          </Card>
-
-          {/* 2 · Cartes de synthèse */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
-            <MiniStat
-              label="En attente d’envoi"
-              tone={(status?.pending ?? 0) > 0 ? 'warning' : 'success'}
-              value={formatNumber(status?.pending ?? 0)}
-            />
-            <MiniStat
-              label="En échec (≥ 5 essais)"
-              tone={(status?.failed ?? 0) > 0 ? 'error' : 'neutral'}
-              value={formatNumber(status?.failed ?? 0)}
-            />
-            <MiniStat
-              label="En quarantaine"
-              tone={(status?.pendingQuarantine ?? 0) > 0 ? 'warning' : 'neutral'}
-              value={formatNumber(status?.pendingQuarantine ?? 0)}
-            />
-            <MiniStat
-              label="Conflits à trancher"
-              tone={pendingConflicts.length > 0 ? 'error' : 'success'}
-              value={formatNumber(pendingConflicts.length)}
-            />
-            <MiniStat
-              label="Dernière synchronisation"
-              tone="neutral"
-              value={
-                status?.lastSyncAt ? (
-                  <span className="tabular text-xs">{formatDateTime(status.lastSyncAt)}</span>
-                ) : (
-                  <span className="text-xs">Jamais</span>
-                )
-              }
-            />
-            <MiniStat
-              label="Postes connus"
-              value={formatNumber(status?.devices.length ?? 0)}
-              tone="neutral"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            {/* 3 · Dernière synchronisation, par table */}
-            <Card className="lg:col-span-2 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-base font-semibold">Dernière synchronisation</h2>
-                <span className="text-xs text-base-content/50">
-                  Watermarks par table (<code>sync_state</code>)
-                </span>
-              </div>
-
-              <div className="divide-y divide-base-200/70">
-                <InfoRow label="Appareil">
-                  <span className="font-mono text-xs">{status?.deviceId ?? '—'}</span>
-                </InfoRow>
-                <InfoRow label="Nom du poste">{status?.deviceName ?? '—'}</InfoRow>
-                <InfoRow label="Adresse d’API">
-                  {status?.apiUrl?.trim() ? (
-                    <span className="font-mono text-xs">{status.apiUrl}</span>
-                  ) : (
-                    <span className="font-normal text-base-content/50">Non configurée</span>
-                  )}
-                </InfoRow>
-                <InfoRow label="Lignes envoyées / reçues">
-                  <span className="tabular">
-                    {formatNumber(status?.pending ?? 0)} en attente · {formatNumber(status?.pendingQuarantine ?? 0)} en quarantaine
-                  </span>
-                </InfoRow>
-                <InfoRow label="Durée du dernier envoi">
-                  <span className="font-normal text-base-content/50">
-                    Non mesurable : aucun service distant n’est déployé.
-                  </span>
-                </InfoRow>
-                <InfoRow label="Dernière erreur">
-                  {status?.lastSyncError ? (
-                    <span className="text-error">{status.lastSyncError}</span>
-                  ) : (
-                    <span className="font-normal text-base-content/50">Aucune</span>
-                  )}
-                </InfoRow>
-                <InfoRow label="Dernier export manuel">
-                  {lastExport?.value ? formatDateTime(lastExport.value) : 'Jamais'}
-                </InfoRow>
-                <InfoRow label="Dernier import manuel">
-                  {lastImport?.value ? formatDateTime(lastImport.value) : 'Jamais'}
-                </InfoRow>
-              </div>
-
-              {watermarkRows.length === 0 ? (
-                <p className="rounded-xl border border-base-200 bg-base-200/40 px-3 py-2.5 text-xs text-base-content/60">
-                  Aucun watermark enregistré : rien n’a encore été reçu depuis un service distant. C’est normal
-                  tant que la synchronisation n’est pas déployée.
-                </p>
-              ) : (
-                <ul className="flex flex-wrap gap-2">
-                  {watermarkRows.slice(0, 12).map((row) => (
-                    <li
-                      key={row.key}
-                      className="rounded-lg border border-base-200 bg-base-200/40 px-2.5 py-1 font-mono text-[11px] text-base-content/70"
-                    >
-                      {row.key.replace('last_pulled_at:', '')} : {row.value ?? 'jamais'}
-                    </li>
-                  ))}
-                </ul>
+              {mode !== 'standalone' && (
+                <UnenrollSection mode={mode} pending={status.pending} onDone={() => void loadStatus()} />
               )}
-            </Card>
 
-            {/* 4 · Actions */}
-            <Card className="space-y-3">
-              <h2 className="text-base font-semibold">Actions</h2>
+              {mode === 'hq' && linked && (
+                <>
+                  {canManageStores && <EnrollmentCodesSection stores={storeOptions} />}
+                  <ServerDevicesSection />
+                </>
+              )}
 
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11 justify-start sm:min-h-0"
-                  onClick={() => void handleSyncNow()}
-                  disabled={isSyncing}
-                >
-                  {isSyncing ? <span className="loading loading-spinner loading-sm" /> : 'Synchroniser maintenant'}
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-11 justify-start border border-base-300 sm:min-h-0"
-                  onClick={() => void handleTestConnection()}
-                >
-                  Tester la connexion
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-11 justify-start border border-base-300 sm:min-h-0"
-                  onClick={() => setIsResetOpen(true)}
-                  disabled={isResetting}
-                >
-                  Renvoyer tout
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-11 justify-start border border-base-300 sm:min-h-0"
-                  onClick={() => setIsDisableOpen(true)}
-                  disabled={isOff || isDisabling}
-                >
-                  Désactiver la synchronisation
-                </button>
-              </div>
-
-              <p className="rounded-xl border border-base-200 bg-base-200/40 px-3 py-2.5 text-xs text-base-content/60">
-                « Renvoyer tout » réinitialise les watermarks et remet les compteurs d’essais à zéro.
-                <strong> Rien n’est supprimé</strong> : ni les données, ni la file d’attente, ni les conflits
-                déjà tranchés.
-              </p>
-            </Card>
-          </div>
-
-          {/* 5 · File d'attente */}
-          <PageSection
-            title="File d’attente locale"
-            subtitle="Chaque écriture d’une table synchronisée dépose une ligne dans sync_outbox. La file ne bloque jamais une opération métier."
-          >
-            {status && status.outbox.length === 0 ? (
-              <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
-                <EmptyState
-                  title="Aucun élément en attente"
-                  description="La file d’envoi est vide : soit rien n’a encore été écrit, soit tout a été traité. Elle se remplit automatiquement à chaque création, modification ou annulation."
-                  action={
-                    <button type="button" className="btn btn-primary min-h-11" onClick={refresh}>
-                      Actualiser
-                    </button>
-                  }
-                />
-              </div>
-            ) : (
-              <>
-                <ResponsiveTable
-                  columns={outboxColumns}
-                  data={visibleOutbox}
-                  getRowKey={(row) => row.id}
-                  tableClassName="table-sm"
-                />
-                <Pagination currentPage={outboxPage} totalPages={outboxTotalPages} onPageChange={setOutboxPage} />
-                <p className="text-center text-xs text-base-content/50">
-                  {formatNumber(status?.outbox.length ?? 0)} ligne(s) dans la file · page {outboxPage} sur{' '}
-                  {outboxTotalPages}
-                </p>
-              </>
-            )}
-
-            {status && status.pendingPreview.length > 0 && (
-              <Card className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-semibold">Quarantaine — référence parente manquante</h3>
-                  <Badge tone="warning">{formatNumber(status.pendingQuarantine)}</Badge>
-                </div>
-                <p className="text-xs text-base-content/60">
-                  Ces lignes ne sont pas perdues : elles seront rejouées dès que leur parent arrivera, ou
-                  immédiatement après un import manuel.
-                </p>
-                <ul className="divide-y divide-base-200">
-                  {status.pendingPreview.slice(0, QUARANTINE_LIMIT).map((row) => (
-                    <li key={row.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                      <span className="min-w-0">
-                        <span className="block font-mono text-xs">{row.tableName}</span>
-                        <span className="block font-mono text-[11px] text-base-content/50">{row.syncId}</span>
-                      </span>
-                      <span className="flex flex-wrap items-center gap-2">
-                        <Badge tone="neutral">Parent : {row.missingParent ?? 'inconnu'}</Badge>
-                        <span className="text-xs text-base-content/50">{formatNumber(row.attempts)} essai(s)</span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
-          </PageSection>
-
-          {/* 6 · Journal local des lots */}
-          <PageSection
-            title="Journal des envois"
-            subtitle="Historique local des tentatives. Le service en ligne n’étant pas déployé, aucune ligne « envoyée » ne peut exister : l’écran ne prétend donc jamais qu’un lot est parti."
-          >
-            {status && status.outbox.length === 0 ? (
-              <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
-                <EmptyState
-                  title="Aucun lot dans le journal"
-                  description="Aucun lot n’a été constitué. Les écritures alimenteront la file d’attente et apparaîtront ici avec leur nombre d’essais et leur dernière erreur."
-                />
-              </div>
-            ) : (
-              <Card className="space-y-3">
-                <div className="divide-y divide-base-200/70">
-                  <InfoRow label="Dernier lot tenté">
-                    {status?.lastSyncAt ? (
-                      <span className="tabular">{formatDateTime(status.lastSyncAt)}</span>
-                    ) : (
-                      <span className="font-normal text-base-content/50">Aucun lot envoyé</span>
-                    )}
-                  </InfoRow>
-                  <InfoRow label="Dernier résultat">
-                    {status?.lastSyncError ? (
-                      <span className="text-error">Échec — {status.lastSyncError}</span>
-                    ) : (
-                      <span className="font-normal text-base-content/50">Aucun envoi tenté</span>
-                    )}
-                  </InfoRow>
-                  <InfoRow label="Lots réussis">
-                    <span className="tabular">0</span>
-                  </InfoRow>
-                  <InfoRow label="Lignes en attente dans les lots">
-                    <span className="tabular">{formatNumber(status?.outbox.length ?? 0)}</span>
-                  </InfoRow>
-                </div>
-
-                <p className="rounded-xl border border-base-200 bg-base-200/40 px-3 py-2.5 text-xs text-base-content/60">
-                  Chaque ligne ci-dessous est une écriture locale en attente, avec son nombre d’essais et sa
-                  dernière erreur. Tant qu’aucun serveur n’est déployé, le journal ne peut contenir que des
-                  tentatives — jamais un envoi réussi.
-                </p>
-              </Card>
-            )}
-          </PageSection>
-
-          {/* 7 · Conflits */}          <PageSection
-            title="Conflits à trancher"
-            subtitle="Aucune écriture n’est écrasée sans arbitrage : la granularité est la ligne entière (README §23.7 et §23.12)."
-          >
-            {conflictsLoading ? (
-              <SkeletonTable rows={3} cols={4} />
-            ) : conflictsError ? (
-              <ErrorState title="Conflits indisponibles" description={conflictsError} onRetry={refresh} />
-            ) : conflicts.length === 0 ? (
-              <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
-                <EmptyState
-                  title="Aucun conflit"
-                  description="Aucune divergence n’a été détectée. Un conflit ne peut apparaître qu’après une réception de données modifiées localement — l’import manuel d’un paquet est le seul chemin possible aujourd’hui."
-                  action={
-                    <button type="button" className="btn btn-primary min-h-11" onClick={refresh}>
-                      Actualiser
-                    </button>
-                  }
-                />
-              </div>
-            ) : (
-              <>
-                <ResponsiveTable
-                  columns={conflictColumns}
-                  data={visibleConflicts}
-                  getRowKey={(row) => row.id}
-                  tableClassName="table-sm"
-                  actions={(row) => (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm min-h-11 sm:min-h-0"
-                      onClick={() => {
-                        setSelectedConflict(row);
-                        setIsConflictOpen(true);
-                      }}
-                    >
-                      Comparer et trancher
-                    </button>
-                  )}
-                />
-                <Pagination
-                  currentPage={conflictPage}
-                  totalPages={conflictTotalPages}
-                  onPageChange={setConflictPage}
-                />
-                <p className="text-center text-xs text-base-content/50">
-                  {formatNumber(pendingConflicts.length)} conflit(s) en attente · {formatNumber(conflicts.length)}{' '}
-                  au total
-                </p>
-              </>
-            )}
-          </PageSection>
-
-          {/* 7 · Appareils */}
-          <PageSection
-            title="Appareils connus"
-            subtitle="Postes enregistrés dans devices. Le poste courant est celui du navigateur utilisé."
-          >
-            {status && status.devices.length === 0 ? (
-              <div className="surface-card border border-base-200 bg-base-100 shadow-sm">
-                <EmptyState
-                  title="Aucun appareil enregistré"
-                  description="Le poste courant s’enregistre dès que cet écran est consulté. Aucun autre poste ne s’est encore manifesté."
-                />
-              </div>
-            ) : (
-              <ResponsiveTable
-                columns={deviceColumns}
-                data={status?.devices ?? []}
-                getRowKey={(row) => row.deviceId}
-                tableClassName="table-sm"
-              />
-            )}
-          </PageSection>
-
-          {/* 8 · Dépannage sans réseau */}
-          <PageSection
-            title="Dépannage sans réseau — export / import manuel"
-            subtitle="On exporte un paquet .json sur ce poste, on le transporte sur clé USB, on l’importe ailleurs. C’est la seule synchronisation réellement disponible tant que le service en ligne n’est pas déployé."
-          >
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <Card className="space-y-3">
-                <h3 className="text-sm font-semibold">1 — Exporter le paquet</h3>
-                <p className="text-sm text-base-content/60">
-                  Le fichier contient les 30 tables métier dans l’ordre topologique, avec leurs identifiants
-                  globaux (<code>sync_id</code>), leur horodatage et leurs tombstones. Les identifiants locaux
-                  (<code>id</code>) ne sont pas transportés : ils diffèrent d’un poste à l’autre.
-                </p>
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11 sm:min-h-0"
-                  onClick={() => void handleExport()}
-                  disabled={isExporting}
-                >
-                  {isExporting ? (
-                    <span className="loading loading-spinner loading-sm" />
-                  ) : (
-                    'Exporter le paquet (.json)'
-                  )}
-                </button>
-              </Card>
-
-              <Card className="space-y-3">
-                <h3 className="text-sm font-semibold">2 — Importer un paquet</h3>
-                <p className="text-sm text-base-content/60">
-                  Le paquet est validé (marqueur, version, tables connues) avant toute écriture. Une référence
-                  parente manquante met la ligne en quarantaine au lieu de la perdre, et un conflit réel crée un
-                  arbitrage au lieu d’écraser la donnée locale.
-                </p>
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11 sm:min-h-0"
-                  onClick={() => {
-                    setImportFile(null);
-                    setImportRetryFirst(true);
-                    setIsImportOpen(true);
-                  }}
-                >
-                  Importer un paquet (.json)
-                </button>
-
-                {lastReport && (
-                  <div className="space-y-2 rounded-xl border border-base-200 bg-base-200/40 p-3">
-                    <p className="text-sm font-medium">Dernier import</p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <MiniStat label="Ajoutées" tone="success" value={formatNumber(lastReport.rowsInserted)} />
-                      <MiniStat label="Mises à jour" tone="info" value={formatNumber(lastReport.rowsUpdated)} />
-                      <MiniStat
-                        label="Quarantaine"
-                        tone={lastReport.quarantined > 0 ? 'warning' : 'neutral'}
-                        value={formatNumber(lastReport.quarantined)}
-                      />
-                      <MiniStat
-                        label="Conflits"
-                        tone={lastReport.conflicts > 0 ? 'error' : 'success'}
-                        value={formatNumber(lastReport.conflicts)}
-                      />
-                    </div>
-                    {lastReport.errors.length > 0 && (
-                      <ul className="max-h-32 space-y-1 overflow-y-auto text-xs text-error">
-                        {lastReport.errors.slice(0, 8).map((message, index) => (
-                          <li key={index}>{message}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </Card>
-            </div>
-
-            {lastExport?.value && (
-              <p className="text-xs text-base-content/50">
-                Dernier export : {formatDateShort(lastExport.value)}. Conservez le fichier : il n’est pas
-                rejouable automatiquement.
-              </p>
-            )}
-          </PageSection>
+              <ConflictsSection conflicts={status.conflictsList ?? []} onResolved={() => void loadStatus()} />
+              <QuarantineSection rows={status.quarantineList ?? []} total={status.quarantined} />
+            </>
+          )}
         </>
       )}
-
-      {/* Modale : « Renvoyer tout » */}
-      <ConfirmDialog
-        isOpen={isResetOpen}
-        onClose={() => {
-          if (!isResetting) setIsResetOpen(false);
-        }}
-        onConfirm={() => void handleReset()}
-        title="Renvoyer tout"
-        tone="warning"
-        confirmLabel="Réinitialiser les watermarks"
-        isSubmitting={isResetting}
-        message={
-          <>
-            Les watermarks de réception repassent à « jamais reçu » et les compteurs d’essais de la file
-            repassent à zéro.
-            <br />
-            <span className="text-sm">
-              <strong>Aucune donnée n’est supprimée</strong> : ni les 30 tables métier, ni une seule ligne de la
-              file d’envoi, ni les conflits déjà tranchés. Il s’agit de « tout remettre à envoyer », pas
-              d’effacer.
-            </span>
-          </>
-        }
-      />
-
-      {/* Modale : désactivation */}
-      <ConfirmDialog
-        isOpen={isDisableOpen}
-        onClose={() => {
-          if (!isDisabling) setIsDisableOpen(false);
-        }}
-        onConfirm={() => void handleDisable()}
-        title="Désactiver la synchronisation"
-        tone="warning"
-        confirmLabel="Désactiver"
-        isSubmitting={isDisabling}
-        message={
-          <>
-            Le mode passera à « Désactivée ». L’application reste <strong>pleinement utilisable</strong> : la
-            synchronisation n’est jamais un prérequis.
-            <br />
-            <span className="text-sm">
-              La file d’attente, la quarantaine et les conflits sont conservés : rien n’est perdu, et tout
-              repartira si la synchronisation est réactivée.
-            </span>
-          </>
-        }
-      />
-
-      {/* Modale : import d'un paquet */}
-      <ModalImport
-        isOpen={isImportOpen}
-        onClose={() => {
-          if (!isImporting) setIsImportOpen(false);
-        }}
-        file={importFile}
-        onFileChange={setImportFile}
-        retryFirst={importRetryFirst}
-        onRetryFirstChange={setImportRetryFirst}
-        isSubmitting={isImporting}
-        onConfirm={() => void handleImport()}
-        inputRef={fileInputRef}
-      />
-
-      {/* Modale : comparaison et arbitrage d'un conflit */}
-      <ModalConflict
-        isOpen={isConflictOpen}
-        onClose={() => {
-          if (isResolving === null) setIsConflictOpen(false);
-        }}
-        conflict={selectedConflict}
-        isSubmitting={isResolving !== null}
-        onResolve={(resolution) => {
-          if (selectedConflict) void handleResolve(selectedConflict, resolution);
-        }}
-      />
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * Modale d'import — isolée pour garder la page lisible
+ * 1. Carte « Ce poste »
  * ------------------------------------------------------------------ */
 
-function ModalImport({
-  isOpen,
-  onClose,
-  file,
-  onFileChange,
-  retryFirst,
-  onRetryFirstChange,
-  isSubmitting,
-  onConfirm,
-  inputRef,
+function DeviceCard({
+  status,
+  storeName,
+  lastResult,
 }: {
-  isOpen: boolean;
-  onClose: () => void;
-  file: File | null;
-  onFileChange: (file: File | null) => void;
-  retryFirst: boolean;
-  onRetryFirstChange: (value: boolean) => void;
-  isSubmitting: boolean;
-  onConfirm: () => void;
-  inputRef: RefObject<HTMLInputElement | null>;
+  status: StatusResponse | null;
+  storeName: string | null;
+  lastResult: SyncResult | null;
 }) {
+  if (!status) return null;
+  const mode = status.mode;
+  const full = isFull(status) ? status : null;
+  const linked = mode !== 'standalone' && status.connected;
+
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Importer un paquet de synchronisation"
-      size="lg"
-      fullScreenMobile
-    >
-      <div className="space-y-4 pb-2">
-        <p className="rounded-xl border border-base-200 bg-base-200/40 px-3 py-2.5 text-sm text-base-content/70">
-          Sélectionnez un fichier <code>.json</code> produit par « Exporter le paquet ». La structure est
-          validée avant toute écriture ; les identifiants globaux (<code>sync_id</code>) font foi.
-        </p>
+    <PageSection title="Ce poste">
+      <Card>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={MODE_TONES[mode]}>{MODE_LABELS[mode]}</Badge>
+          {mode === 'store' && storeName && <span className="text-sm font-medium">{storeName}</span>}
+          {mode !== 'standalone' && (
+            <Badge tone={linked ? (status.hasError ? 'warning' : 'success') : 'error'}>
+              {linked ? (status.hasError ? 'Hors ligne' : 'Relié au serveur') : 'Liaison incomplète'}
+            </Badge>
+          )}
+        </div>
 
-        <label className="flex min-h-11 cursor-pointer items-center gap-3">
-          <span className="sr-only">Fichier de paquet</span>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="application/json,.json"
-            className="file-input file-input-bordered min-h-11 w-full sm:min-h-0"
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
-            disabled={isSubmitting}
-          />
-        </label>
-
-        {file && (
-          <p className="text-xs text-base-content/60">
-            Fichier sélectionné : <strong>{file.name}</strong> ({formatNumber(Math.round(file.size / 1024))} Ko)
+        {mode === 'standalone' && (
+          <p className="mt-3 text-sm text-base-content/60">
+            Ce poste fonctionne seul : toutes les opérations restent sur cet ordinateur. Reliez-le au serveur central
+            pour partager le catalogue et les opérations entre le siège et les magasins.
           </p>
         )}
 
-        <label className="flex min-h-11 cursor-pointer items-center gap-3">
-          <input
-            type="checkbox"
-            className="toggle toggle-primary"
-            checked={retryFirst}
-            onChange={(event) => onRetryFirstChange(event.target.checked)}
-            disabled={isSubmitting}
-          />
-          <span className="text-sm">
-            Rejouer d’abord la quarantaine locale
-            <span className="block text-xs text-base-content/50">
-              Les lignes dont le parent vient d’arriver sont appliquées avant l’import : un enfant bloqué est
-              débloqué sans redemander le fichier.
-            </span>
-          </span>
-        </label>
-
-        <div className="sticky bottom-0 flex justify-end gap-3 border-t border-base-200 bg-base-100 pb-1 pt-4">
-          <button type="button" className="btn btn-ghost min-h-11 sm:min-h-0" onClick={onClose} disabled={isSubmitting}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary min-h-11 sm:min-h-0"
-            onClick={onConfirm}
-            disabled={isSubmitting || !file}
-          >
-            {isSubmitting ? <span className="loading loading-spinner loading-sm" /> : 'Importer le paquet'}
-          </button>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <MiniStat label="Changements en attente" value={formatNumber(status.pending)} tone={status.pending > 0 ? 'warning' : 'neutral'} />
+          {full && (
+            <MiniStat label="En quarantaine" value={formatNumber(full.quarantined)} tone={full.quarantined > 0 ? 'warning' : 'neutral'} />
+          )}
+          <MiniStat label="Conflits" value={formatNumber(status.conflicts)} tone={status.conflicts > 0 ? 'error' : 'neutral'} />
+          <MiniStat label="Dernier échange réussi" value={status.lastSuccessAt ? formatDateTime(status.lastSuccessAt) : 'Jamais'} />
         </div>
-      </div>
-    </Modal>
+
+        {full && (
+          <div className="mt-4 grid gap-x-8 border-t border-base-200 pt-3 sm:grid-cols-2">
+            <InfoRow label="Mode">
+              {MODE_LABELS[mode]}
+              {mode === 'store' && storeName ? ` — ${storeName}` : ''}
+            </InfoRow>
+            <InfoRow label="Nom du poste">{full.device.deviceName ?? '—'}</InfoRow>
+            <InfoRow label="Code poste">{full.device.deviceCode ?? '—'}</InfoRow>
+            <InfoRow label="Adresse du serveur">
+              <span className="break-all font-mono text-xs">{full.device.serverUrl ?? '—'}</span>
+            </InfoRow>
+            <InfoRow label="Dernier envoi">{full.lastPushAt ? formatDateTime(full.lastPushAt) : '—'}</InfoRow>
+            <InfoRow label="Dernière réception">{full.lastPullAt ? formatDateTime(full.lastPullAt) : '—'}</InfoRow>
+            {full.failed > 0 && (
+              <InfoRow label="Envois en échec (réessayés)">{formatNumber(full.failed)}</InfoRow>
+            )}
+            {full.running && <InfoRow label="Cycle en cours">Oui</InfoRow>}
+          </div>
+        )}
+
+        {full?.lastError ? (
+          <div className="mt-4 rounded-xl border border-error/30 bg-error/10 p-3 text-sm">
+            <strong>Dernière erreur :</strong> {full.lastError}
+            <p className="mt-1 text-xs text-base-content/60">
+              Les opérations restent enregistrées sur ce poste et partiront au prochain échange réussi.
+            </p>
+          </div>
+        ) : !full && status.hasError ? (
+          <div className="mt-4 rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm">
+            Le dernier échange avec le serveur a échoué. Les opérations restent enregistrées sur ce poste.
+          </div>
+        ) : null}
+
+        {lastResult && (
+          <div
+            className={`mt-4 rounded-xl border p-3 text-sm ${
+              lastResult.ok ? 'border-success/30 bg-success/10' : 'border-error/30 bg-error/10'
+            }`}
+          >
+            {lastResult.ok ? (
+              <>
+                <strong>Synchronisation réussie</strong> ({formatDateTime(lastResult.at)}) :{' '}
+                {formatNumber(lastResult.sent)} envoyé(s), {formatNumber(lastResult.received)} reçu(s),{' '}
+                {formatNumber(lastResult.applied)} appliqué(s)
+                {lastResult.rejected > 0 ? `, ${formatNumber(lastResult.rejected)} refusé(s) par le serveur` : ''}.
+              </>
+            ) : (
+              <>
+                <strong>Échec de la synchronisation :</strong> {lastResult.error ?? 'erreur inconnue'}
+              </>
+            )}
+          </div>
+        )}
+      </Card>
+    </PageSection>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * Modale de conflit — comparaison local / distant lisible
+ * 2. Inscription d'un poste autonome
  * ------------------------------------------------------------------ */
 
-function ModalConflict({
-  isOpen,
-  onClose,
-  conflict,
-  isSubmitting,
-  onResolve,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  conflict: ConflictRow | null;
-  isSubmitting: boolean;
-  onResolve: (resolution: 'local' | 'remote') => void;
-}) {
-  const localFields = conflict ? payloadSummary(conflict.localPayload) : [];
-  const remoteFields = conflict ? payloadSummary(conflict.remotePayload) : [];
+function EnrollSection({ onEnrolled }: { onEnrolled: () => void }) {
+  const { refreshUser } = useAuth();
+  const [serverUrl, setServerUrl] = useState('');
+  const [deviceName, setDeviceName] = useState('');
+  const [kind, setKind] = useState<EnrollKind>('hq');
+  const [secret, setSecret] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const keys = Array.from(new Set([...localFields.map((f) => f.label), ...remoteFields.map((f) => f.label)]));
+  const submit = async () => {
+    setError(null);
+    if (!/^https?:\/\//i.test(serverUrl.trim())) {
+      setError('Saisissez l’adresse complète du serveur, par exemple https://sync.exemple.com');
+      return;
+    }
+    if (!secret.trim()) {
+      setError(kind === 'hq' ? 'Saisissez la clé maîtresse du serveur' : 'Saisissez le code d’inscription');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/sync/enroll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          serverUrl: serverUrl.trim(),
+          deviceName: deviceName.trim(),
+          ...(kind === 'hq' ? { masterKey: secret.trim() } : { code: secret.trim() }),
+        }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Inscription impossible'));
+      const payload = (await res.json()) as { firstSync?: SyncResult };
+      toast.success('Poste relié au serveur central');
+      if (payload.firstSync && !payload.firstSync.ok) {
+        toast.warning(
+          `Premier échange non abouti : ${payload.firstSync.error ?? 'erreur inconnue'}. Il sera retenté automatiquement.`,
+          { autoClose: 10000 },
+        );
+      }
+      setSecret('');
+      await refreshUser();
+      onEnrolled();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Inscription impossible');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={`Conflit — ${conflict?.tableName ?? ''}`}
-      size="xl"
-      fullScreenMobile
+    <PageSection
+      title="Relier ce poste au serveur central"
+      subtitle="Une fois relié, ce poste envoie et reçoit les opérations automatiquement dès qu’Internet est disponible."
     >
-      <div className="space-y-4 pb-2">
-        {conflict && (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="warning">À trancher</Badge>
-              <span className="font-mono text-xs text-base-content/60">{conflict.syncId}</span>
-            </div>
+      <Card>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Adresse du serveur" required hint="Fournie par la personne qui a installé le serveur central.">
+            <input
+              className="input input-bordered field-rounded w-full"
+              placeholder="https://sync.exemple.com"
+              value={serverUrl}
+              disabled={submitting}
+              onChange={(e) => setServerUrl(e.target.value)}
+            />
+          </FormField>
+          <FormField label="Nom du poste" hint="Pour le reconnaître dans la liste des postes (ex. « Caisse Kaloum »).">
+            <input
+              className="input input-bordered field-rounded w-full"
+              placeholder="Poste"
+              value={deviceName}
+              disabled={submitting}
+              onChange={(e) => setDeviceName(e.target.value)}
+            />
+          </FormField>
 
-            <p className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning">
-              La ligne a été modifiée <strong>localement</strong> et figure aussi dans le paquet reçu. Aucune
-              version n’a été écrasée : choisissez celle qui fait foi. La version perdante reste archivée ici.
+          <FormField label="Type d’inscription" className="sm:col-span-2">
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(
+                [
+                  ['hq', 'Poste du siège (clé maîtresse)', 'Accès à tous les magasins, gère le catalogue, les comptes et les paramètres.'],
+                  ['store', 'Poste de magasin (code d’inscription)', 'Accès à un seul magasin, avec le code généré par le siège.'],
+                ] as [EnrollKind, string, string][]
+              ).map(([value, label, help]) => (
+                <label
+                  key={value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${
+                    kind === value ? 'border-primary bg-primary/5' : 'border-base-200'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="enroll-kind"
+                    className="radio radio-primary radio-sm mt-0.5"
+                    checked={kind === value}
+                    disabled={submitting}
+                    onChange={() => {
+                      setKind(value);
+                      setSecret('');
+                    }}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">{label}</span>
+                    <span className="block text-xs text-base-content/60">{help}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </FormField>
+
+          <FormField
+            label={kind === 'hq' ? 'Clé maîtresse du serveur' : 'Code d’inscription'}
+            required
+            hint={
+              kind === 'hq'
+                ? 'Clé définie lors de l’installation du serveur central.'
+                : 'Code à usage unique généré au siège (page Synchronisation du poste du siège).'
+            }
+            className="sm:col-span-2"
+          >
+            <input
+              type={kind === 'hq' ? 'password' : 'text'}
+              autoComplete="off"
+              className="input input-bordered field-rounded w-full font-mono"
+              value={secret}
+              disabled={submitting}
+              onChange={(e) => setSecret(kind === 'store' ? e.target.value.toUpperCase() : e.target.value)}
+            />
+          </FormField>
+        </div>
+
+        <div className="mt-4 space-y-2 rounded-xl border border-base-200 bg-base-200/40 p-3 text-xs text-base-content/70">
+          {kind === 'hq' ? (
+            <p>
+              <strong>Poste du siège :</strong> si ce poste contient déjà des données (produits, clients, ventes…), elles
+              seront <strong>toutes envoyées au serveur</strong> lors du premier échange. Cela peut prendre quelques
+              minutes ; le travail peut continuer pendant ce temps.
             </p>
+          ) : (
+            <p>
+              <strong>Poste de magasin :</strong> l’inscription n’est possible que sur une <strong>installation neuve</strong>{' '}
+              (aucun compte créé). Si ce poste contient déjà des données, l’inscription sera refusée : réinstallez
+              l’application sur le poste du magasin et utilisez « Rejoindre le serveur » sur l’écran de première
+              installation.
+            </p>
+          )}
+        </div>
 
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <Card className="space-y-2">
-                <h3 className="text-sm font-semibold">Version locale (ce poste)</h3>
-                <div className="divide-y divide-base-200/70">
-                  {localFields.length === 0 ? (
-                    <p className="py-2 text-sm text-base-content/50">Charge utile illisible.</p>
-                  ) : (
-                    localFields.map((field) => (
-                      <InfoRow key={field.label} label={field.label}>
-                        <span className="font-normal break-words">{field.value}</span>
-                      </InfoRow>
-                    ))
-                  )}
-                </div>
-              </Card>
-
-              <Card className="space-y-2">
-                <h3 className="text-sm font-semibold">Version reçue (distante)</h3>
-                <div className="divide-y divide-base-200/70">
-                  {remoteFields.length === 0 ? (
-                    <p className="py-2 text-sm text-base-content/50">Charge utile illisible.</p>
-                  ) : (
-                    remoteFields.map((field) => (
-                      <InfoRow key={field.label} label={field.label}>
-                        <span className="font-normal break-words">{field.value}</span>
-                      </InfoRow>
-                    ))
-                  )}
-                </div>
-              </Card>
-            </div>
-
-            {keys.length > 0 && (
-              <p className="text-xs text-base-content/50">
-                La comparaison porte sur la <strong>ligne entière</strong> : deux postes qui modifient deux
-                champs différents de la même ligne produisent bien un conflit (§23.12).
-              </p>
-            )}
-          </>
+        {error && (
+          <div className="mt-4 rounded-xl border border-error/30 bg-error/10 p-3 text-sm" role="alert">
+            {error}
+          </div>
         )}
 
-        <div className="sticky bottom-0 flex flex-wrap justify-end gap-3 border-t border-base-200 bg-base-100 pb-1 pt-4">
-          <button type="button" className="btn btn-ghost min-h-11 sm:min-h-0" onClick={onClose} disabled={isSubmitting}>
-            Fermer
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline min-h-11 sm:min-h-0"
-            onClick={() => onResolve('local')}
-            disabled={isSubmitting || conflict?.resolution !== 'pending'}
-          >
-            Garder la version locale
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary min-h-11 sm:min-h-0"
-            onClick={() => onResolve('remote')}
-            disabled={isSubmitting || conflict?.resolution !== 'pending'}
-          >
-            {isSubmitting ? <span className="loading loading-spinner loading-sm" /> : 'Garder la version distante'}
+        <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
+          <button type="button" className="btn btn-primary" disabled={submitting} onClick={() => void submit()}>
+            {submitting ? <span className="loading loading-spinner loading-sm" /> : 'Relier ce poste'}
           </button>
         </div>
-      </div>
-    </Modal>
+      </Card>
+    </PageSection>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Déconnexion
+ * ------------------------------------------------------------------ */
+
+function UnenrollSection({ mode, pending, onDone }: { mode: DeviceMode; pending: number; onDone: () => void }) {
+  const { refreshUser } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const confirm = async () => {
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/sync/enroll', { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) throw new Error(await readError(res, 'Déconnexion impossible'));
+      toast.success('Poste déconnecté du serveur central');
+      setOpen(false);
+      await refreshUser();
+      onDone();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Déconnexion impossible', { autoClose: 8000 });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <PageSection title="Liaison au serveur">
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-sm text-base-content/70">
+            Déconnecter ce poste arrête les échanges avec le serveur central. Les données déjà présentes sur ce poste
+            sont conservées.
+          </p>
+          <button type="button" className="btn btn-outline btn-error" onClick={() => setOpen(true)}>
+            Déconnecter ce poste
+          </button>
+        </div>
+      </Card>
+
+      <ConfirmDialog
+        isOpen={open}
+        onClose={() => setOpen(false)}
+        onConfirm={() => void confirm()}
+        title="Déconnecter ce poste"
+        tone="error"
+        confirmLabel="Déconnecter"
+        isSubmitting={submitting}
+        message={
+          <div className="space-y-2">
+            <p>
+              Le poste repasse en mode <strong>autonome</strong> : il n’envoie plus ses opérations et ne reçoit plus
+              celles {mode === 'hq' ? 'des magasins' : 'du siège'}. Les données locales sont conservées.
+            </p>
+            {pending > 0 && (
+              <p className="text-error">
+                <strong>{formatNumber(pending)} changement(s) en attente</strong> n’ont pas encore été envoyés :
+                synchronisez avant de déconnecter, sinon ils ne parviendront pas au serveur.
+              </p>
+            )}
+            <p>
+              Pour le relier à nouveau, il faudra une nouvelle inscription
+              {mode === 'store' ? ' (un poste de magasin ne peut être réinscrit que sur une installation neuve)' : ''}.
+            </p>
+          </div>
+        }
+      />
+    </PageSection>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 4a. Codes d'inscription (siège)
+ * ------------------------------------------------------------------ */
+
+function EnrollmentCodesSection({ stores }: { stores: StoreOption[] }) {
+  const candidates = stores.filter((s) => s.kind !== 'headquarters' && s.status === 'active');
+  const [storeId, setStoreId] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+  const [generated, setGenerated] = useState<{ code: string; expiresAt: string; storeName: string } | null>(null);
+
+  const generate = async () => {
+    if (!storeId) {
+      toast.error('Choisissez le magasin du poste à inscrire');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/sync/codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ storeId: Number(storeId) }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Génération du code impossible'));
+      const payload = (await res.json()) as { code: string; expiresAt: string };
+      const store = candidates.find((s) => String(s.id) === storeId);
+      setGenerated({ ...payload, storeName: store?.name ?? '' });
+      toast.success('Code d’inscription généré');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Génération du code impossible', { autoClose: 8000 });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!generated) return;
+    try {
+      await navigator.clipboard.writeText(generated.code);
+      toast.success('Code copié');
+    } catch {
+      toast.error('Copie impossible : recopiez le code à la main');
+    }
+  };
+
+  return (
+    <PageSection
+      title="Codes d’inscription"
+      subtitle="Un code permet d’inscrire un seul poste de magasin. Il ne sert qu’une fois et expire."
+    >
+      <Card>
+        <div className="flex flex-wrap items-end gap-3">
+          <FormField label="Magasin du poste" className="max-w-sm">
+            <select
+              className="select select-bordered field-rounded w-full"
+              value={storeId}
+              disabled={submitting}
+              onChange={(e) => setStoreId(e.target.value)}
+            >
+              <option value="">Choisir un magasin…</option>
+              {candidates.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.code})
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <button type="button" className="btn btn-primary" disabled={submitting || !storeId} onClick={() => void generate()}>
+            {submitting ? <span className="loading loading-spinner loading-sm" /> : 'Générer un code'}
+          </button>
+        </div>
+
+        {candidates.length === 0 && (
+          <p className="mt-3 text-sm text-base-content/60">
+            Aucun magasin actif. Créez d’abord le magasin dans{' '}
+            <Link href="/magasins" className="link link-primary">
+              Magasins
+            </Link>
+            , puis générez son code.
+          </p>
+        )}
+
+        {generated && (
+          <div className="mt-4 rounded-xl border border-success/30 bg-success/10 p-4">
+            <p className="text-sm">
+              Code pour <strong>{generated.storeName}</strong> :
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <span className="select-all rounded-lg border border-base-300 bg-base-100 px-4 py-2 font-mono text-xl font-semibold tracking-widest">
+                {generated.code}
+              </span>
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void copy()}>
+                Copier
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-base-content/70">
+              Expire le {formatDateTime(generated.expiresAt)}. Sur le poste du magasin (installation neuve), choisissez
+              « Rejoindre le serveur » à l’écran de première installation et saisissez ce code.
+            </p>
+          </div>
+        )}
+      </Card>
+    </PageSection>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 4b. Postes connectés (siège)
+ * ------------------------------------------------------------------ */
+
+function ServerDevicesSection() {
+  const [devices, setDevices] = useState<ServerDevice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [toRevoke, setToRevoke] = useState<ServerDevice | null>(null);
+  const [revoking, setRevoking] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/sync/devices', { cache: 'no-store', credentials: 'same-origin' });
+      if (!res.ok) throw new Error(await readError(res, 'Liste des postes indisponible'));
+      const payload = (await res.json()) as { data?: ServerDevice[] };
+      setDevices(Array.isArray(payload.data) ? payload.data : []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Liste des postes indisponible');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const revoke = async () => {
+    if (!toRevoke) return;
+    setRevoking(true);
+    try {
+      const res = await fetch(`/api/sync/devices/${encodeURIComponent(toRevoke.id)}/revoke`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Révocation impossible'));
+      toast.success(`Poste « ${toRevoke.name} » révoqué`);
+      setToRevoke(null);
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Révocation impossible', { autoClose: 8000 });
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const columns: Column<ServerDevice>[] = [
+    {
+      key: 'name',
+      label: 'Poste',
+      primary: true,
+      render: (d) => (
+        <span className="font-medium">
+          {d.name}
+          {d.isCurrent && <span className="ml-2 text-xs font-normal text-base-content/50">(ce poste)</span>}
+        </span>
+      ),
+    },
+    { key: 'store', label: 'Magasin', render: (d) => (d.mode === 'hq' ? 'Tous (siège)' : d.storeName ?? '—') },
+    { key: 'mode', label: 'Mode', render: (d) => <Badge tone={MODE_TONES[d.mode]}>{MODE_LABELS[d.mode]}</Badge> },
+    { key: 'code', label: 'Code poste', hideOnMobile: true, render: (d) => <span className="font-mono">{d.deviceCode}</span> },
+    { key: 'seen', label: 'Dernière connexion', render: (d) => (d.lastSeenAt ? formatDateTime(d.lastSeenAt) : 'Jamais') },
+    {
+      key: 'status',
+      label: 'Statut',
+      render: (d) =>
+        d.revokedAt ? (
+          <Badge tone="error">Révoqué le {formatDateTime(d.revokedAt)}</Badge>
+        ) : (
+          <Badge tone="success">Actif</Badge>
+        ),
+    },
+  ];
+
+  return (
+    <PageSection
+      title="Postes connectés"
+      subtitle="Tous les postes inscrits au serveur central. Révoquez un poste perdu, volé ou remplacé : il ne pourra plus échanger."
+      actions={
+        <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={() => void load()}>
+          Actualiser
+        </button>
+      }
+    >
+      <Card padded={false} className="p-3 sm:p-4">
+        {error ? (
+          <ErrorState title="Liste des postes indisponible" description={error} onRetry={() => void load()} />
+        ) : loading ? (
+          <div className="flex justify-center p-6">
+            <span className="loading loading-spinner" />
+          </div>
+        ) : (
+          <ResponsiveTable
+            columns={columns}
+            data={devices}
+            getRowKey={(d) => d.id}
+            emptyMessage="Aucun poste inscrit."
+            actions={(d) =>
+              !d.revokedAt && !d.isCurrent ? (
+                <button type="button" className="btn btn-ghost btn-sm text-error" onClick={() => setToRevoke(d)}>
+                  Révoquer
+                </button>
+              ) : null
+            }
+          />
+        )}
+      </Card>
+
+      <ConfirmDialog
+        isOpen={toRevoke !== null}
+        onClose={() => setToRevoke(null)}
+        onConfirm={() => void revoke()}
+        title="Révoquer ce poste"
+        tone="error"
+        confirmLabel="Révoquer"
+        isSubmitting={revoking}
+        message={
+          <>
+            Le poste <strong>{toRevoke?.name}</strong>
+            {toRevoke?.storeName ? ` (${toRevoke.storeName})` : ''} ne pourra plus envoyer ni recevoir d’opérations. Les
+            opérations qu’il n’a pas encore envoyées resteront bloquées sur lui. Cette action est définitive : pour
+            remettre ce poste en service, il faudra le réinstaller et l’inscrire avec un nouveau code.
+          </>
+        }
+      />
+    </PageSection>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 5a. Conflits
+ * ------------------------------------------------------------------ */
+
+function ConflictsSection({ conflicts, onResolved }: { conflicts: ConflictRow[]; onResolved: () => void }) {
+  const [pending, setPending] = useState<{ row: ConflictRow; resolution: 'local' | 'remote' } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const resolve = async () => {
+    if (!pending) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/sync/conflits/${pending.row.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ resolution: pending.resolution }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Arbitrage impossible'));
+      toast.success(
+        pending.resolution === 'remote'
+          ? 'Version du serveur retenue : elle sera réappliquée au prochain échange'
+          : 'Version locale retenue : elle sera renvoyée au prochain échange',
+      );
+      setPending(null);
+      onResolved();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Arbitrage impossible', { autoClose: 8000 });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <PageSection
+      title="Conflits"
+      subtitle="Un même enregistrement modifié à la fois sur ce poste et ailleurs. Choisissez la version à garder."
+    >
+      {conflicts.length === 0 ? (
+        <Card>
+          <p className="text-sm text-base-content/60">Aucun conflit à arbitrer.</p>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {conflicts.map((row) => {
+            const diffs = diffFields(row.localPayload, row.remotePayload);
+            return (
+              <Card key={row.id}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-base-content/50">{row.createdAt ? formatDateTime(row.createdAt) : '—'}</p>
+                    <p className="font-medium">
+                      {tableLabel(row.tableName)} — {recordLabel(row)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => setPending({ row, resolution: 'remote' })}
+                    >
+                      Garder la version du serveur
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={() => setPending({ row, resolution: 'local' })}
+                    >
+                      Garder la version locale
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 overflow-x-auto">
+                  <table className="table table-sm">
+                    <thead>
+                      <tr>
+                        <th>Champ</th>
+                        <th>Version locale</th>
+                        <th>Version du serveur</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {diffs.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="text-base-content/60">
+                            {row.localPayload === null
+                              ? 'Supprimé sur ce poste'
+                              : row.remotePayload === null
+                                ? 'Supprimé sur le serveur'
+                                : 'Aucune différence visible hors champs techniques.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        diffs.map((d) => (
+                          <tr key={d.key}>
+                            <td className="font-mono text-xs">{d.key}</td>
+                            <td className="max-w-xs break-all text-sm">{d.local}</td>
+                            <td className="max-w-xs break-all text-sm">{d.remote}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <ConfirmDialog
+        isOpen={pending !== null}
+        onClose={() => setPending(null)}
+        onConfirm={() => void resolve()}
+        title={pending?.resolution === 'remote' ? 'Garder la version du serveur' : 'Garder la version locale'}
+        tone="warning"
+        confirmLabel="Confirmer"
+        isSubmitting={submitting}
+        message={
+          pending?.resolution === 'remote'
+            ? 'La version du serveur remplacera celle de ce poste au prochain échange. Les modifications locales de cet enregistrement seront perdues.'
+            : 'La version de ce poste sera renvoyée au serveur au prochain échange et remplacera celle des autres postes.'
+        }
+      />
+    </PageSection>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 5b. Quarantaine (lecture)
+ * ------------------------------------------------------------------ */
+
+function QuarantineSection({ rows, total }: { rows: QuarantineRow[]; total: number }) {
+  const columns: Column<QuarantineRow>[] = [
+    { key: 'date', label: 'Reçu le', render: (r) => (r.createdAt ? formatDateTime(r.createdAt) : '—') },
+    { key: 'table', label: 'Type', primary: true, render: (r) => tableLabel(r.tableName) },
+    { key: 'record', label: 'Enregistrement', render: (r) => <span className="font-mono text-xs">{r.syncId.slice(0, 8)}</span> },
+    { key: 'parent', label: 'En attente de', render: (r) => r.missingParent ?? '—' },
+    { key: 'attempts', label: 'Tentatives', render: (r) => formatNumber(r.attempts) },
+  ];
+
+  return (
+    <PageSection
+      title="Quarantaine"
+      subtitle="Opérations reçues avant l’enregistrement dont elles dépendent (ex. une ligne de vente avant sa vente). Elles s’appliquent d’elles-mêmes dès que celui-ci arrive."
+    >
+      <Card padded={false} className="p-3 sm:p-4">
+        <ResponsiveTable columns={columns} data={rows} getRowKey={(r) => r.id} emptyMessage="Aucune opération en quarantaine." />
+        {total > rows.length && (
+          <p className="mt-2 text-xs text-base-content/50">
+            {formatNumber(rows.length)} affichées sur {formatNumber(total)}.
+          </p>
+        )}
+      </Card>
+    </PageSection>
   );
 }
