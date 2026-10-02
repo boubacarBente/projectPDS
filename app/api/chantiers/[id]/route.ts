@@ -14,7 +14,6 @@ import {
 import {
   cancelServiceJob,
   getServiceJob,
-  isJobCategory,
   isJobStatus,
   isQuoteStatus,
   updateServiceJob,
@@ -51,7 +50,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     const patch: Record<string, unknown> = {};
     if (body.customerId !== undefined) patch.customerId = toNumber(body.customerId, 0);
-    if (body.category !== undefined && isJobCategory(body.category)) patch.category = body.category;
+    if (typeof body.category === 'string') patch.category = body.category;
     if (body.title !== undefined) patch.title = body.title;
     if (body.siteAddress !== undefined) patch.siteAddress = body.siteAddress;
     if (body.description !== undefined) patch.description = body.description;

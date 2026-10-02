@@ -27,6 +27,8 @@ import {
 import { usePermission } from '@/components/role-gate';
 import { useSettings } from '@/app/parametres/page';
 import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
+import { jobCategoryLabel as categoryLabelOf } from '@/lib/job-categories';
+import { StoreTag } from '@/components/store-scope';
 import { formatNumber, formatPercent, formatQuantity, today } from '@/lib/format';
 import { formatDateShort } from '@/lib/date-format';
 
@@ -45,12 +47,15 @@ import { formatDateShort } from '@/lib/date-format';
  * Types (miroir du JSON de l'API)
  * ------------------------------------------------------------------ */
 
-export type JobCategory = 'alucobond' | 'staff' | 'placo' | 'furniture' | 'painting';
+/** Type de prestation : libellé de `settings.jobCategories` (lib/job-categories.ts). */
+export type JobCategory = string;
 export type JobStatus = 'quote' | 'pending' | 'in_progress' | 'completed' | 'cancelled';
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'refused';
 
 export type ServiceJobRow = {
   id: number;
+  /** Magasin du chantier (vue « tous les magasins »). */
+  storeName?: string | null;
   reference: string;
   customerId: number;
   customerName: string;
@@ -157,17 +162,19 @@ export { readApiError };
  * Libellés français — jamais la couleur seule (§5.3)
  * ------------------------------------------------------------------ */
 
-export const JOB_CATEGORY_LABELS: Record<JobCategory, string> = {
-  alucobond: 'Alucobond',
-  staff: 'Staff',
-  placo: 'Placo',
-  furniture: 'Meuble',
-  painting: 'Peinture',
-};
-
-export const JOB_CATEGORY_OPTIONS: { value: JobCategory; label: string }[] = (
-  ['alucobond', 'staff', 'placo', 'furniture', 'painting'] as JobCategory[]
-).map((value) => ({ value, label: JOB_CATEGORY_LABELS[value] }));
+/**
+ * Options du choix « type de prestation » : la liste des paramètres, plus le
+ * type actuel d'un chantier s'il a été retiré de la liste depuis (il reste
+ * affiché et conservé).
+ */
+export function jobCategoryOptions(list: string[], current?: string | null): { value: string; label: string }[] {
+  const options = list.map((value) => ({ value, label: value }));
+  const label = current ? categoryLabelOf(current) : '';
+  if (label && label !== '—' && !list.some((v) => v.toLowerCase() === label.toLowerCase())) {
+    options.unshift({ value: label, label });
+  }
+  return options;
+}
 
 export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
   quote: 'Devis',
@@ -208,8 +215,7 @@ export const QUOTE_STATUS_OPTIONS: { value: QuoteStatus; label: string }[] = (
 ).map((value) => ({ value, label: QUOTE_STATUS_LABELS[value] }));
 
 export function jobCategoryLabel(category: string | null | undefined): string {
-  if (!category) return '—';
-  return JOB_CATEGORY_LABELS[category as JobCategory] ?? category;
+  return categoryLabelOf(category);
 }
 
 export function jobStatusLabel(status: string | null | undefined): string {
@@ -329,93 +335,104 @@ export function useJobSelectOptions(enabled: boolean) {
  * Colonnes partagées
  * ------------------------------------------------------------------ */
 
-export const jobColumns: Column<ServiceJobRow>[] = [
-  {
-    key: 'startDate',
-    label: 'Début',
-    className: 'whitespace-nowrap',
-    render: (job) => (
-      <span className="tabular text-base-content/70">{formatDateShort(job.startDate)}</span>
-    ),
-  },
-  {
-    key: 'reference',
-    label: 'Référence',
-    primary: true,
-    render: (job) => (
-      <div className="min-w-0">
-        <Link
-          href={`/chantiers/${job.id}`}
-          className="font-semibold text-primary hover:underline"
-          onClick={(event) => event.stopPropagation()}
-        >
-          {job.reference}
-        </Link>
-        {job.title && <div className="truncate text-xs text-base-content/50">{job.title}</div>}
-      </div>
-    ),
-  },
-  {
-    key: 'customer',
-    label: 'Client',
-    render: (job) => <span className="text-sm">{job.customerName}</span>,
-  },
-  {
-    key: 'category',
-    label: 'Catégorie',
-    render: (job) => <Badge tone="primary">{jobCategoryLabel(job.category)}</Badge>,
-  },
-  {
-    key: 'site',
-    label: 'Site',
-    hideOnMobile: true,
-    className: 'max-w-[14rem] truncate',
-    render: (job) => <span title={job.siteAddress ?? ''}>{job.siteAddress || '—'}</span>,
-  },
-  {
-    key: 'status',
-    label: 'Statut',
-    render: (job) => <Badge tone={JOB_STATUS_TONES[job.status]}>{jobStatusLabel(job.status)}</Badge>,
-  },
-  {
-    key: 'progress',
-    label: 'Avancement',
-    hideOnMobile: true,
-    render: (job) => (
-      <div className="flex flex-col gap-1">
-        <Badge tone={QUOTE_STATUS_TONES[job.quoteStatus]}>
-          Devis : {quoteStatusLabel(job.quoteStatus)}
-        </Badge>
-        <span className="text-xs text-base-content/50">
-          {job.materialsCount} matériau(x) · {job.workersCount} ouvrier(s)
+/**
+ * Colonnes de la liste des chantiers.
+ *
+ * Six colonnes au lieu de dix (le tableau débordait de 388 px en 1366 px,
+ * cachant le reste à payer) : le type passe sous la référence, le site sous le client, l'état du devis
+ * sous le statut, le payé sous le total, la date sur deux lignes. Le magasin
+ * s'affiche sous la référence quand plusieurs magasins sont affichés.
+ */
+export function buildJobColumns(options: { showStore?: boolean } = {}): Column<ServiceJobRow>[] {
+  return [
+    {
+      key: 'startDate',
+      label: 'Début',
+      render: (job) => {
+        if (!job.startDate) return <span className="text-base-content/50">—</span>;
+        const [day, date] = formatDateShort(job.startDate).split(' ');
+        return (
+          <span className="block tabular text-base-content/70">
+            <span className="block text-xs text-base-content/50">{day}</span>
+            {date ?? day}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'reference',
+      label: 'Chantier',
+      primary: true,
+      render: (job) => (
+        <div className="min-w-0 max-w-[16rem]">
+          <Link
+            href={`/chantiers/${job.id}`}
+            className="font-semibold text-primary hover:underline"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {job.reference}
+          </Link>
+          {job.title && <div className="truncate text-xs text-base-content/60">{job.title}</div>}
+          {/* Le type sous la référence : une colonne de moins (tableau en 1366 px). */}
+          <div className="mt-1">
+            <Badge tone="primary">{jobCategoryLabel(job.category)}</Badge>
+          </div>
+          <StoreTag name={job.storeName} show={Boolean(options.showStore)} />
+        </div>
+      ),
+    },
+    {
+      key: 'customer',
+      label: 'Client',
+      render: (job) => (
+        <div className="min-w-0 max-w-[12rem]">
+          <span className="block truncate text-sm">{job.customerName}</span>
+          {job.siteAddress && (
+            <span className="block truncate text-xs text-base-content/55" title={job.siteAddress}>
+              {job.siteAddress}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      label: 'Statut',
+      render: (job) => (
+        <div className="flex flex-col items-start gap-1">
+          <Badge tone={JOB_STATUS_TONES[job.status]}>{jobStatusLabel(job.status)}</Badge>
+          <span className="text-xs text-base-content/55">Devis : {quoteStatusLabel(job.quoteStatus).toLowerCase()}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'total',
+      label: 'Total',
+      className: 'text-right whitespace-nowrap',
+      render: (job) => (
+        <span className="block">
+          <MoneyText value={job.total} bold />
+          <span className="block text-xs text-base-content/55">
+            payé <MoneyText value={job.amountPaid} />
+          </span>
         </span>
-      </div>
-    ),
-  },
-  {
-    key: 'total',
-    label: 'Total',
-    className: 'text-right whitespace-nowrap',
-    render: (job) => <MoneyText value={job.total} bold />,
-  },
-  {
-    key: 'paid',
-    label: 'Payé',
-    hideOnMobile: true,
-    className: 'text-right whitespace-nowrap',
-    render: (job) => <MoneyText value={job.amountPaid} />,
-  },
-  {
-    key: 'remaining',
-    label: 'Reste',
-    className: 'text-right whitespace-nowrap',
-    // Rouge dès qu'il reste à encaisser, neutre sinon (et neutre pour un
-    // chantier annulé : son reste n'est pas encaissable).
-    render: (job) => (
-      <MoneyText value={job.remainingAmount} remaining={job.status !== 'cancelled'} bold />
-    ),
-  },
-];
+      ),
+    },
+    {
+      key: 'remaining',
+      label: 'Reste',
+      className: 'text-right whitespace-nowrap',
+      // Rouge dès qu'il reste à encaisser, neutre sinon (et neutre pour un
+      // chantier annulé : son reste n'est pas encaissable).
+      render: (job) => (
+        <MoneyText value={job.remainingAmount} remaining={job.status !== 'cancelled'} bold />
+      ),
+    },
+  ];
+}
+
+/** Colonnes par défaut (magasin actif). */
+export const jobColumns: Column<ServiceJobRow>[] = buildJobColumns();
 
 export const jobMaterialColumns: Column<ServiceJobMaterialRow>[] = [
   {
@@ -545,7 +562,9 @@ export function JobFormModal({
   initial?: { status?: JobStatus; quoteStatus?: QuoteStatus };
 }) {
   const [customerId, setCustomerId] = useState('');
-  const [category, setCategory] = useState<JobCategory>('placo');
+  const { settings } = useSettings();
+  const categoryList = settings.jobCategories ?? [];
+  const [category, setCategory] = useState<JobCategory>('');
   const [title, setTitle] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [description, setDescription] = useState('');
@@ -562,7 +581,7 @@ export function JobFormModal({
   useEffect(() => {
     if (!isOpen) return;
     setCustomerId(job ? String(job.customerId) : '');
-    setCategory(job?.category ?? 'placo');
+    setCategory(job?.category ? categoryLabelOf(job.category) : '');
     setTitle(job?.title ?? '');
     setSiteAddress(job?.siteAddress ?? '');
     setDescription(job?.description ?? '');
@@ -587,6 +606,10 @@ export function JobFormModal({
 
     if (!customerId) {
       setFormError('Le client est obligatoire pour un chantier.');
+      return;
+    }
+    if (!category) {
+      setFormError('Choisissez le type de prestation (construction, électricité, plâtre, meubles…).');
       return;
     }
 
@@ -686,7 +709,12 @@ export function JobFormModal({
         </FormField>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Catégorie de prestation" htmlFor="job-category" required>
+          <FormField
+            label="Type de prestation"
+            htmlFor="job-category"
+            required
+            hint="Construction, électricité, plâtre, meubles… La liste se modifie dans les paramètres."
+          >
             <select
               id="job-category"
               className="select select-bordered min-h-11 w-full"
@@ -694,7 +722,8 @@ export function JobFormModal({
               onChange={(event) => setCategory(event.target.value as JobCategory)}
               disabled={isSubmitting}
             >
-              {JOB_CATEGORY_OPTIONS.map((option) => (
+              <option value="">Choisir le type de prestation…</option>
+              {jobCategoryOptions(categoryList, job?.category).map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -1921,7 +1950,7 @@ export function DevisDocument({
           <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
             Chantier
           </p>
-          <p className="mt-1 font-semibold">{JOB_CATEGORY_LABELS[job.category]}</p>
+          <p className="mt-1 font-semibold">{jobCategoryLabel(job.category)}</p>
           {job.title ? <p className="text-sm text-base-content/70">{job.title}</p> : null}
           {job.siteAddress ? (
             <p className="text-sm text-base-content/60">{job.siteAddress}</p>

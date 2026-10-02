@@ -30,7 +30,8 @@ import {
 import { scopeSql, type StoreScope } from '@/lib/stores';
 import { addStockMovement } from '@/lib/stock';
 import { listPayments, recomputeDocumentPayments, type PaymentRow } from '@/lib/payments';
-import { nextDocumentNumber } from '@/lib/settings';
+import { getSettings, nextDocumentNumber } from '@/lib/settings';
+import { jobCategoryLabel, jobCategoryStoredValues, matchJobCategory } from '@/lib/job-categories';
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/api';
 import { roundMoney, today } from '@/lib/format';
 
@@ -38,8 +39,11 @@ import { roundMoney, today } from '@/lib/format';
  * Types et listes fermées
  * ------------------------------------------------------------------ */
 
-export const JOB_CATEGORIES = ['alucobond', 'staff', 'placo', 'furniture', 'painting'] as const;
-export type JobCategory = (typeof JOB_CATEGORIES)[number];
+/**
+ * Type de prestation : libellé de la liste `settings.jobCategories` (voir
+ * lib/job-categories.ts). Ce n'est plus une liste figée dans le code.
+ */
+export type JobCategory = string;
 
 export const JOB_STATUSES = ['quote', 'pending', 'in_progress', 'completed', 'cancelled'] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
@@ -47,8 +51,16 @@ export type JobStatus = (typeof JOB_STATUSES)[number];
 export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'refused'] as const;
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 
-export function isJobCategory(value: unknown): value is JobCategory {
-  return typeof value === 'string' && (JOB_CATEGORIES as readonly string[]).includes(value);
+/** Valide un type de prestation contre la liste des paramètres (libellé canonique). */
+export async function validateJobCategory(value: unknown): Promise<string> {
+  const list = (await getSettings()).jobCategories;
+  const match = matchJobCategory(value, list);
+  if (!match) {
+    throw new ValidationError(
+      `Type de prestation inconnu. Choisissez l’un des types définis dans les paramètres : ${list.join(', ')}.`,
+    );
+  }
+  return match;
 }
 
 export function isJobStatus(value: unknown): value is JobStatus {
@@ -247,7 +259,8 @@ function mapJobRow(row: JobSqlRow): ServiceJobRow {
     customerId: Number(row.customer_id),
     customerName: row.customer_name ?? 'Client supprimé',
     customerPhone: row.customer_phone,
-    category: isJobCategory(row.category) ? row.category : 'placo',
+    // Anciens codes (v1) traduits en libellés : un chantier ne change jamais de type.
+    category: jobCategoryLabel(row.category),
     title: row.title,
     siteAddress: row.site_address,
     description: row.description,
@@ -289,9 +302,10 @@ export async function listServiceJobs(
     const like = `%${options.search}%`;
     args.push(like, like, like, like, like);
   }
-  if (isJobCategory(options.category)) {
-    where.push('j.category = ?');
-    args.push(options.category);
+  if (typeof options.category === 'string' && options.category.trim()) {
+    const values = jobCategoryStoredValues(options.category);
+    where.push(`j.category IN (${values.map(() => '?').join(', ')})`);
+    args.push(...values);
   }
   if (isJobStatus(options.status)) {
     where.push('j.status = ?');
@@ -580,7 +594,7 @@ async function createServiceJobInTx(input: ServiceJobInput & { storeId: number }
       storeId: input.storeId,
       reference,
       customerId,
-      category: isJobCategory(input.category) ? input.category : 'placo',
+      category: await validateJobCategory(input.category),
       title: input.title?.trim() || null,
       siteAddress: input.siteAddress?.trim() || null,
       description: input.description?.trim() || null,
@@ -629,8 +643,11 @@ export async function updateServiceJob(id: number, patch: ServiceJobPatch, store
     values.customerId = customerId;
   }
   if (patch.category !== undefined) {
-    if (!isJobCategory(patch.category)) throw new ValidationError('Catégorie de prestation invalide');
-    values.category = patch.category;
+    // Le type actuel reste accepté même s'il a été retiré de la liste depuis.
+    values.category =
+      jobCategoryLabel(patch.category).toLowerCase() === jobCategoryLabel(job.category).toLowerCase()
+        ? job.category
+        : await validateJobCategory(patch.category);
   }
   if (patch.title !== undefined) values.title = patch.title?.trim() || null;
   if (patch.siteAddress !== undefined) values.siteAddress = patch.siteAddress?.trim() || null;

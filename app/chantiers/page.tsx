@@ -17,15 +17,17 @@ import {
   StatCardDelta,
 } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
+import { useSettings } from '@/app/parametres/page';
+import { StoreScopeSelect, scopeShowsStore, useStoreScope } from '@/components/store-scope';
 import { useViewStateRehydration, writeViewState, clampPage } from '@/lib/view-state';
 import {
-  JOB_CATEGORY_OPTIONS,
+  jobCategoryOptions,
   JOB_STATUS_OPTIONS,
   QUOTE_STATUS_OPTIONS,
   JobFormModal,
   JobWorkersManagerButton,
   jobCategoryLabel,
-  jobColumns,
+  buildJobColumns,
   jobStatusLabel,
   quoteStatusLabel,
   readApiError,
@@ -71,6 +73,11 @@ function buildQuery(entries: Record<string, string | number | undefined>): strin
 
 export default function ChantiersPage() {
   const canCreate = usePermission('jobs.create');
+  // Types de prestation : liste des paramètres (construction, électricité, meubles…).
+  const { settings } = useSettings();
+  const { scope, setScope, apply } = useStoreScope('chantiers');
+  /** `?store=` des requêtes (vide = magasin actif). */
+  const storeParam = apply(new URLSearchParams()).get('store') ?? undefined;
 
   /* Filtres */
   const [search, setSearch] = useState('');
@@ -113,7 +120,7 @@ export default function ChantiersPage() {
     setSummaryLoading(true);
     setSummaryError(null);
 
-    const query = buildQuery({ stats: 1, from, to });
+    const query = buildQuery({ stats: 1, from, to, store: storeParam });
 
     fetch(`/api/chantiers?${query}`, {
       signal: controller.signal,
@@ -139,7 +146,7 @@ export default function ChantiersPage() {
       });
 
     return () => controller.abort();
-  }, [from, to, summaryToken]);
+  }, [from, to, summaryToken, storeParam]);
 
   /* Liste */
   useEffect(() => {
@@ -156,6 +163,7 @@ export default function ChantiersPage() {
       to,
       page,
       limit: LIMIT,
+      store: storeParam,
     });
 
     fetch(`/api/chantiers?${query}`, {
@@ -188,7 +196,7 @@ export default function ChantiersPage() {
       });
 
     return () => controller.abort();
-  }, [debouncedSearch, category, status, quoteStatus, from, to, page, reloadToken]);
+  }, [debouncedSearch, category, status, quoteStatus, from, to, page, reloadToken, storeParam]);
 
   /* Restauration d'état au retour arrière (§5) */
   const rehydrated = useViewStateRehydration<ChantiersViewState>(VIEW_NAME, (saved) => {
@@ -235,7 +243,7 @@ export default function ChantiersPage() {
       <PageHeader
         eyebrow="Production"
         title="Chantiers"
-        description="Devis et suivi des prestations : Alucobond, Staff, Placo, Meuble et Peinture — matériaux déduits du stock, équipes, coûts de revient et encaissements."
+        description="Devis et suivi de tout type de prestation (construction, électricité, plomberie, plâtre, alucobond, meubles…) — matériaux déduits du stock, équipes, coûts de revient et encaissements."
         actions={
           <>
             <JobWorkersManagerButton onChanged={refresh} />
@@ -274,36 +282,42 @@ export default function ChantiersPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           <StatCardDelta
             label="Chantiers"
+            tooltip="Nombre de chantiers (devis compris) des magasins affichés, sur la période choisie. Un devis devient un chantier quand le client l’accepte."
             tone="primary"
             value={summary?.totalJobs ?? 0}
             hint={`${summary?.byStatus.in_progress ?? 0} en cours · ${summary?.byStatus.quote ?? 0} devis`}
           />
           <StatCardDelta
             label="CA des prestations"
+            tooltip="Montant total facturé pour les chantiers (matériaux + main-d’œuvre), hors chantiers annulés."
             tone="success"
             value={<MoneyText value={summary?.billed ?? 0} />}
             hint="Hors chantiers annulés"
           />
           <StatCardDelta
             label="Coût de revient"
+            tooltip="Ce que les chantiers ont réellement coûté : matériaux sortis du stock au prix d’achat, plus la main-d’œuvre des ouvriers."
             tone="warning"
             value={<MoneyText value={summary?.totalCost ?? 0} />}
             hint="Matériaux + main-d’œuvre"
           />
           <StatCardDelta
             label="Marge"
+            tooltip="Ce que rapportent les chantiers : chiffre d’affaires des prestations moins leur coût de revient."
             tone={(summary?.margin ?? 0) >= 0 ? 'success' : 'error'}
             value={<MoneyText value={summary?.margin ?? 0} />}
             hint={summary ? `${summary.marginPercent.toLocaleString('fr-FR')} % du CA` : undefined}
           />
           <StatCardDelta
             label="Encaissé"
+            tooltip="Argent réellement reçu des clients pour ces chantiers (acomptes et paiements)."
             tone="info"
             value={<MoneyText value={summary?.collected ?? 0} />}
             hint="Reçus de prestation"
           />
           <StatCardDelta
             label="Reste à encaisser"
+            tooltip="Ce que les clients doivent encore pour leurs chantiers : montant facturé moins ce qui a été encaissé."
             tone={(summary?.outstanding ?? 0) > 0 ? 'error' : 'success'}
             /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
             value={<MoneyText value={summary?.outstanding ?? 0} remaining bold />}
@@ -321,15 +335,27 @@ export default function ChantiersPage() {
         }}
         searchPlaceholder="Rechercher une référence, un client, un site…"
         filters={
-          <FilterSelect
-            value={category}
-            onChange={(value) => {
-              setCategory(value);
-              setPage(1);
-            }}
-            options={JOB_CATEGORY_OPTIONS}
-            placeholder="Toutes les catégories"
-          />
+          <>
+            <StoreScopeSelect
+              value={scope}
+              onChange={(value) => {
+                setScope(value);
+                setPage(1);
+              }}
+              className="min-h-11 w-full sm:w-52"
+            />
+            <div className="w-full sm:w-56">
+              <FilterSelect
+                value={category}
+                onChange={(value) => {
+                  setCategory(value);
+                  setPage(1);
+                }}
+                options={jobCategoryOptions(settings.jobCategories ?? [])}
+                placeholder="Tous les types"
+              />
+            </div>
+          </>
         }
         secondaryFilters={
           <>
@@ -425,7 +451,7 @@ export default function ChantiersPage() {
       ) : (
         <>
           <ResponsiveTable
-            columns={jobColumns}
+            columns={buildJobColumns({ showStore: scopeShowsStore(scope) })}
             data={jobs}
             getRowKey={(job) => job.id}
             emptyMessage="Aucun chantier."

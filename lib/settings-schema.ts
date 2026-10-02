@@ -35,6 +35,12 @@ export type Settings = {
   paymentMethods: string[];
   units: string[];
   expenseCategories: string[];
+  /**
+   * Types de prestation des chantiers (liste fermée, commune à tous les
+   * magasins). Chaque magasin ou atelier peut ouvrir un chantier de n'importe
+   * quel type : construction complète, électricité, plâtre, meubles…
+   */
+  jobCategories: string[];
   /* Apparence */
   theme: 'light' | 'dark';
   primaryColor: string;
@@ -99,6 +105,19 @@ export const DEFAULT_SETTINGS: Settings = {
   paymentMethods: ['Espèces', 'Mobile Money', 'Virement', 'Crédit'],
   units: ['pièce', 'ensemble', 'carton', 'm²', 'kg', 'sac', 'litre'],
   expenseCategories: ['Transport', 'Loyer', 'Salaire', 'Carburant', 'Électricité', 'Autre'],
+  jobCategories: [
+    'Construction complète',
+    'Gros œuvre / maçonnerie',
+    'Électricité',
+    'Plomberie',
+    'Plâtre / staff',
+    'Placo / faux plafond',
+    'Alucobond / façade',
+    'Peinture',
+    'Carrelage',
+    'Menuiserie / meubles',
+    'Autre',
+  ],
   theme: 'light',
   primaryColor: '#1e40af',
   sidebarColor: '#1e293b',
@@ -169,6 +188,7 @@ export const ARRAY_SETTINGS_KEYS: (keyof Settings)[] = [
   'paymentMethods',
   'units',
   'expenseCategories',
+  'jobCategories',
   'reportChannels',
   'reportRecipients',
 ];

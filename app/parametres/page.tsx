@@ -874,7 +874,7 @@ export default function ParametresPage() {
 
       {/* 6. Référentiels : unités et catégories de dépense */}
       <PageSection
-        title="Unités et catégories de dépenses"
+        title="Unités, dépenses et types de prestation"
         subtitle="Ces listes sont fermées : une saisie libre rendrait les rapports par catégorie faux."
       >
         <div className="grid gap-5 lg:grid-cols-2">
@@ -894,6 +894,26 @@ export default function ParametresPage() {
               disabled={!canEditCentral}
               placeholder="Ex. Entretien"
               onChange={(values) => void updateSettings({ expenseCategories: values })}
+            />
+          </Card>
+          <Card className="lg:col-span-2">
+            <h3 className="text-sm font-semibold">Types de prestation (chantiers)</h3>
+            <p className="mb-3 mt-1 text-xs text-base-content/60">
+              Tout type de chantier que vos magasins et ateliers réalisent : construction complète,
+              électricité, plomberie, plâtre, alucobond, meubles… Chaque magasin peut ouvrir un chantier
+              de n’importe quel type. Retirer un type ne modifie pas les chantiers qui l’utilisent déjà.
+            </p>
+            <TagListEditor
+              values={settings.jobCategories}
+              disabled={!canEditCentral}
+              placeholder="Ex. Climatisation"
+              onChange={(values) => {
+                if (values.length === 0) {
+                  toast.error('Gardez au moins un type de prestation.');
+                  return;
+                }
+                void updateSettings({ jobCategories: values });
+              }}
             />
           </Card>
         </div>

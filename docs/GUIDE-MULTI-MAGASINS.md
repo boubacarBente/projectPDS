@@ -145,6 +145,8 @@
   commune des listes : `StoreScopeSelect` + `StoreTag` (nom du magasin sous
   l'identifiant) ; `scopeShowsStore(scope)` dit quand l'afficher.
 - **Exports** : voir README §11.1 (troisième piège, règles pour tout futur export).
+- **Chantiers** (§6.11) : types de prestation configurables (`settings.jobCategories`,
+  `lib/job-categories.ts`, `validateJobCategory`), portée magasin, colonnes resserrées.
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -433,7 +435,7 @@ périmètre : `GET /api/clients?store=…`, `GET /api/clients/[id]?store=…`,
 À ajouter : StoreScopeSelect ; sur la fiche, tableau « par magasin » (`byStore`) et
 colonne Magasin dans les dernières factures.
 
-### 6.11 `/chantiers` ⏳
+### 6.11 `/chantiers` ✅
 
 Chaque chantier appartient à un magasin. API : `/api/chantiers?store=…`, `[id]`,
 `[id]/devis`, `[id]/materiaux` (sortie de stock du magasin du chantier), `[id]/ouvriers`.

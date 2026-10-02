@@ -523,7 +523,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   const jobDefs = [
     {
       customer: customerIds[1],
-      category: 'alucobond' as const,
+      category: 'Alucobond / façade',
       title: 'Habillage façade Alucobond — aile nord',
       status: 'in_progress' as const,
       startDaysAgo: 12,
@@ -533,7 +533,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     },
     {
       customer: customerIds[0],
-      category: 'painting' as const,
+      category: 'Peinture',
       title: 'Peinture et finitions — six appartements',
       status: 'completed' as const,
       startDaysAgo: 25,
@@ -543,7 +543,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     },
     {
       customer: customerIds[5],
-      category: 'placo' as const,
+      category: 'Placo / faux plafond',
       title: 'Cloisons et faux plafond — plateau 2',
       status: 'quote' as const,
       startDaysAgo: null,

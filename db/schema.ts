@@ -563,7 +563,8 @@ export const serviceJobs = sqliteTable('service_jobs', {
     .notNull()
     .references(() => customers.id),
   /** alucobond | staff | placo | furniture | painting */
-  category: text('category', { enum: ['alucobond', 'staff', 'placo', 'furniture', 'painting'] })
+  // Type de prestation : libellé de la liste `settings.jobCategories` (anciens codes traduits par lib/jobs.ts).
+  category: text('category')
     .notNull()
     .default('placo'),
   title: text('title'),

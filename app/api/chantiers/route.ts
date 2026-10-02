@@ -12,7 +12,6 @@ import {
 import {
   createServiceJob,
   getJobsSummary,
-  isJobCategory,
   isJobStatus,
   isQuoteStatus,
   listServiceJobs,
@@ -76,7 +75,7 @@ export async function POST(request: NextRequest) {
     const job = await createServiceJob({
       storeId,
       customerId: toNumber(body.customerId, 0),
-      category: isJobCategory(body.category) ? body.category : undefined,
+      category: typeof body.category === 'string' ? body.category : undefined,
       title: body.title ?? null,
       siteAddress: body.siteAddress ?? null,
       description: body.description ?? null,
