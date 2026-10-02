@@ -25,7 +25,10 @@ export function useStoreScope(screenKey: string) {
 
   useEffect(() => {
     try {
-      const raw = window.sessionStorage.getItem(storageKey);
+      // Un lien `?store=<id>|all` (raccourcis de la fiche magasin) prime sur la
+      // préférence mémorisée.
+      const fromUrl = new URLSearchParams(window.location.search).get('store');
+      const raw = fromUrl ?? window.sessionStorage.getItem(storageKey);
       if (raw === 'all') setScopeState('all');
       else if (raw && /^\d+$/.test(raw)) setScopeState(Number(raw));
     } catch {
@@ -79,7 +82,7 @@ export function StoreScopeSelect({
   return (
     <select
       className={`select select-sm select-bordered ${className}`}
-      value={String(value)}
+      value={value === activeStore?.id ? 'current' : String(value)}
       onChange={(event) => {
         const raw = event.target.value;
         onChange(raw === 'current' ? 'current' : raw === 'all' ? 'all' : Number(raw));

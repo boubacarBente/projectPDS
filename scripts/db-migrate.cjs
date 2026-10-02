@@ -16,7 +16,9 @@ const { drizzle } = require('drizzle-orm/libsql/sqlite3');
 const { migrate } = require('drizzle-orm/libsql/migrator');
 
 async function main() {
-  const dbPath = process.env.ELECTRON_APP_PATH
+  const dbPath = process.env.PDS_DB_PATH
+    ? path.resolve(process.env.PDS_DB_PATH)
+    : process.env.ELECTRON_APP_PATH
     ? path.join(process.env.ELECTRON_APP_PATH, 'database.db')
     : path.join(process.cwd(), 'db', 'database.db');
 

@@ -62,6 +62,9 @@ function dbError(...args: any[]) {
 }
 
 export function getDbPath(): string {
+  // Base de recette isolée (scripts verify:*, seconde instance de développement) :
+  // on teste le multi-magasins sans écrire dans la base de travail.
+  if (process.env.PDS_DB_PATH) return path.resolve(process.env.PDS_DB_PATH);
   if (process.env.ELECTRON_APP_PATH) {
     return path.join(process.env.ELECTRON_APP_PATH, 'database.db');
   }

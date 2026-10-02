@@ -220,3 +220,32 @@ export function deserializeSetting(key: keyof Settings, raw: string): unknown {
 export function isTechnicalSettingKey(key: string): boolean {
   return key.startsWith('seq_');
 }
+
+/*
+ * Rendu d'un numéro de document. Fonction pure, placée ici pour que l'écran
+ * des paramètres montre l'aperçu exact sans importer de module serveur.
+ */
+/** Applique le gabarit de numérotation (`{PREFIX}-{STORE}-{YYYY}-{NNNNNN}`). */
+export function renderDocumentNumber(
+  prefix: string,
+  sequence: number,
+  template: string,
+  year = new Date().getFullYear(),
+  storeTag = '',
+): string {
+  // Anciens gabarits sans `{STORE}` : le magasin est inséré après le préfixe,
+  // sinon deux magasins produiraient le même numéro.
+  let pattern = template;
+  if (storeTag && !pattern.includes('{STORE}')) {
+    pattern = pattern.includes('{PREFIX}') ? pattern.replace('{PREFIX}', '{PREFIX}-{STORE}') : `{STORE}-${pattern}`;
+  }
+  return pattern
+    .replace('{PREFIX}', prefix)
+    .replace('{STORE}', storeTag)
+    .replace('{YYYY}', String(year))
+    .replace('{YY}', String(year).slice(-2))
+    .replace('{NNNNNN}', String(sequence).padStart(6, '0'))
+    .replace('{NNNN}', String(sequence).padStart(4, '0'))
+    .replace(/--+/g, '-')
+    .replace(/^-|-$/g, '');
+}

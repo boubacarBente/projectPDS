@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { toast } from 'react-toastify';
+import Link from 'next/link';
 import { PageHeader } from '@/components/page-header';
 import { UpdateStatus } from '@/components/update-status';
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -20,9 +21,10 @@ import { usePermission } from '@/components/role-gate';
 import { useAuth } from '@/components/auth-provider';
 import { useTheme } from '@/components/theme-provider';
 import { applyThemeColors } from '@/lib/colors';
-import { DEFAULT_SETTINGS, type Settings } from '@/lib/settings-schema';
+import { DEFAULT_SETTINGS, renderDocumentNumber, type Settings } from '@/lib/settings-schema';
 import { RoleGate } from '@/components/role-gate';
-import { formatCurrency, formatNumber } from '@/lib/format';
+import { formatNumber } from '@/lib/format';
+import { formatDateWithTime } from '@/lib/date-format';
 
 /* ==================================================================
  * Contexte global des paramètres (README §9.1)
@@ -168,13 +170,22 @@ type FormState = {
   purchasePrefix: string;
   receiptPrefix: string;
   jobPrefix: string;
+  transferPrefix: string;
+  inventoryPrefix: string;
   defaultTaxRate: string;
   defaultStockMin: string;
   reportSendTime: string;
-  syncApiUrl: string;
-  syncIntervalMinutes: string;
-  syncNumberBlockSize: string;
   invoiceFooterNote: string;
+  expenseApprovalThreshold: string;
+  backupExternalDir: string;
+  backupRetentionDays: string;
+};
+
+type StorageInfo = {
+  databaseSize: number;
+  backupsDir: string;
+  backupsCount: number;
+  lastBackupAt: string | null;
 };
 
 function toForm(settings: Settings): FormState {
@@ -194,13 +205,15 @@ function toForm(settings: Settings): FormState {
     purchasePrefix: settings.purchasePrefix,
     receiptPrefix: settings.receiptPrefix,
     jobPrefix: settings.jobPrefix,
+    transferPrefix: settings.transferPrefix,
+    inventoryPrefix: settings.inventoryPrefix,
     defaultTaxRate: String(settings.defaultTaxRate),
     defaultStockMin: String(settings.defaultStockMin),
     reportSendTime: settings.reportSendTime,
-    syncApiUrl: settings.syncApiUrl,
-    syncIntervalMinutes: String(settings.syncIntervalMinutes),
-    syncNumberBlockSize: String(settings.syncNumberBlockSize),
     invoiceFooterNote: settings.invoiceFooterNote,
+    expenseApprovalThreshold: String(settings.expenseApprovalThreshold),
+    backupExternalDir: settings.backupExternalDir,
+    backupRetentionDays: String(settings.backupRetentionDays),
   };
 }
 
@@ -209,7 +222,15 @@ export default function ParametresPage() {
   const { theme } = useTheme();
   const canUpdate = usePermission('settings.update');
   const canCritical = usePermission('settings.critical');
-  const canBackup = usePermission('backup.manage');
+  const { device, activeStore } = useAuth();
+  /*
+   * Sur un poste de magasin, les paramètres de l'entreprise viennent du siège
+   * par la synchronisation : seuls les réglages propres au poste (apparence,
+   * sauvegarde) restent modifiables. Le serveur refuse le reste (403).
+   */
+  const isStoreDevice = device?.mode === 'store';
+  const canEditCentral = canUpdate && !isStoreDevice;
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
 
   const [form, setForm] = useState<FormState>(() => toForm(settings));
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -223,6 +244,22 @@ export default function ParametresPage() {
   useEffect(() => {
     if (!isLoading) setForm(toForm(settings));
   }, [isLoading, settings]);
+
+  // État du stockage (dernière sauvegarde) : non porté par le contexte global.
+  const loadStorage = useCallback(async () => {
+    try {
+      const res = await fetch('/api/parametres', { cache: 'no-store', credentials: 'same-origin' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setStorage(data.storage ?? null);
+    } catch {
+      /* information facultative */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStorage();
+  }, [loadStorage]);
 
   const isDesktop =
     typeof window !== 'undefined' && Boolean((window as any).electronAPI?.isElectron);
@@ -264,6 +301,8 @@ export default function ParametresPage() {
       purchasePrefix: form.purchasePrefix,
       receiptPrefix: form.receiptPrefix,
       jobPrefix: form.jobPrefix,
+      transferPrefix: form.transferPrefix,
+      inventoryPrefix: form.inventoryPrefix,
       defaultTaxRate: Number(form.defaultTaxRate) || 0,
     });
     setIsSubmitting(false);
@@ -299,7 +338,34 @@ export default function ParametresPage() {
     if (done) toast.success('Réglages de rapports enregistrés');
   };
 
-  const handleLogoUpload = (file: File) => {
+  const handleSaveNetwork = async () => {
+    const threshold = Number(form.expenseApprovalThreshold);
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      toast.error('Le seuil d’approbation doit être un montant positif ou nul');
+      return;
+    }
+    setIsSubmitting(true);
+    const done = await updateSettings({ expenseApprovalThreshold: threshold });
+    setIsSubmitting(false);
+    if (done) toast.success('Règles multi-magasins enregistrées');
+  };
+
+  const handleSaveBackup = async () => {
+    const days = Number(form.backupRetentionDays);
+    if (!Number.isInteger(days) || days < 1) {
+      toast.error('La durée de conservation doit être d’au moins 1 jour');
+      return;
+    }
+    setIsSubmitting(true);
+    const done = await updateSettings({
+      backupExternalDir: form.backupExternalDir.trim(),
+      backupRetentionDays: days,
+    });
+    setIsSubmitting(false);
+    if (done) toast.success('Réglages de sauvegarde enregistrés');
+  };
+
+  const handleLogoUpload =(file: File) => {
     if (file.size > 2 * 1024 * 1024) {
       toast.error('Le logo est trop volumineux (2 Mo maximum)', { autoClose: 8000 });
       return;
@@ -331,6 +397,7 @@ export default function ParametresPage() {
       link.remove();
       URL.revokeObjectURL(url);
       toast.success('Sauvegarde téléchargée');
+      void loadStorage();
     } catch (error: any) {
       toast.error(error?.message ?? 'Sauvegarde impossible', { autoClose: 8000 });
     } finally {
@@ -425,7 +492,7 @@ export default function ParametresPage() {
       <PageHeader
         eyebrow="Administration"
         title="Paramètres"
-        description="Identité de l’entreprise, apparence, devise, numérotation, alertes, rapports, sauvegarde et restauration."
+        description="Identité de l’entreprise, apparence, devise, numérotation, règles multi-magasins, alertes, rapports, sauvegarde et restauration."
       />
 
       {!canUpdate && (
@@ -433,6 +500,16 @@ export default function ParametresPage() {
           <span>
             Votre rôle donne un accès en <strong>consultation</strong> : les modifications sont
             réservées à l’administrateur et au gérant.
+          </span>
+        </div>
+      )}
+
+      {canUpdate && isStoreDevice && (
+        <div className="alert border border-info/30 bg-info/10 text-sm">
+          <span>
+            <strong>Paramètres de l’entreprise gérés au siège.</strong> Ce poste est un poste de
+            magasin : il reçoit l’identité, la numérotation et les règles par la synchronisation.
+            Seuls l’apparence et la sauvegarde de ce poste sont modifiables ici.
           </span>
         </div>
       )}
@@ -445,7 +522,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.companyName}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('companyName', e.target.value)}
               />
             </FormField>
@@ -453,7 +530,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.companyBranch}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('companyBranch', e.target.value)}
               />
             </FormField>
@@ -461,7 +538,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.companyTaxId}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('companyTaxId', e.target.value)}
               />
             </FormField>
@@ -469,7 +546,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.companyPhone}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('companyPhone', e.target.value)}
               />
             </FormField>
@@ -478,7 +555,7 @@ export default function ParametresPage() {
                 type="email"
                 className="input input-bordered field-rounded w-full"
                 value={form.companyEmail}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('companyEmail', e.target.value)}
               />
             </FormField>
@@ -486,7 +563,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.companyAddress}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('companyAddress', e.target.value)}
               />
             </FormField>
@@ -512,14 +589,14 @@ export default function ParametresPage() {
                 <input
                   type="file"
                   accept="image/*"
-                  disabled={!canUpdate}
+                  disabled={!canEditCentral}
                   className="file-input file-input-bordered field-rounded file-input-sm w-full max-w-xs"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) handleLogoUpload(file);
                   }}
                 />
-                {form.companyLogo && canUpdate && (
+                {form.companyLogo && canEditCentral && (
                   <button
                     type="button"
                     className="btn btn-ghost btn-sm text-error"
@@ -539,13 +616,13 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.invoiceFooterNote}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('invoiceFooterNote', e.target.value)}
               />
             </FormField>
           </div>
 
-          {canUpdate && (
+          {canEditCentral && (
             <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
               <button
                 type="button"
@@ -635,7 +712,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.currency}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('currency', e.target.value)}
               />
             </FormField>
@@ -643,7 +720,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.currencySymbol}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('currencySymbol', e.target.value)}
               />
             </FormField>
@@ -651,7 +728,7 @@ export default function ParametresPage() {
               <select
                 className="select select-bordered field-rounded w-full"
                 value={form.dateFormat}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('dateFormat', e.target.value)}
               >
                 <option value="DD/MM/YYYY">JJ/MM/AAAA (31/12/2026)</option>
@@ -660,7 +737,7 @@ export default function ParametresPage() {
               </select>
             </FormField>
           </div>
-          {canUpdate && (
+          {canEditCentral && (
             <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
               <button
                 type="button"
@@ -678,7 +755,7 @@ export default function ParametresPage() {
       {/* 4. Préfixes et numérotation */}
       <PageSection
         title="Préfixes et numérotation"
-        subtitle="Le gabarit accepte {PREFIX}, {YYYY}, {YY}, {NNNNNN} et {NNNN}."
+        subtitle="Le gabarit accepte {PREFIX}, {STORE}, {YYYY}, {YY}, {NNNNNN} et {NNNN}. {STORE} (code du magasin + numéro du poste) est ajouté automatiquement s’il manque : deux magasins ou deux postes hors ligne ne produisent jamais le même numéro."
       >
         <Card>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -686,7 +763,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.invoicePrefix}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('invoicePrefix', e.target.value.toUpperCase())}
               />
             </FormField>
@@ -694,7 +771,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.purchasePrefix}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('purchasePrefix', e.target.value.toUpperCase())}
               />
             </FormField>
@@ -702,7 +779,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.receiptPrefix}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('receiptPrefix', e.target.value.toUpperCase())}
               />
             </FormField>
@@ -710,15 +787,31 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={form.jobPrefix}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('jobPrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe transfert">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.transferPrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('transferPrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe inventaire">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.inventoryPrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('inventoryPrefix', e.target.value.toUpperCase())}
               />
             </FormField>
             <FormField label="Gabarit du numéro" className="sm:col-span-2">
               <input
                 className="input input-bordered field-rounded w-full font-mono text-sm"
                 value={form.invoiceNumberFormat}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('invoiceNumberFormat', e.target.value)}
               />
             </FormField>
@@ -733,7 +826,7 @@ export default function ParametresPage() {
                 step="0.1"
                 className="input input-bordered field-rounded w-full tabular"
                 value={form.defaultTaxRate}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('defaultTaxRate', e.target.value)}
               />
             </FormField>
@@ -742,12 +835,17 @@ export default function ParametresPage() {
           <p className="mt-3 rounded-lg border border-base-200 bg-base-200/40 px-3 py-2 text-xs text-base-content/60">
             Exemple de numéro :{' '}
             <span className="font-mono">
-              {form.invoicePrefix || 'FAC'}-{new Date().getFullYear()}-
-              {String(1).padStart(6, '0')}
+              {renderDocumentNumber(
+                form.invoicePrefix || 'FAC',
+                1,
+                form.invoiceNumberFormat || DEFAULT_SETTINGS.invoiceNumberFormat,
+                new Date().getFullYear(),
+                `${activeStore?.code ?? 'PRINC'}${device?.deviceCode ?? ''}`,
+              )}
             </span>
           </p>
 
-          {canUpdate && (
+          {canEditCentral && (
             <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
               <button
                 type="button"
@@ -767,7 +865,7 @@ export default function ParametresPage() {
         <Card>
           <TagListEditor
             values={settings.paymentMethods}
-            disabled={!canUpdate}
+            disabled={!canEditCentral}
             placeholder="Ex. Chèque"
             onChange={(values) => void updateSettings({ paymentMethods: values })}
           />
@@ -784,7 +882,7 @@ export default function ParametresPage() {
             <h3 className="mb-3 text-sm font-semibold">Unités de mesure</h3>
             <TagListEditor
               values={settings.units}
-              disabled={!canUpdate}
+              disabled={!canEditCentral}
               placeholder="Ex. tonne"
               onChange={(values) => void updateSettings({ units: values })}
             />
@@ -793,7 +891,7 @@ export default function ParametresPage() {
             <h3 className="mb-3 text-sm font-semibold">Catégories de dépenses</h3>
             <TagListEditor
               values={settings.expenseCategories}
-              disabled={!canUpdate}
+              disabled={!canEditCentral}
               placeholder="Ex. Entretien"
               onChange={(values) => void updateSettings({ expenseCategories: values })}
             />
@@ -811,7 +909,7 @@ export default function ParametresPage() {
                   type="checkbox"
                   className="toggle toggle-primary"
                   checked={settings.lowStockAlert}
-                  disabled={!canUpdate}
+                  disabled={!canEditCentral}
                   onChange={(e) => void updateSettings({ lowStockAlert: e.target.checked })}
                 />
                 <span className="text-sm">
@@ -829,12 +927,12 @@ export default function ParametresPage() {
                 step="0.01"
                 className="input input-bordered field-rounded w-full tabular"
                 value={form.defaultStockMin}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('defaultStockMin', e.target.value)}
               />
             </FormField>
           </div>
-          {canUpdate && (
+          {canEditCentral && (
             <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
               <button
                 type="button"
@@ -864,7 +962,7 @@ export default function ParametresPage() {
                     <button
                       key={channel}
                       type="button"
-                      disabled={!canUpdate}
+                      disabled={!canEditCentral}
                       onClick={() =>
                         void updateSettings({
                           reportChannels: active
@@ -885,7 +983,7 @@ export default function ParametresPage() {
               <select
                 className="select select-bordered field-rounded w-full"
                 value={settings.reportFrequency}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) =>
                   void updateSettings({ reportFrequency: e.target.value as Settings['reportFrequency'] })
                 }
@@ -905,7 +1003,7 @@ export default function ParametresPage() {
                 type="time"
                 className="input input-bordered field-rounded w-full tabular"
                 value={form.reportSendTime}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) => set('reportSendTime', e.target.value)}
               />
             </FormField>
@@ -918,7 +1016,7 @@ export default function ParametresPage() {
               <input
                 className="input input-bordered field-rounded w-full"
                 value={settings.reportRecipients.join(', ')}
-                disabled={!canUpdate}
+                disabled={!canEditCentral}
                 onChange={(e) =>
                   void updateSettings(
                     {
@@ -935,7 +1033,7 @@ export default function ParametresPage() {
           </div>
 
           <div className="mt-5 flex flex-wrap justify-end gap-3 border-t border-base-200 pt-4">
-            {canUpdate && (
+            {canEditCentral && (
               <button
                 type="button"
                 className="btn btn-outline"
@@ -957,62 +1055,123 @@ export default function ParametresPage() {
         </Card>
       </PageSection>
 
-      {/* 9. Synchronisation */}
-      <RoleGate action="sync.manage">
-        <PageSection
-          title="Synchronisation en ligne"
-          subtitle="Optionnelle et désactivée par défaut : le poste reste pleinement utilisable hors ligne (Q21)."
-        >
-          <Card>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <FormField label="Mode">
-                <select
-                  className="select select-bordered field-rounded w-full"
-                  value={settings.syncMode}
-                  onChange={(e) =>
-                    void updateSettings({ syncMode: e.target.value as Settings['syncMode'] })
-                  }
-                >
-                  <option value="off">Désactivée</option>
-                  <option value="backup">A — Sauvegarde en ligne (unidirectionnel)</option>
-                  <option value="multi">B — Multi-postes (bidirectionnel)</option>
-                </select>
-              </FormField>
-              <FormField label="Adresse de l’API de synchronisation">
-                <input
-                  className="input input-bordered field-rounded w-full"
-                  placeholder="https://sync.exemple.com"
-                  value={form.syncApiUrl}
-                  onChange={(e) => set('syncApiUrl', e.target.value)}
-                  onBlur={() => void updateSettings({ syncApiUrl: form.syncApiUrl })}
-                />
-              </FormField>
-              <FormField label="Intervalle (minutes)">
-                <input
-                  type="number"
-                  min={1}
-                  className="input input-bordered field-rounded w-full tabular"
-                  value={form.syncIntervalMinutes}
-                  onChange={(e) => set('syncIntervalMinutes', e.target.value)}
-                  onBlur={() =>
-                    void updateSettings({ syncIntervalMinutes: Number(form.syncIntervalMinutes) || 15 })
-                  }
-                />
-              </FormField>
-            </div>
+      {/* 9. Règles multi-magasins */}
+      <PageSection
+        title="Règles multi-magasins"
+        subtitle="Communes à tous les magasins : définies au siège, transmises aux postes par la synchronisation."
+      >
+        <Card>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              label={`Seuil d’approbation des dépenses (${settings.currencySymbol})`}
+              hint="Au-delà de ce montant, une dépense saisie sans la permission « Approuver les dépenses » attend une approbation avant d’être décaissée. 0 = jamais d’approbation."
+            >
+              <input
+                type="number"
+                min={0}
+                step="1"
+                className="input input-bordered field-rounded w-full tabular"
+                value={form.expenseApprovalThreshold}
+                disabled={!canEditCentral}
+                onChange={(e) => set('expenseApprovalThreshold', e.target.value)}
+              />
+            </FormField>
 
-            <p className="mt-3 text-xs text-base-content/50">
-              Le jeton d’appareil et l’écran de suivi se trouvent dans{' '}
-              <a href="/synchronisation" className="link link-primary">
-                Synchronisation
-              </a>
-              .
-            </p>
+            <FormField
+              label="Répartition des charges du siège"
+              hint="Dans la comparaison des magasins (rapports), les dépenses du siège sont réparties selon cette règle. Le total consolidé ne change pas."
+            >
+              <select
+                className="select select-bordered field-rounded w-full"
+                value={settings.centralChargesAllocation}
+                disabled={!canEditCentral}
+                onChange={(e) =>
+                  void updateSettings({
+                    centralChargesAllocation: e.target.value as Settings['centralChargesAllocation'],
+                  })
+                }
+              >
+                <option value="revenue">Au prorata du chiffre d’affaires</option>
+                <option value="equal">À parts égales</option>
+                <option value="none">Ne pas répartir</option>
+              </select>
+            </FormField>
+
+            <FormField
+              label="Validation des transferts"
+              hint="Activée : un transfert soumis attend la validation d’un gérant avant d’être préparé. Désactivée : il est validé dès sa soumission."
+            >
+              <label className="flex h-11 cursor-pointer items-center gap-3 rounded-xl border border-base-200 bg-base-200/40 px-3">
+                <input
+                  type="checkbox"
+                  className="toggle toggle-primary"
+                  checked={settings.transferApprovalRequired}
+                  disabled={!canEditCentral}
+                  onChange={(e) => void updateSettings({ transferApprovalRequired: e.target.checked })}
+                />
+                <span className="text-sm">
+                  {settings.transferApprovalRequired ? 'Validation obligatoire' : 'Validation automatique'}
+                </span>
+              </label>
+            </FormField>
+
+            <FormField
+              label="Prix de vente locaux"
+              hint="Autorise un magasin à appliquer son propre prix de vente sur un produit du catalogue commun."
+            >
+              <label className="flex h-11 cursor-pointer items-center gap-3 rounded-xl border border-base-200 bg-base-200/40 px-3">
+                <input
+                  type="checkbox"
+                  className="toggle toggle-primary"
+                  checked={settings.localPricesAllowed}
+                  disabled={!canEditCentral}
+                  onChange={(e) => void updateSettings({ localPricesAllowed: e.target.checked })}
+                />
+                <span className="text-sm">
+                  {settings.localPricesAllowed ? 'Autorisés' : 'Prix du catalogue partout'}
+                </span>
+              </label>
+            </FormField>
+          </div>
+
+          {canEditCentral && (
+            <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={isSubmitting}
+                onClick={() => void handleSaveNetwork()}
+              >
+                Enregistrer le seuil
+              </button>
+            </div>
+          )}
+        </Card>
+      </PageSection>
+
+      {/* 10. Synchronisation : réglée par poste, sur son propre écran */}
+      <RoleGate action="sync.manage">
+        <PageSection title="Synchronisation">
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-base-content/70">
+                {device?.mode === 'hq'
+                  ? 'Ce poste est le poste du siège, relié au serveur central.'
+                  : device?.mode === 'store'
+                    ? 'Ce poste est un poste de magasin, relié au serveur central.'
+                    : 'Ce poste est autonome : il ne synchronise avec aucun serveur.'}{' '}
+                L’inscription au serveur, les codes d’inscription des magasins, les postes
+                connectés et les conflits se gèrent sur l’écran dédié.
+              </p>
+              <Link href="/synchronisation" className="btn btn-outline btn-sm">
+                Gérer la synchronisation
+              </Link>
+            </div>
           </Card>
         </PageSection>
       </RoleGate>
 
-      {/* 10. Application */}
+      {/* 11. Application */}
       <PageSection title="Application">
         <Card>
           <UpdateStatus />
@@ -1051,7 +1210,83 @@ export default function ParametresPage() {
             <div className="mt-4 rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-base-content/70">
               <strong>Restaurer remplace toutes les données actuelles.</strong> Une copie de
               sécurité de la base en place est créée automatiquement avant l’écrasement.
+              L’identité de ce poste dans le réseau (siège, magasin, inscription au serveur) est
+              conservée.
             </div>
+          </Card>
+
+          <Card className="mt-4">
+            <h3 className="mb-1 text-sm font-semibold">Sauvegarde automatique de ce poste</h3>
+            <p className="mb-4 text-xs text-base-content/60">
+              Vérifiée toutes les heures : une copie est créée au plus une fois par jour. Ces
+              réglages sont propres au poste et ne sont jamais synchronisés.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <FormField label="Sauvegarde quotidienne">
+                <label className="flex h-11 cursor-pointer items-center gap-3 rounded-xl border border-base-200 bg-base-200/40 px-3">
+                  <input
+                    type="checkbox"
+                    className="toggle toggle-primary"
+                    checked={settings.autoBackupEnabled}
+                    disabled={!canUpdate}
+                    onChange={(e) => void updateSettings({ autoBackupEnabled: e.target.checked })}
+                  />
+                  <span className="text-sm">
+                    {settings.autoBackupEnabled ? 'Activée' : 'Désactivée'}
+                  </span>
+                </label>
+              </FormField>
+              <FormField
+                label="Copie externe (dossier)"
+                hint="Clé USB, disque réseau ou dossier Google Drive / OneDrive synchronisé. Vide = pas de copie externe."
+                className="lg:col-span-2"
+              >
+                <input
+                  className="input input-bordered field-rounded w-full font-mono text-sm"
+                  placeholder="Ex. E:\Sauvegardes PDS"
+                  value={form.backupExternalDir}
+                  disabled={!canUpdate}
+                  onChange={(e) => set('backupExternalDir', e.target.value)}
+                />
+              </FormField>
+              <FormField label="Conservation (jours)" hint="Les copies plus anciennes sont supprimées.">
+                <input
+                  type="number"
+                  min={1}
+                  step="1"
+                  className="input input-bordered field-rounded w-full tabular"
+                  value={form.backupRetentionDays}
+                  disabled={!canUpdate}
+                  onChange={(e) => set('backupRetentionDays', e.target.value)}
+                />
+              </FormField>
+              <div className="sm:col-span-2 flex flex-col justify-end text-xs text-base-content/60">
+                <span>
+                  Dernière sauvegarde :{' '}
+                  <strong className="text-base-content">
+                    {storage?.lastBackupAt ? formatDateWithTime(storage.lastBackupAt) : 'aucune'}
+                  </strong>
+                </span>
+                {storage && (
+                  <span>
+                    {formatNumber(storage.backupsCount)} copie(s) dans{' '}
+                    <span className="font-mono">{storage.backupsDir}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+            {canUpdate && (
+              <div className="mt-5 flex justify-end border-t border-base-200 pt-4">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={isSubmitting}
+                  onClick={() => void handleSaveBackup()}
+                >
+                  Enregistrer
+                </button>
+              </div>
+            )}
           </Card>
         </PageSection>
       </RoleGate>
@@ -1098,8 +1333,8 @@ export default function ParametresPage() {
         message={
           <>
             Toutes les ventes, achats, clients, produits, mouvements de caisse et de stock seront{' '}
-            <strong>définitivement supprimés</strong>. Les paramètres de l’entreprise sont
-            conservés.
+            <strong>définitivement supprimés</strong>. Les paramètres de l’entreprise, les magasins et les comptes
+            utilisateurs sont conservés. Refusé sur un poste relié au serveur central.
             <br />
             <span className="text-sm">Cette action est irréversible.</span>
           </>
@@ -1114,7 +1349,7 @@ export default function ParametresPage() {
         tone="warning"
         confirmLabel="Préremplir"
         isSubmitting={isWorking}
-        message="Un catalogue de démonstration (catégories, produits, clients, fournisseurs, ouvriers) sera ajouté. Les données existantes ne sont pas supprimées."
+        message="Un réseau de démonstration sera créé : le siège, les magasins Kaloum et Matoto, leurs comptes (mot de passe demo1234), un catalogue commun et 60 jours d’activité (ventes, achats, dépenses, transferts, inventaire, chantiers). Rien n’est créé si le catalogue contient déjà des produits."
       />
 
       <ConfirmDialog

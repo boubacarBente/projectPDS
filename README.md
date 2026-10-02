@@ -2,9 +2,18 @@
 
 ## Système de gestion commerciale, ventes et stocks
 
-Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)** : ventes, achats, stocks, caisse, dépenses, dettes, bénéfices, rapports, prestations de chantier, briqueterie et atelier de meubles.
+Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)** : ventes, achats, stocks, caisse, dépenses, dettes, bénéfices, rapports, prestations de chantier — et, depuis la v2, **plusieurs magasins** pilotés depuis un siège.
 
-> **Statut : ✅ LOT 0 À 4 CONSTRUITS — v1.3.0**
+> **🚧 Chantier en cours : v2 multi-magasins (branche `multi-magasins`).**
+> L'état exact (fait / reste à faire), les règles et les outils de recette sont
+> tenus à jour dans **[§28 Multi-magasins](#28-multi-magasins-v2)** ; le détail
+> page par page (chaque bouton, l'API appelée, la permission, les erreurs) est
+> dans **[`docs/GUIDE-MULTI-MAGASINS.md`](docs/GUIDE-MULTI-MAGASINS.md)**.
+> Une IA ou un développeur qui reprend le travail commence par ces deux endroits.
+> La briqueterie et l'atelier de meubles ont été **retirés** en v2 (§20 et §21
+> décrivent l'ancienne version, conservée sur la branche `main`).
+
+> **Statut (v1, branche `main`) : ✅ LOT 0 À 4 CONSTRUITS — v1.3.0**
 > Ce fichier reste le **contrat de conception**, mais il n'est plus seulement un
 > document : l'application est **développée, vérifiée et empaquetée**.
 >
@@ -88,6 +97,7 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 25. [Lots de livraison](#25-lots-de-livraison)
 26. [Conventions de code](#26-conventions-de-code)
 27. [Annexes : pages, API REST, scripts](#27-annexes--pages-api-rest-scripts)
+28. [Multi-magasins (v2)](#28-multi-magasins-v2)
 
 ---
 
@@ -2174,6 +2184,81 @@ npm run db:pg:push         # Pousser le schéma vers PostgreSQL
 npm run sync:dev           # Lancer l'API de synchronisation en développement
 npm run sync:build         # Construire l'API de synchronisation
 ```
+
+---
+
+## 28. Multi-magasins (v2)
+
+> Source fonctionnelle : cahier des charges « Évolution de PDS vers une gestion
+> multi-magasins centralisée » (30 septembre 2026). Détail page par page :
+> [`docs/GUIDE-MULTI-MAGASINS.md`](docs/GUIDE-MULTI-MAGASINS.md).
+> **Cette section est mise à jour à chaque étape livrée** : elle dit toujours
+> l'état réel du chantier.
+
+### 28.1 Architecture retenue (option B)
+
+Chaque poste garde **sa propre base SQLite** et travaille **sans Internet**. Un
+serveur central (`server/`, Node + PostgreSQL, à héberger sur un VPS) échange les
+changements entre postes : push / pull via `lib/sync-engine.ts`. Trois modes de
+poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siège**
+(voit tous les magasins, seul à modifier les données centrales) et **magasin**
+(son magasin + le référentiel commun). Schéma complet : guide §1.
+
+### 28.2 Règles à ne jamais casser (en plus de AGENTS.md)
+
+1. Toute écriture va dans le **magasin actif de la session** (`requireActiveStore`) ;
+   jamais un `storeId` envoyé par le navigateur.
+2. La lecture s'élargit par `?store=all|<id>`, toujours bornée au périmètre de
+   l'utilisateur (`scopeFromRequest`, 403 sinon).
+3. Données centrales (produits, catégories, comptes, magasins, paramètres
+   d'entreprise) : modifiables **au siège uniquement** (`requireCentralEdit`).
+4. Un magasin **suspendu** n'accepte plus aucune opération ; **archiver** est refusé
+   tant qu'une caisse est ouverte ou qu'un transfert est en cours. Rien ne se supprime.
+5. Numéros de documents : `{PREFIX}-{STORE}{POSTE}-{AAAA}-{NNNNNN}` — uniques à
+   l'échelle de l'entreprise même hors ligne (`renderDocumentNumber`,
+   `lib/settings-schema.ts`).
+6. **Interface** : toute carte d'indicateur porte une **infobulle en mots simples**
+   (`StatCardDelta tooltip="…"`, la pastille de la carte ouvre l'explication) ; toute
+   page est vérifiée à **1366 px et 400 px** sans débordement horizontal.
+
+### 28.3 État d'avancement
+
+| Étape | État | Où |
+|---|---|---|
+| Schéma, migration de l'existant (magasin `PRINC`), couche `lib/`, toutes les routes d'API | ✅ | commits `2aea2b8`, `6da4d61` |
+| Moteur de synchronisation + serveur PostgreSQL + Docker | ✅ (non testé en réseau réel) | `lib/sync-engine.ts`, `server/` |
+| Connexion multi-magasins, sélecteur de magasin actif, indicateur de synchro, page `/synchronisation` | ✅ | guide §6.1, §6.2, §6.17 |
+| **`/parametres`** : ancienne synchro retirée, préfixes transfert/inventaire, aperçu exact du numéro, carte « Règles multi-magasins », sauvegarde automatique du poste, verrouillage sur poste magasin | ✅ | guide §6.18 |
+| **`/magasins`** (tableau comparatif + total réseau) et **`/magasins/[id]`** (indicateurs sur période, informations, équipe, activité, suspendre / réactiver / archiver, « Travailler dans ce magasin », raccourcis filtrés) | ✅ | guide §6.14 |
+| `/utilisateurs` : affectations aux magasins | ⏳ | guide §6.19 |
+| `/transferts`, `/transferts/nouveau`, `/transferts/[id]` | ⏳ | guide §6.15 |
+| `/inventaires`, `/inventaires/[id]` | ⏳ | guide §6.16 |
+| `/depenses` : circuit d'approbation ; `/produits` : prix et seuil locaux | ⏳ | guide §6.7, §6.9 |
+| Portée magasin (`StoreScopeSelect` + colonne « Magasin ») sur toutes les listes ; en-têtes de factures et reçus au nom du magasin | ⏳ | guide §6.3 → §6.13 |
+| Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
+| Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
+
+### 28.4 Outils de recette
+
+- **`npm run typecheck`** — doit rester à zéro erreur.
+- **`npm run verify:ui`** (`scripts/verify-ui.js`) — lance son propre Chrome sans
+  interface (port CDP 9333, profil jetable), se connecte, ouvre chaque écran et
+  échoue sur : texte attendu absent, erreur de console, écran d'erreur ou 404,
+  **débordement horizontal**. `WIDTH=400` pour le rendu téléphone, `SHOTS=<dossier>`
+  pour des captures. Exemple :
+  `APP_PASSWORD=… WIDTH=400 SHOTS=./captures npm run verify:ui -- /magasins /magasins/1`.
+  Sous Git Bash, préfixer par `MSYS_NO_PATHCONV=1` (sinon `/magasins` devient un
+  chemin Windows).
+- **Base de recette isolée** — `PDS_DB_PATH=<fichier.db>` fait travailler
+  l'application (et `npm run db:migrate`) sur une autre base ; `NEXT_DIST_DIR=.next-recette`
+  permet de lancer une **seconde** instance `next dev` à côté de celle du
+  développeur. On teste ainsi la création de magasins, transferts, etc. sans
+  laisser de magasins de test dans la base de travail (rien ne s'y supprime) :
+  ```bash
+  # copie cohérente de la base de travail, puis instance de recette sur le port 3100
+  node -e "require('@libsql/client').createClient({url:'file:db/database.db'}).execute(\"VACUUM INTO 'recette.db'\")"
+  PDS_DB_PATH=recette.db NEXT_DIST_DIR=.next-recette npx next dev -H 127.0.0.1 -p 3100
+  ```
 
 ---
 

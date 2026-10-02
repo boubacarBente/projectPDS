@@ -5,7 +5,10 @@ import { listAuditLogs } from '@/lib/audit';
 /**
  * GET /api/audit — journal des actions, paginé et filtrable (README §27.2).
  *
- * `?page=&limit=&userId=&action=&entity=&from=&to=&search=`
+ * `?page=&limit=&userId=&action=&entity=&from=&to=&search=&store=&central=`
+ *
+ * `central=false` exclut les actions sans magasin (comptes, paramètres…) : la
+ * fiche d'un magasin n'affiche ainsi que l'activité de ce magasin.
  *
  * La logique vit déjà entièrement dans `listAuditLogs` de `lib/audit.ts`
  * (pagination, bornes de période incluses, recherche sur l'utilisateur,
@@ -31,7 +34,7 @@ export async function GET(request: NextRequest) {
       // `?store=all|<id>` ; les actions centrales (sans magasin) ne sont visibles
       // que d'un compte multi-magasins.
       storeIds: scopeFromRequest(user, request),
-      includeCentral: user.allStores,
+      includeCentral: user.allStores && params.get('central') !== 'false',
       page,
       limit,
       userId: userId > 0 ? userId : undefined,

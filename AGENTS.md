@@ -8,11 +8,18 @@ décrite, et tout code non trivial y renvoie par `§`.
 ## Le projet
 
 Application de gestion commerciale de **Planète Déco Sarlu (filiale Meubles)** —
-quincaillerie, décoration, briqueterie, atelier, chantiers. Next.js 16 (App Router),
-React 19, TypeScript, Drizzle ORM sur **SQLite local**, livrée en Electron.
+quincaillerie, décoration, chantiers — en **réseau de plusieurs magasins** depuis la v2
+(branche `multi-magasins`). Next.js 16 (App Router), React 19, TypeScript, Drizzle ORM
+sur **SQLite local**, livrée en Electron. La briqueterie et l'atelier ont été retirés en v2.
 
-Le **poste local est la source de vérité**. La synchronisation PostgreSQL est
-optionnelle et inerte par défaut ; aucune opération métier ne doit en dépendre.
+Chaque **poste** a sa base SQLite et travaille hors ligne ; un serveur central
+(`server/`, PostgreSQL) échange les changements entre postes. Un poste **autonome**
+fonctionne sans serveur : aucune opération métier ne dépend du réseau.
+
+**Avant toute tâche multi-magasins** : lire README §28 (état réel du chantier) et
+`docs/GUIDE-MULTI-MAGASINS.md` (contrat de chaque page). Après chaque étape livrée,
+**mettre à jour README §28.3 et le guide §2** : le travail peut être repris à tout moment
+par une autre IA.
 
 ## Commandes
 
@@ -25,8 +32,8 @@ npm run verify:routes  # découvre et appelle toutes les pages et routes d'API :
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
 npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
-npm run verify:brick       # briqueterie : dépenses rattachées, coût, stock, canal de vente, commande → facture
-npm run verify:brick:ui    # rend chaque écran de la briqueterie dans Chrome (CDP port 9333)
+npm run verify:ui          # ouvre chaque écran dans Chrome (CDP 9333) : rendu, console, 404, débordement
+                           # WIDTH=400 pour le téléphone, SHOTS=<dossier> pour des captures (README §28.4)
 npm run db:migrate         # applique les migrations sans démarrer Next (avant les verify:*)
 ```
 
@@ -102,19 +109,18 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 14. **La marge ne sort jamais d'un document client** : ni PDF, ni image, ni WhatsApp.
     Elle vit dans des zones `no-print` ou des écrans internes — jamais dans
     `InvoiceDocument`, `purchase-document` ni un gabarit d'export (`lib/export-document.ts`).
-15. **Un canal de vente par module.** `sales_invoices.channel` (`general` | `brick`) sépare
-    la liste `/ventes` du commerce général de celle de la briqueterie
-    (`/briqueterie/ventes`). `GET /api/ventes` **sans paramètre** ne renvoie que `general` :
-    ne jamais retirer ce défaut, sinon une vente de briques réapparaîtrait dans `/ventes`.
-    La vente de briques se crée par `/ventes/nouvelle?canal=briqueterie` — **la même page**,
-    pas un second formulaire : elle doit garder stock, caisse, reçu, brouillon et export.
-16. **Briqueterie : pas de module de matières premières.** Le ciment, le sable, le
-    carburant ou la main-d'œuvre sont des lignes de `expenses` avec
-    `reference_type = 'brick_production'` (+ `reference_id` = lot), validées contre
-    `PRODUCTION_EXPENSE_CATEGORIES` (liste métier fermée, distincte de
-    `settings.expenseCategories`). Le coût d'un lot = dépenses rattachées + main-d'œuvre des
-    affectations (+ `brick_production_materials` pour les lots antérieurs). Les **dépenses
-    générales n'entrent jamais** dans un coût de production.
+15. **Magasin actif.** Toute écriture va dans `user.storeId` (`requireActiveStore`),
+    jamais dans un `storeId` reçu du navigateur. La lecture s'élargit par `?store=all|<id>`
+    via `scopeFromRequest` (borné au périmètre, 403 sinon) ; un document d'un autre magasin
+    passe par `assertStoreVisible`. Données centrales (produits, catégories, comptes,
+    magasins, paramètres d'entreprise) : `requireCentralEdit()` — siège uniquement.
+16. **Une carte d'indicateur = une infobulle en mots simples.** L'application vise un
+    public non technicien : `StatCardDelta` reçoit `tooltip="…"` (ce que le chiffre
+    représente, comment il est obtenu, à quelle date). Toute page est vérifiée à
+    **1366 px et 400 px** (`npm run verify:ui`, `WIDTH=400`) : aucun débordement horizontal.
+17. **Recette sur une base isolée.** Les essais qui écrivent (magasins, transferts…) se
+    font sur une copie : `PDS_DB_PATH=<copie.db> NEXT_DIST_DIR=.next-recette next dev -p 3100`
+    (README §28.4). Un magasin créé ne se supprime jamais : ne pas polluer la base de travail.
 
 ## Organisation
 
@@ -126,7 +132,9 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 | Journal d'actions | `lib/audit.ts` (+ libellés *client-safe* dans `lib/audit-labels.ts`) |
 | Design system (présentation pure) | `components/design-system.tsx` |
 | **Bénéfice d'une période** (CA, COGS, marge, dépenses, main-d'œuvre) — source unique du tableau de bord, de `/soldes` et de `/rapports` | `lib/profit.ts` |
-| **Briqueterie** : lots et dépenses rattachées, commandes, tableau de bord, rapports et rentabilité | `lib/brick.ts`, `lib/brick-orders.ts`, `lib/brick-analytics.ts` ; écrans `app/briqueterie/*` (onglets : `components/briqueterie/brick-tabs.tsx`) |
+| **Magasins** (contexte, accès, indicateurs) | `lib/stores.ts`, `lib/api.ts` (portée), `lib/user-scope.ts` ; écrans `app/magasins/*`, `components/magasins/store-ui.tsx`, `components/store-scope.tsx` |
+| **Transferts / inventaires** | `lib/transfers.ts`, `lib/transfer-actions.ts`, `lib/inventories.ts` |
+| **Synchronisation** (poste, push/pull, serveur) | `lib/device.ts`, `lib/sync-engine.ts`, `db/sync-registry.ts`, `db/triggers.ts`, `server/` |
 | Listes (tableau desktop / cartes mobile) | `components/responsive-table.tsx` |
 | État de vue des listes (filtres, page) | `lib/view-state.ts` — `sessionStorage`, par entrée d'historique |
 
@@ -139,3 +147,13 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 - Une fonctionnalité documentée = une mise à jour du README (section et tableaux de
   routes/pages si besoin).
 - Ne pas ajouter de dépendance sans justification écrite (README §4.5).
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

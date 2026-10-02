@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Seconde instance de développement (recette isolée, voir PDS_DB_PATH) :
+  // deux `next dev` ne peuvent pas partager le même dossier de build.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   reactStrictMode: false,
   serverExternalPackages: ["@libsql/client", "libsql", "sharp"],
   outputFileTracingExcludes: {

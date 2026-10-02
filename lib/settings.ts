@@ -20,6 +20,7 @@ import {
   fromDbKey,
   serializeSetting,
   toDbKey,
+  renderDocumentNumber,
   type Settings,
 } from '@/lib/settings-schema';
 
@@ -29,6 +30,7 @@ export {
   LOCAL_ONLY_SETTINGS_KEYS,
   toDbKey,
   fromDbKey,
+  renderDocumentNumber,
 } from '@/lib/settings-schema';
 
 /** Lit les paramètres typés, complétés par les valeurs par défaut. */
@@ -108,31 +110,6 @@ export async function ensureDefaultSettings(): Promise<void> {
 export async function getSetting<K extends keyof Settings>(key: K): Promise<Settings[K]> {
   const all = await getSettings();
   return all[key];
-}
-
-/** Applique le gabarit de numérotation (`{PREFIX}-{STORE}-{YYYY}-{NNNNNN}`). */
-export function renderDocumentNumber(
-  prefix: string,
-  sequence: number,
-  template: string,
-  year = new Date().getFullYear(),
-  storeTag = '',
-): string {
-  // Anciens gabarits sans `{STORE}` : le magasin est inséré après le préfixe,
-  // sinon deux magasins produiraient le même numéro.
-  let pattern = template;
-  if (storeTag && !pattern.includes('{STORE}')) {
-    pattern = pattern.includes('{PREFIX}') ? pattern.replace('{PREFIX}', '{PREFIX}-{STORE}') : `{STORE}-${pattern}`;
-  }
-  return pattern
-    .replace('{PREFIX}', prefix)
-    .replace('{STORE}', storeTag)
-    .replace('{YYYY}', String(year))
-    .replace('{YY}', String(year).slice(-2))
-    .replace('{NNNNNN}', String(sequence).padStart(6, '0'))
-    .replace('{NNNN}', String(sequence).padStart(4, '0'))
-    .replace(/--+/g, '-')
-    .replace(/^-|-$/g, '');
 }
 
 /**

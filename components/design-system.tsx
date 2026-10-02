@@ -1,5 +1,10 @@
 import type { ReactNode } from 'react';
 import { formatCurrency, formatQuantity, formatDelta } from '@/lib/format';
+// Composant client (portail) : importable ici, Next en fait une frontière client.
+import { Tooltip } from '@/components/tooltip';
+
+/** Largeur des infobulles de cartes : des phrases entières (même valeur que le tableau de bord). */
+export const CARD_TOOLTIP_MAX_WIDTH = 'min(26rem, calc(100vw - 1rem))';
 
 /* ==================================================================
  * Bibliothèque de composants Planète Déco (README §5.3)
@@ -403,6 +408,7 @@ export function StatCardDelta({
   hint,
   icon,
   tone = 'primary',
+  tooltip,
 }: {
   label: string;
   value: ReactNode;
@@ -411,6 +417,13 @@ export function StatCardDelta({
   hint?: string;
   icon?: ReactNode;
   tone?: BadgeTone;
+  /**
+   * Explication de l'indicateur en mots simples (public non spécialiste) : ce
+   * que le chiffre représente et comment il est obtenu. Même motif que le
+   * tableau de bord : la **pastille** de la carte devient la commande de
+   * l'infobulle (survol, focus clavier, Échap). Sans icône, une pastille « i ».
+   */
+  tooltip?: ReactNode;
 }) {
   const hasDelta = typeof delta === 'number' && Number.isFinite(delta);
   const positive = hasDelta && delta! > 0;
@@ -420,11 +433,22 @@ export function StatCardDelta({
     <div className="surface-card border border-base-200 bg-base-100 p-5 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <span className="text-sm text-base-content/60">{label}</span>
-        {icon && (
+        {tooltip ? (
+          <Tooltip label={tooltip} maxWidth={CARD_TOOLTIP_MAX_WIDTH}>
+            <span
+              className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-xl ${TONE_CLASSES[tone]}`}
+              tabIndex={0}
+              role="img"
+              aria-label={`Explication : ${label}`}
+            >
+              {icon ?? <InfoIcon />}
+            </span>
+          </Tooltip>
+        ) : icon ? (
           <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${TONE_CLASSES[tone]}`}>
             {icon}
           </span>
-        )}
+        ) : null}
       </div>
       <div className="mt-2 text-2xl font-bold tabular">{value}</div>
       <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -450,6 +474,15 @@ export function StatCardDelta({
         {hint && <span className="text-xs text-base-content/50">{hint}</span>}
       </div>
     </div>
+  );
+}
+
+/** Icône « i » des pastilles d'explication. */
+function InfoIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
   );
 }
 

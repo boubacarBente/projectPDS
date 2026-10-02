@@ -106,21 +106,31 @@
   - indicateur de synchro ;
   - **écran de connexion** : première installation (nouveau réseau / rejoindre un serveur) et choix du magasin.
 - Page **/synchronisation** réécrite (à relire, voir §6.17).
-- `components/magasins/store-ui.tsx` : badges de statut/type + modale de création/édition de magasin (à brancher dans la page).
+- `components/magasins/store-ui.tsx` : badges de statut/type + modale de création/édition de magasin.
+- **`/parametres`** (§6.18) : ancienne synchro retirée (`tsc` à zéro erreur), préfixes
+  transfert/inventaire, aperçu exact du numéro (`renderDocumentNumber` déplacé dans
+  `lib/settings-schema.ts`, importable côté client), carte « Règles multi-magasins »,
+  sauvegarde automatique du poste avec date de la dernière copie, verrouillage des
+  réglages d'entreprise sur un poste magasin.
+- **`/magasins`** et **`/magasins/[id]`** (§6.14) : voir la fiche. Ajouts au contrat :
+  `GET /api/audit?central=false` (activité d'un magasin sans les actions centrales) et
+  `useStoreScope` qui lit `?store=<id>|all` dans l'URL (raccourcis de la fiche magasin).
+- **Infobulles** : `StatCardDelta` accepte `tooltip` ; chaque carte d'indicateur explique
+  son chiffre en mots simples (règle pour toutes les pages).
+- **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
+  base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
 ### ⏳ Reste à faire (interface)
 
 | Page | Travail | Section |
 |---|---|---|
-| `/magasins`, `/magasins/[id]` | à créer | §6.14 |
 | `/transferts`, `/transferts/nouveau`, `/transferts/[id]` | à créer | §6.15 |
 | `/inventaires`, `/inventaires/[id]` | à créer | §6.16 |
-| `/parametres` | retirer l'ancienne section synchro (erreurs `tsc` actuelles), ajouter les nouveaux réglages | §6.18 |
 | `/utilisateurs` (+ historique) | affectations aux magasins | §6.19 |
 | `/` tableau de bord | filtre magasin, comparaison, alertes | §6.3 |
 | `/ventes`, `/achats`, `/caisse`, `/depenses`, `/stocks`, `/produits`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, colonne « Magasin » en vue consolidée, cas particuliers décrits | §6.4 → §6.13 |
 | Factures / reçus imprimés | en-tête avec les coordonnées **du magasin** | §6.4 |
-| README.md / AGENTS.md | mettre à jour (retirer briqueterie, décrire multi-magasins) | — |
+| README.md / AGENTS.md | §28 du README et AGENTS.md à jour ; réécrire les anciennes sections §20, §21, §23 du README en fin de chantier | — |
 | Vérifications | `tsc`, `next build`, migration d'une ancienne base, test de synchro réel | §9 |
 
 ---
@@ -431,7 +441,7 @@ que depuis le magasin du chantier.
 - À ajouter : StoreScopeSelect et colonne Magasin.
 
 ---
-### 6.14 `/magasins` et `/magasins/[id]` — Gestion des magasins ⏳ (à créer)
+### 6.14 `/magasins` et `/magasins/[id]` — Gestion des magasins ✅
 
 - **Permission :** `stores.view` pour lire, `stores.manage` pour écrire (siège seulement).
 - **Composants prêts** dans `components/magasins/store-ui.tsx` : `StoreStatusBadge`, `StoreKindBadge`, `StoreFormModal`.
@@ -446,7 +456,8 @@ que depuis le magasin du chantier.
 | Bouton **Nouveau magasin** (`stores.manage`, masqué sur poste magasin) | Ouvre `StoreFormModal` : code (unique, 2-10 caractères), nom, type (Magasin / Siège), adresse, téléphone, e-mail, gérant (liste `GET /api/users?options=true`), date d'ouverture, horaires, pied de ticket, notes. **Enregistrer** → `POST /api/magasins`. Le magasin reçoit une ligne de stock à 0 pour chaque produit. Erreurs : « Ce code de magasin est déjà utilisé », « Le nom du magasin est obligatoire », 403 sur poste magasin. |
 | Sélecteur **Période** | Aujourd'hui / Semaine / Mois / Année → recharge les indicateurs. |
 | Case **Afficher les archivés** (admin) | `includeArchived=true`. |
-| **Tableau comparatif** | Code, nom, type, statut, gérant, CA, nb ventes, panier moyen, dépenses, créances, valeur du stock, alertes stock, utilisateurs. Clic sur une ligne → fiche. Ligne de **total** en bas. |
+| **Cartes** | Magasins actifs, CA de la période, créances, valeur du stock — chacune avec son infobulle. |
+| **Tableau comparatif** | Magasin (code, nom, type, gérant), statut, CA, nb ventes, dépenses, créances, valeur du stock, alertes stock (panier moyen et équipe sont sur la fiche, pour tenir sans débordement). Clic sur une ligne → fiche. Ligne de **total réseau** en bas. |
 
 #### Fiche `/magasins/[id]`
 
@@ -460,7 +471,8 @@ que depuis le magasin du chantier.
 | Bouton **Archiver** | Confirmation → `{ status: 'archived', reason }`. Refusé avec message tant qu'une caisse est ouverte (« Clôturez la caisse du magasin avant de l'archiver ») ou qu'un transfert est en cours. |
 | Onglet **Vue d'ensemble** | Cartes indicateurs. Sélecteur de dates → `GET /api/magasins/[id]/indicateurs?from=&to=`. |
 | Onglet **Informations** | Coordonnées, gérant, horaires, pied de ticket. |
-| Onglet **Équipe** | `users` : nom, rôle, gérant oui/non, période. Lien « Gérer les affectations » → `/utilisateurs`. |
+| Onglet **Équipe** | `users` : nom, rôle, gérant oui/non, période. Lien « Gérer les affectations » → `/utilisateurs?storeId=<id>`. |
+| Onglet **Activité** (`audit.view`) | `GET /api/audit?store=<id>&central=false&limit=30` ; lien « Journal complet » → `/utilisateurs/historique?store=<id>`. |
 | Bouton **Travailler dans ce magasin** | Visible si le magasin est dans `useAuth().stores` et n'est pas le magasin actif → `switchStore(id)`. |
 | Raccourcis | Liens vers `/ventes`, `/stocks`, `/caisse`, `/transferts` avec `?store=<id>`. |
 
@@ -600,7 +612,7 @@ Autres zones de la fiche :
 
 ---
 
-### 6.18 `/parametres` ⏳
+### 6.18 `/parametres` ✅
 
 | Section | À faire |
 |---|---|
