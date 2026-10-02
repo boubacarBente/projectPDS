@@ -1004,21 +1004,32 @@ export function CancelPurchaseDialog({
   onConfirm,
   invoice,
   isSubmitting,
+  stockConflict = null,
+  canOverrideStock = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  /** Reçoit le motif saisi (toujours non vide). */
-  onConfirm: (reason: string) => void | Promise<void>;
+  /**
+   * Reçoit le motif saisi (toujours non vide) et, après un refus « marchandise
+   * déjà vendue », la dérogation explicite `allowNegativeStock`.
+   */
+  onConfirm: (reason: string, allowNegativeStock: boolean) => void | Promise<void>;
   invoice: PurchaseInvoiceRow | null;
   isSubmitting: boolean;
+  /** Message du refus 409 `stock_already_sold` ; `null` tant qu'il n'y en a pas. */
+  stockConflict?: string | null;
+  /** Détient `stock.adjust` : peut accepter le stock négatif (dérogation journalisée). */
+  canOverrideStock?: boolean;
 }) {
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
+  const [acceptNegative, setAcceptNegative] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     setReason('');
     setReasonError(null);
+    setAcceptNegative(false);
   }, [isOpen]);
 
   const confirm = async () => {
@@ -1030,7 +1041,8 @@ export function CancelPurchaseDialog({
       return;
     }
     setReasonError(null);
-    await onConfirm(trimmed);
+    if (stockConflict && !(canOverrideStock && acceptNegative)) return;
+    await onConfirm(trimmed, Boolean(stockConflict) && acceptNegative);
   };
 
   return (
@@ -1040,7 +1052,7 @@ export function CancelPurchaseDialog({
       onConfirm={confirm}
       title="Annuler l'achat"
       tone="error"
-      confirmLabel="Annuler l'achat"
+      confirmLabel={stockConflict ? "Annuler quand même" : "Annuler l'achat"}
       isSubmitting={isSubmitting}
       message={
         <>
@@ -1051,15 +1063,38 @@ export function CancelPurchaseDialog({
             sera pas supprimé : il reste consultable et réimprimable, avec son motif.
           </span>
           {/*
-            Cas réel documenté (lib/purchases.ts) : si la marchandise a déjà été
-            vendue, l'annulation aboutit quand même — le stock peut devenir
-            négatif, ce qui est visible et réparable par inventaire. Bloquer
-            l'annulation laisserait un document comptablement faux.
+            Marchandise déjà vendue (lib/purchases.ts, StockAlreadySoldError) :
+            refus par défaut ; seule une personne habilitée à corriger le stock
+            peut accepter, en le cochant, que le stock devienne négatif.
           */}
-          <span className="mt-2 block text-xs text-base-content/60">
-            Si la marchandise a déjà été vendue, le stock peut passer en négatif : c&apos;est
-            volontaire, l&apos;annulation doit aboutir. Corrigez ensuite par un inventaire.
-          </span>
+          {stockConflict ? (
+            <span role="alert" className="mt-2 block rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-sm">
+              {stockConflict}
+              {canOverrideStock ? (
+                <label className="mt-2 flex cursor-pointer items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="checkbox checkbox-sm mt-0.5"
+                    checked={acceptNegative}
+                    onChange={(event) => setAcceptNegative(event.target.checked)}
+                  />
+                  <span>
+                    J’accepte que le stock devienne <strong>négatif</strong> ; je le corrigerai par un
+                    inventaire. Cette décision est enregistrée dans l’historique.
+                  </span>
+                </label>
+              ) : (
+                <span className="mt-2 block font-medium">
+                  Votre compte ne peut pas forcer cette annulation : demandez à un responsable.
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="mt-2 block text-xs text-base-content/60">
+              Si une partie de la marchandise a déjà été vendue, l’annulation sera refusée et on vous
+              dira quoi faire.
+            </span>
+          )}
           {invoice && invoice.amountPaid > 0.001 && (
             <span className="mt-2 block text-xs text-base-content/60">
               Un règlement de {formatNumber(invoice.amountPaid)} GNF est déjà enregistré sur cet

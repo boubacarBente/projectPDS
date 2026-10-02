@@ -6,6 +6,7 @@ import {
   parsePurchaseInput,
   updatePurchaseInvoice,
 } from '@/lib/purchases';
+import { requirePermission } from '@/lib/permissions';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -70,6 +71,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
  *
  * Permission : `purchases.delete` (l'action est marquée `dangerous` dans
  * `ACTION_META` — le stock est inversé et la caisse contre-passée).
+ *
+ * Marchandise déjà vendue : refus 409 `{ error, code: 'stock_already_sold' }`.
+ * `body { allowNegativeStock: true }` force l'annulation (stock négatif accepté,
+ * journalisé) et exige en plus `stock.adjust` — voir `cancelPurchaseInvoice`.
  */
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
@@ -83,15 +88,20 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await requireActiveStore(user);
 
     let reason = request.nextUrl.searchParams.get('reason') ?? '';
+    let allowNegativeStock = false;
     try {
       const body = await readJson<any>(request);
       if (body?.reason !== undefined) reason = String(body.reason ?? '');
+      allowNegativeStock = body?.allowNegativeStock === true;
     } catch {
       // Corps absent ou illisible : le motif de l'URL reste la référence.
       // C'est `cancelPurchaseInvoice` qui refuse un motif vide (400).
     }
 
-    const invoice = await cancelPurchaseInvoice(invoiceId, reason, user);
+    // La dérogation « stock négatif » est une correction de stock : même droit qu'un ajustement.
+    if (allowNegativeStock) requirePermission(user, 'stock.adjust', user.permissions);
+
+    const invoice = await cancelPurchaseInvoice(invoiceId, reason, user, { allowNegativeStock });
 
     return ok({ success: true, invoice });
   } catch (error) {

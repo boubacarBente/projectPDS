@@ -256,7 +256,13 @@ export function fail(error: unknown): NextResponse {
     carriedStatus <= 599
   ) {
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: carriedStatus });
+    // Un `code` métier (ex. `stock_already_sold`) permet à l'écran de proposer
+    // la bonne suite (dérogation, inventaire…) sans analyser le texte.
+    const code = (error as { code?: unknown })?.code;
+    return NextResponse.json(
+      typeof code === 'string' ? { error: message, code } : { error: message },
+      { status: carriedStatus },
+    );
   }
 
   const message = error instanceof Error ? error.message : String(error);

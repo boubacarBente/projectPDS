@@ -124,6 +124,10 @@
 - **Transferts** (§6.15) : les trois écrans, composant `components/transferts/transfer-ui.tsx`
   (libellés recopiés de `lib/transfers.ts`). Cycle vérifié de bout en bout par l'API
   (demande, validation, expédition, réception partielle, litige, clôture, stocks).
+- **Jeu de démonstration** étendu (13 mois, tous les statuts) + `npm run demo:seed`.
+- **Règle corrigée** : annuler un achat déjà revendu est refusé par défaut ; dérogation
+  explicite (`allowNegativeStock`, permission `stock.adjust`) proposée par la modale
+  d'annulation et journalisée.
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -703,7 +707,7 @@ Dossier `server/` (Node 20+, `pg`). Fichiers : `index.mjs`, `Dockerfile`, `docke
    - magasin `PRINC` ;
    - stocks identiques (`product_stocks` = somme des mouvements) ;
    - factures rattachées.
-4. **Démonstration** : Paramètres → données de démonstration (magasins SIEGE / KAL / MAT ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege`, mot de passe `demo1234`).
+4. **Démonstration** : sur une base vierge, `npm run demo:seed` (ou Paramètres → données de démonstration en développement) : magasins SIEGE / KAL / MAT ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege`, mot de passe `demo1234` ; 13 mois d'activité, tous les statuts.
 5. **Cloisonnement** :
    - connecté en `vendeur.kaloum`, `GET /api/ventes?store=<id MAT>` doit renvoyer 403 ;
    - une vente créée doit avoir `store_id` = KAL.

@@ -95,6 +95,9 @@ export default function AchatDetailPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  /** Refus « marchandise déjà vendue » (409 `stock_already_sold`) : la modale propose la dérogation. */
+  const [stockConflict, setStockConflict] = useState<string | null>(null);
+  const canOverrideStock = usePermission('stock.adjust');
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -359,7 +362,7 @@ export default function AchatDetailPage() {
    * Annulation motivée — jamais une suppression physique (§14)
    * ------------------------------------------------------------------ */
 
-  const handleCancel = async (reason: string) => {
+  const handleCancel = async (reason: string, allowNegativeStock = false) => {
     if (!data) return;
     setIsCancelling(true);
 
@@ -368,12 +371,20 @@ export default function AchatDetailPage() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify({ reason, allowNegativeStock }),
       });
 
       if (!response.ok) {
+        const payload = await response.clone().json().catch(() => ({}));
+        if (payload?.code === 'stock_already_sold') {
+          // La modale reste ouverte et explique quoi faire (dérogation ou inventaire).
+          setStockConflict(String(payload.error ?? ''));
+          return;
+        }
         throw new Error(await readApiError(response, "L'achat n'a pas pu être annulé."));
       }
+
+      setStockConflict(null);
 
       toast.success(`Achat ${data.invoice.reference} annulé.`);
       setShowCancelModal(false);
@@ -767,11 +778,16 @@ export default function AchatDetailPage() {
       <CancelPurchaseDialog
         isOpen={showCancelModal}
         onClose={() => {
-          if (!isCancelling) setShowCancelModal(false);
+          if (!isCancelling) {
+            setShowCancelModal(false);
+            setStockConflict(null);
+          }
         }}
         onConfirm={handleCancel}
         invoice={invoice}
         isSubmitting={isCancelling}
+        stockConflict={stockConflict}
+        canOverrideStock={canOverrideStock}
       />
     </div>
   );

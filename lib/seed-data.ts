@@ -12,10 +12,16 @@
  *  - 3 établissements : le siège (charges centrales, entrepôt), Kaloum, Matoto ;
  *  - comptes : gérants et vendeurs par magasin (mot de passe `demo1234`) ;
  *  - catalogue commun, clients, fournisseurs, ouvriers ;
- *  - 60 jours d'activité par magasin : achats, ventes (comptant, partiel,
- *    crédit), dépenses locales et centrales ;
- *  - transferts à différents stades (reçu, en transit, en attente) ;
- *  - un inventaire validé avec écarts ;
+ *  - **13 mois d'activité** (l'année précédente comprise) pour que chaque
+ *    filtre de période — jour, semaine, mois, année, mois ou année passés —
+ *    ait quelque chose à montrer : activité dense sur les 60 derniers jours,
+ *    plus clairsemée avant ; ventes (comptant, partiel, crédit), réassort
+ *    mensuel, dépenses locales et centrales ;
+ *  - des documents dans **chaque statut** filtrable : ventes en brouillon et
+ *    annulées, achat annulé, dépenses en attente / à décaisser / rejetées ;
+ *  - transferts à toutes les étapes (reçu, en transit, en attente, validé,
+ *    en litige, refusé, annulé) ;
+ *  - un inventaire validé avec écarts et un inventaire en cours ;
  *  - trois chantiers.
  *
  * Idempotent : ne fait rien si le catalogue contient déjà des produits.
@@ -28,16 +34,17 @@ import { createSupplier } from '@/lib/suppliers';
 import { createWorker } from '@/lib/workers';
 import { createUser } from '@/lib/users';
 import { createStore, listStores, setUserAssignments } from '@/lib/stores';
-import { createPurchaseInvoice } from '@/lib/purchases';
-import { createSalesInvoice } from '@/lib/sales';
-import { createExpense } from '@/lib/expenses';
+import { cancelPurchaseInvoice, createPurchaseInvoice } from '@/lib/purchases';
+import { cancelSalesInvoice, createSalesInvoice } from '@/lib/sales';
+import { createExpense, decideExpense } from '@/lib/expenses';
 import { createPayment } from '@/lib/payments';
-import { approveTransfer, createTransfer, receiveTransfer, shipTransfer } from '@/lib/transfers';
+import { approveTransfer, cancelTransfer, createTransfer, receiveTransfer, shipTransfer } from '@/lib/transfers';
 import { openInventory, recordCounts, validateInventory, getInventory } from '@/lib/inventories';
 import { addJobMaterial, addJobWorker, createServiceJob, updateStatus } from '@/lib/jobs';
 import { closeSession, getOpenSession, getSessionTheoreticalByMethod } from '@/lib/caisse';
 import { getStoreStock } from '@/lib/stock';
 import { addDays, today } from '@/lib/format';
+import { getSettings, updateSettings } from '@/lib/settings';
 
 export type SeedReport = {
   stores: number;
@@ -177,7 +184,10 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
 
   const random = rng(20261001);
   const pick = <T,>(list: T[]) => list[Math.floor(random() * list.length)];
-  const days = Math.max(7, options.days ?? 60);
+  // 400 jours : 13 mois, donc toujours le même mois de l'année précédente.
+  const days = Math.max(7, options.days ?? 400);
+  /** Au-delà de 60 jours, l'activité est clairsemée (le jeu reste rapide à créer). */
+  const DENSE_DAYS = 60;
   const start = addDays(today(), -days);
 
   /* ----------------------------- Magasins ------------------------------ */
@@ -289,8 +299,48 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   const sellable = PRODUCTS.filter((p) => p.salePrice > 0);
   for (let d = 0; d <= days; d += 1) {
     const date = addDays(start, d);
+    const dense = days - d <= DENSE_DAYS;
+
+    /*
+     * Réassort mensuel (le 1er) : sans lui, 13 mois de ventes videraient le
+     * stock et les ventes récentes n'auraient plus lieu. Il répartit aussi les
+     * achats sur tous les mois (filtres de période de /achats) ; une partie
+     * reste due au fournisseur.
+     */
+    if (d > 0 && date.endsWith('-01')) {
+      for (const [store, share] of shares) {
+        const lines: { productId: number; quantity: number; unitPrice: number }[] = [];
+        for (const product of PRODUCTS) {
+          const productId = productIds.get(product.name)!;
+          const target = Math.max(1, Math.round(product.stock * share));
+          const current = await getStoreStock(store.id, productId);
+          if (current < target) lines.push({ productId, quantity: Math.ceil(target - current), unitPrice: product.purchasePrice });
+        }
+        if (lines.length === 0) continue;
+        const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
+        await createPurchaseInvoice({
+          storeId: store.id,
+          supplierId: pick(supplierIds),
+          date,
+          paymentMethod: random() < 0.5 ? 'Virement' : 'Espèces',
+          amountPaid: random() < 0.7 ? total : Math.round(total * 0.5),
+          lines,
+          userId: adminRef.id,
+        });
+        report.purchases += 1;
+      }
+    }
+
     for (const store of [kaloum, matoto, hq]) {
-      const salesToday = store.kind === 'headquarters' ? (random() < 0.3 ? 1 : 0) : 1 + Math.floor(random() * 3);
+      const salesToday = !dense
+        ? random() < (store.kind === 'headquarters' ? 0.1 : 0.4)
+          ? 1
+          : 0
+        : store.kind === 'headquarters'
+          ? random() < 0.3
+            ? 1
+            : 0
+          : 1 + Math.floor(random() * 3);
       for (let s = 0; s < salesToday; s += 1) {
         const lines: { productId: number; quantity: number; unitPrice: number }[] = [];
         const lineCount = 1 + Math.floor(random() * 3);
@@ -539,6 +589,126 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     }
     report.serviceJobs += 1;
   }
+
+  /* ------------- Un document dans chaque statut filtrable -------------- */
+
+  // Transferts : validé (à expédier), en litige, refusé, annulé.
+  const t4 = await createTransfer(
+    { sourceStoreId: hq.id, destinationStoreId: kaloum.id, reason: 'Préparation de la saison', items: [{ productId: ba13, quantity: 10 }], submit: true },
+    asUser(gerantKal, 'Mariama Bangoura', kaloum.id),
+  );
+  await approveTransfer(t4.transfer.id, 'approve', asUser(adminRef.id, adminRef.name, hq.id));
+  const t5 = await createTransfer(
+    { sourceStoreId: hq.id, destinationStoreId: matoto.id, reason: 'Réassort peinture', items: [{ productId: paint, quantity: 10 }], submit: true },
+    asUser(gerantMat, 'Thierno Diallo', matoto.id),
+  );
+  await approveTransfer(t5.transfer.id, 'approve', asUser(adminRef.id, adminRef.name, hq.id));
+  await shipTransfer(t5.transfer.id, asUser(magasinier, 'Abdoulaye Sow', hq.id));
+  const t5Item = (await t1Detail(t5.transfer.id))!.items[0];
+  await receiveTransfer(t5.transfer.id, asUser(gerantMat, 'Thierno Diallo', matoto.id), {
+    quantities: { [t5Item.id]: 8 },
+    discrepancies: { [t5Item.id]: '2 seaux percés à l’arrivée' },
+    close: true,
+  });
+  const t6 = await createTransfer(
+    { sourceStoreId: kaloum.id, destinationStoreId: matoto.id, reason: 'Demande exceptionnelle', items: [{ productId: chairs, quantity: 10 }], submit: true },
+    asUser(gerantMat, 'Thierno Diallo', matoto.id),
+  );
+  await approveTransfer(t6.transfer.id, 'refuse', asUser(gerantKal, 'Mariama Bangoura', kaloum.id), 'Stock insuffisant à Kaloum');
+  const t7 = await createTransfer(
+    { sourceStoreId: hq.id, destinationStoreId: kaloum.id, reason: 'Erreur de saisie', items: [{ productId: paint, quantity: 5 }], submit: false },
+    asUser(gerantKal, 'Mariama Bangoura', kaloum.id),
+  );
+  await cancelTransfer(t7.transfer.id, asUser(gerantKal, 'Mariama Bangoura', kaloum.id), 'Demande saisie en double');
+  report.transfers += 4;
+
+  // Inventaire en cours (comptage partiel) à Matoto.
+  const openInv = await openInventory(
+    { categoryId: categoryIds.get('Peinture') ?? null, notes: 'Comptage mensuel en cours' },
+    { id: gerantMat, name: 'Thierno Diallo', storeId: matoto.id },
+  );
+  const openInvDetail = await getInventory(openInv);
+  if (openInvDetail && openInvDetail.items.length > 0) {
+    await recordCounts(
+      openInv,
+      [{ itemId: openInvDetail.items[0].id, countedQuantity: openInvDetail.items[0].expectedQuantity, justification: null }],
+      { id: gerantMat, name: 'Thierno Diallo', storeId: matoto.id },
+    );
+  }
+  report.inventories += 1;
+
+  // Ventes : deux brouillons (ni stock ni caisse) et trois annulations.
+  for (const [store, seller] of [[kaloum, vendeurKal], [matoto, vendeurMat]] as const) {
+    const product = PRODUCTS[6];
+    await createSalesInvoice({
+      storeId: store.id,
+      customerId: customerIds[2],
+      date: today(),
+      status: 'draft',
+      paymentMethod: 'Espèces',
+      amountPaid: 0,
+      lines: [{ productId: productIds.get(product.name)!, quantity: 2, unitPrice: product.salePrice }],
+      userId: seller,
+      notes: 'Devis en attente de confirmation du client',
+    } as any);
+    report.sales += 1;
+  }
+  const toCancel = await rawAll<{ id: number; store_id: number }>(
+    `SELECT id, store_id FROM sales_invoices WHERE status = 'active' AND store_id IN (?, ?)
+      ORDER BY date DESC LIMIT 3 OFFSET 5`,
+    [kaloum.id, matoto.id],
+  );
+  for (const sale of toCancel) {
+    await cancelSalesInvoice(Number(sale.id), 'Erreur de caisse, vente ressaisie', {
+      id: adminRef.id,
+      name: adminRef.name,
+      storeId: Number(sale.store_id),
+    });
+  }
+  /*
+   * Achat annulé : on en choisit un dont la marchandise est **encore en stock**.
+   * Annuler un achat déjà revendu aboutit aussi (dérogation documentée dans
+   * `cancelPurchaseInvoice`), mais laisserait un stock négatif dans la
+   * démonstration — constaté en recette sur « Ensemble salon complet ».
+   */
+  const recentPurchases = await rawAll<{ id: number; store_id: number }>(
+    `SELECT id, store_id FROM purchase_invoices WHERE status = 'active' AND store_id = ? ORDER BY date DESC LIMIT 10`,
+    [matoto.id],
+  );
+  for (const purchase of recentPurchases) {
+    const lines = await rawAll<{ product_id: number; quantity: number }>(
+      `SELECT product_id, quantity FROM purchase_invoice_items WHERE invoice_id = ?`,
+      [purchase.id],
+    );
+    let coverable = true;
+    for (const line of lines) {
+      if ((await getStoreStock(matoto.id, Number(line.product_id))) < Number(line.quantity)) coverable = false;
+    }
+    if (!coverable) continue;
+    await cancelPurchaseInvoice(Number(purchase.id), 'Livraison refusée (marchandise non conforme)', {
+      id: adminRef.id,
+      name: adminRef.name,
+      storeId: Number(purchase.store_id),
+    });
+    break;
+  }
+
+  /*
+   * Dépenses soumises à approbation : un seuil de démonstration est posé s'il
+   * n'y en a pas, puis trois dépenses au-dessus du seuil, saisies par des
+   * vendeurs, finissent en attente, à décaisser et rejetée.
+   */
+  if (!(Number((await getSettings()).expenseApprovalThreshold) > 0)) {
+    await updateSettings({ expenseApprovalThreshold: 2_000_000 });
+  }
+  const bigExpense = (storeId: number, userId: number, category: string, amount: number, description: string) =>
+    createExpense({ storeId, category, amount, date: today(), description, userId, canSkipApproval: false });
+  await bigExpense(kaloum.id, vendeurKal, 'Transport', 2_800_000, 'Location d’un camion pour une livraison');
+  const toPay = await bigExpense(matoto.id, vendeurMat, 'Électricité', 3_400_000, 'Réparation du groupe électrogène');
+  await decideExpense(toPay.id, 'approve', { userId: gerantMat, payNow: false, activeStoreId: matoto.id });
+  const rejected = await bigExpense(kaloum.id, vendeurKal, 'Autre', 4_500_000, 'Achat d’un climatiseur');
+  await decideExpense(rejected.id, 'reject', { userId: gerantKal, reason: 'Non prévu au budget', activeStoreId: kaloum.id });
+  report.expenses += 3;
 
   /* ---------------- Clôture des caisses des magasins ------------------ */
   for (const store of [kaloum, matoto]) {

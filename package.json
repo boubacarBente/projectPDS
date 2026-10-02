@@ -18,6 +18,7 @@
     "verify:purchases": "node scripts/verify-purchases-e2e.js",
     "verify:draft": "node scripts/verify-sales-draft-e2e.js",
     "verify:ui": "node scripts/verify-ui.js",
+    "demo:seed": "node scripts/seed-demo.js",
     "db:migrate": "node scripts/db-migrate.cjs",
     "copy:standalone": "node scripts/copy-standalone.js",
     "build:desktop:win": "npm run build && npm run copy:standalone && electron-builder --win --publish never",

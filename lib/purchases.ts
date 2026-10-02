@@ -48,7 +48,7 @@ import { NotFoundError, ValidationError, businessDate, toInt, toNumber } from '@
 import { writeAudit } from '@/lib/audit';
 import { addCashMovement } from '@/lib/caisse';
 import { resolvePeriod, type PeriodKey, type SnapshotPeriod } from '@/lib/dashboard';
-import { formatCurrency, roundMoney } from '@/lib/format';
+import { formatCurrency, formatQuantity, roundMoney } from '@/lib/format';
 import {
   createPayment,
   getPaymentSchedule,
@@ -58,7 +58,25 @@ import {
 } from '@/lib/payments';
 import { getProduct } from '@/lib/products';
 import { nextDocumentNumber } from '@/lib/settings';
-import { addStockMovement } from '@/lib/stock';
+import { addStockMovement, getStoreStock } from '@/lib/stock';
+
+/**
+ * Annulation d'achat refusée : une partie de la marchandise est déjà sortie du
+ * stock (vendue, utilisée). 409 + code `stock_already_sold` : l'écran propose
+ * alors la dérogation à qui détient `stock.adjust`.
+ */
+export class StockAlreadySoldError extends Error {
+  readonly status = 409;
+  readonly code = 'stock_already_sold';
+  constructor(readonly shortfalls: { name: string; bought: number; inStock: number; unit: string }[]) {
+    super(
+      `Une partie de cette marchandise a déjà été vendue ou utilisée : ${shortfalls
+        .map((s) => `${s.name} (acheté ${formatQuantity(s.bought, s.unit)}, en stock ${formatQuantity(s.inStock, s.unit)})`)
+        .join(' ; ')}. Annuler l’achat rendrait le stock négatif. Faites d’abord un inventaire si le stock est faux, ou demandez à un responsable d’annuler quand même.`,
+    );
+    this.name = 'StockAlreadySoldError';
+  }
+}
 import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /* ------------------------------------------------------------------ *
@@ -995,22 +1013,28 @@ async function updatePurchaseInvoiceInTx(id: number, input: PurchaseInvoiceInput
  * en caisse (le règlement d'un achat était une sortie → une **entrée** de
  * contre-passation). L'achat reste consultable et réimprimable.
  *
- * ## Décision documentée : achat annulé dont la marchandise est déjà vendue
+ * ## Décision : achat annulé dont la marchandise est déjà vendue
  *
  * Une annulation peut être demandée alors que la marchandise est déjà sortie
  * (revendue, consommée sur un chantier…). Sortir ces quantités ferait passer le
  * stock en négatif.
  *
- * **Choix retenu : `allowNegative: true`** — l'annulation aboutit toujours.
- *
- * Pourquoi : un `InsufficientStockError` ici laisserait la facture d'achat
- * *active* alors que le fournisseur a bien été remboursé et que l'opération est
- * juridiquement annulée. On obtiendrait un document comptablement faux, un stock
- * faux, et **aucun moyen de sortir de l'état** — l'annulation resterait bloquée
- * pour toujours. Un stock négatif est au contraire un signal **visible et
- * réparable** : il déclenche l'alerte de rupture (§4, §12), il est expliqué par
- * le motif du mouvement (`annulation achat ACH-…`), et l'écran d'inventaire
- * (`adjustStock`, écart signé) permet de le corriger (§6.5 règle 4).
+ * **Règle (v2) : refus par défaut, dérogation explicite et tracée.**
+ * Le cahier des charges multi-magasins (§7) impose d'« empêcher les stocks
+ * négatifs, sauf dérogation explicite et auditée ». L'ancienne règle (v1)
+ * laissait l'annulation aboutir **toujours**, stock négatif compris : la
+ * dérogation était implicite, décidée par le logiciel et non par une personne.
+ * Désormais :
+ *  - sans `allowNegativeStock`, l'annulation est refusée (`StockAlreadySoldError`,
+ *    409, code `stock_already_sold`) avec, produit par produit, la quantité
+ *    achetée et la quantité encore en stock — l'utilisateur sait quoi faire
+ *    (inventaire, ou dérogation) ;
+ *  - avec `allowNegativeStock` (la route exige alors la permission
+ *    `stock.adjust`), l'annulation aboutit, le stock devient négatif, et le
+ *    journal enregistre `negativeStockOverride` et les produits concernés.
+ * L'argument v1 (« l'annulation ne doit jamais rester bloquée ») est respecté :
+ * il existe toujours un chemin pour aboutir, mais c'est une personne habilitée
+ * qui le choisit.
  *
  * La contre-passation de caisse n'est pas conditionnée au stock : elle porte sur
  * les règlements réellement enregistrés, relus depuis `payments`, et sort
@@ -1021,6 +1045,7 @@ export async function cancelPurchaseInvoice(
   id: number,
   reason: string,
   user: PurchaseUserRef = null,
+  options: { allowNegativeStock?: boolean } = {},
 ): Promise<PurchaseInvoiceRow> {
   const cleanReason = String(reason ?? '').trim();
   if (!cleanReason) {
@@ -1038,6 +1063,26 @@ export async function cancelPurchaseInvoice(
   const items = await getItemRecords(id);
   const today = new Date().toISOString().slice(0, 10);
 
+  // Marchandise déjà sortie ? Refus, sauf dérogation explicite (voir ci-dessus).
+  const shortfalls: { name: string; bought: number; inStock: number; unit: string }[] = [];
+  for (const item of items) {
+    const productId = item.product_id == null ? null : Number(item.product_id);
+    const quantity = Number(item.quantity ?? 0);
+    if (!productId || quantity <= 0) continue;
+    const inStock = await getStoreStock(storeId, productId);
+    if (inStock + 0.0001 < quantity) {
+      shortfalls.push({
+        name: String(item.product_name ?? productId),
+        bought: quantity,
+        inStock,
+        unit: String(item.unit ?? ''),
+      });
+    }
+  }
+  if (shortfalls.length > 0 && !options.allowNegativeStock) {
+    throw new StockAlreadySoldError(shortfalls);
+  }
+
   // Statut `cancelled` d'abord : l'achat ne peut plus être ni modifié ni réglé
   // (`createPayment` refuse un document annulé), donc aucune écriture
   // concurrente ne peut s'intercaler dans l'inversion qui suit.
@@ -1052,8 +1097,8 @@ export async function cancelPurchaseInvoice(
     })
     .where(eq(purchaseInvoices.id, id));
 
-  // 1. Inversion du stock : un `exit` par ligne achetée, `allowNegative` assumé
-  //    (voir la décision documentée ci-dessus).
+  // 1. Inversion du stock : un `exit` par ligne achetée. `allowNegative` ne sert
+  //    plus que dans le cas de dérogation accordée plus haut.
   let reversedItems = 0;
   let negativeStockItems: string[] = [];
 
@@ -1066,9 +1111,11 @@ export async function cancelPurchaseInvoice(
       storeId,
       referenceType: 'purchase',
       referenceId: id,
-      motif: `annulation achat ${existing.reference}`,
+      motif: options.allowNegativeStock && shortfalls.length > 0
+        ? `annulation achat ${existing.reference} (dérogation : stock négatif accepté)`
+        : `annulation achat ${existing.reference}`,
       userId: user?.id ?? null,
-      allowNegative: true,
+      allowNegative: options.allowNegativeStock === true,
     });
     reversedItems += 1;
     if (result.stockAfter < 0) negativeStockItems.push(String(item.product_name ?? productId));
@@ -1103,6 +1150,7 @@ export async function cancelPurchaseInvoice(
       reversedItems,
       refundedAmount,
       negativeStock: negativeStockItems,
+      negativeStockOverride: negativeStockItems.length > 0,
     },
   });
 

@@ -35,6 +35,7 @@ npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
 npm run verify:ui          # ouvre chaque écran dans Chrome (CDP 9333) : rendu, console, 404, débordement
                            # WIDTH=400 pour le téléphone, SHOTS=<dossier> pour des captures (README §28.4)
 npm run db:migrate         # applique les migrations sans démarrer Next (avant les verify:*)
+npm run demo:seed          # base vierge → administrateur + réseau de démonstration (13 mois)
 ```
 
 Les scripts `verify:*` interrogent une application **démarrée** et écrivent dans la base
@@ -118,7 +119,11 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
     public non technicien : `StatCardDelta` reçoit `tooltip="…"` (ce que le chiffre
     représente, comment il est obtenu, à quelle date). Toute page est vérifiée à
     **1366 px et 400 px** (`npm run verify:ui`, `WIDTH=400`) : aucun débordement horizontal.
-17. **Recette sur une base isolée.** Les essais qui écrivent (magasins, transferts…) se
+17. **Stock négatif : jamais implicite.** `addStockMovement` refuse un stock négatif ;
+    `allowNegative` n'est utilisé que pour une dérogation **choisie par une personne
+    habilitée** et journalisée (annulation d'achat déjà revendu : `allowNegativeStock`,
+    permission `stock.adjust`). Ne pas réintroduire de dérogation automatique.
+18. **Recette sur une base isolée.** Les essais qui écrivent (magasins, transferts…) se
     font sur une copie : `PDS_DB_PATH=<copie.db> NEXT_DIST_DIR=.next-recette next dev -p 3100`
     (README §28.4). Un magasin créé ne se supprime jamais : ne pas polluer la base de travail.
 

@@ -2217,7 +2217,13 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 5. Numéros de documents : `{PREFIX}-{STORE}{POSTE}-{AAAA}-{NNNNNN}` — uniques à
    l'échelle de l'entreprise même hors ligne (`renderDocumentNumber`,
    `lib/settings-schema.ts`).
-6. **Interface** : toute carte d'indicateur porte une **infobulle en mots simples**
+6. **Stock négatif interdit, sauf dérogation explicite et tracée** (cahier §7). Seule
+   dérogation existante : annuler un achat dont la marchandise est déjà vendue. Refus
+   par défaut (409, code `stock_already_sold`, message produit par produit) ; un
+   compte détenant `stock.adjust` peut cocher « j'accepte le stock négatif », et le
+   journal enregistre `negativeStockOverride`. *Changement v2* : en v1, l'annulation
+   passait toujours, sans que personne ne l'ait décidé.
+7. **Interface** : toute carte d'indicateur porte une **infobulle en mots simples**
    (`StatCardDelta tooltip="…"`, la pastille de la carte ouvre l'explication) ; toute
    page est vérifiée à **1366 px et 400 px** sans débordement horizontal.
 
@@ -2236,6 +2242,8 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | `/depenses` : circuit d'approbation ; `/produits` : prix et seuil locaux | ⏳ | guide §6.7, §6.9 |
 | Portée magasin (`StoreScopeSelect` + colonne « Magasin ») sur toutes les listes ; en-têtes de factures et reçus au nom du magasin. **À corriger au passage** : en 1366 px, les tableaux de `/ventes`, `/caisse`, `/stocks`, `/produits`, `/chantiers`, `/rapports`, `/recus` sont trop larges (dernières colonnes cachées) — `verify:ui` le signale | ⏳ | guide §6.3 → §6.13 |
 | Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
+| **Jeu de démonstration** (`lib/seed-data.ts`, `npm run demo:seed`) : 3 magasins, 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |
+| **Annulation d'achat** : refus si la marchandise est déjà vendue, dérogation explicite réservée à `stock.adjust` (§28.2 règle 6) | ✅ | `lib/purchases.ts` |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette
@@ -2260,6 +2268,18 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
   node -e "require('@libsql/client').createClient({url:'file:db/database.db'}).execute(\"VACUUM INTO 'recette.db'\")"
   PDS_DB_PATH=recette.db NEXT_DIST_DIR=.next-recette npx next dev -H 127.0.0.1 -p 3100
   ```
+- **Démonstration sur base vierge** — `npm run demo:seed` (`scripts/seed-demo.js`) :
+  sur une instance démarrée avec une base **vide**, installe l'administrateur
+  (`admin` / `admin1234` par défaut) et le magasin `SIEGE`, puis crée le réseau de
+  démonstration (≈ 30 s) : magasins `SIEGE`, `KAL`, `MAT` ; comptes `gerant.kaloum`,
+  `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege` (mot de passe
+  `demo1234`) ; 13 mois de ventes, achats, dépenses ; tous les statuts.
+  ```bash
+  PDS_DB_PATH=demo.db NEXT_DIST_DIR=.next-recette npx next dev -H 127.0.0.1 -p 3100
+  APP_URL=http://127.0.0.1:3100 npm run demo:seed
+  ```
+  ⚠️ Après un `git checkout` d'un fichier, `next dev` peut ne pas recharger le module
+  (constaté sur `lib/purchases.ts`) : en cas de doute, redémarrer l'instance.
 
 ---
 
