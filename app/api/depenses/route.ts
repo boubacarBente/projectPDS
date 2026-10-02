@@ -66,7 +66,9 @@ export async function POST(request: NextRequest) {
     const storeId = await requireActiveStore(user);
     const expense = await createExpense({
       storeId,
-      canSkipApproval: user.permissions.includes('expenses.approve'),
+      // Seul l'administrateur général est dispensé : la grosse dépense d'un gérant est
+      // approuvée par quelqu'un d'autre (séparation des tâches, lib/expenses.ts).
+      canSkipApproval: user.role === 'admin',
       category: required(body.category, 'Catégorie'),
       amount: toNumber(body.amount, 0),
       description: body.description ?? null,

@@ -131,6 +131,12 @@
 - **Inventaires** (§6.16) : les deux écrans, `components/inventaires/inventory-ui.tsx`.
   Règles corrigées dans `lib/inventories.ts` : justification **obligatoire** de chaque
   écart à la validation ; théorique affiché = stock actuel pour une ligne non comptée.
+- **Dépenses** (§6.7) : circuit d'approbation à l'écran. Règles corrigées dans
+  `lib/expenses.ts` / `app/api/depenses` : dispense réservée au rôle `admin` (avant :
+  toute personne ayant `expenses.approve`, donc un gérant s'approuvait lui-même) ;
+  auto-approbation interdite ; hausse au-delà du seuil → `pending` (ou refus si
+  décaissée). Champs de date : `jj/mm/aaaa` remplacé par « jj mois aaaa » sur 5 écrans
+  (AGENTS.md n° 10).
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -359,7 +365,7 @@ L'entrée en stock se fait dans le magasin actif. À ajouter : StoreScopeSelect 
 | **Mouvement manuel** | Entrée / sortie hors document (`cash.manual`). |
 | **StoreScopeSelect** (à ajouter) | En vue consolidée : solde de chaque magasin (lecture seule) ; les boutons d'ouverture, de clôture et de mouvement restent liés au magasin actif. |
 
-### 6.7 `/depenses` ⏳ (circuit d'approbation à ajouter)
+### 6.7 `/depenses` ✅
 
 - **Permissions :** `expenses.view/create/update/delete`, **`expenses.approve`**.
 - **API :**
@@ -374,7 +380,7 @@ L'entrée en stock se fait dans le magasin actif. À ajouter : StoreScopeSelect 
 | Onglets / filtre **Statut** | Toutes · **En attente** · À décaisser · Décaissées · Rejetées. |
 | Colonne **Statut d'approbation** (badge) | En attente (orange), À décaisser (bleu), Décaissée (vert), Rejetée (rouge). |
 | Carte **« En attente d'approbation »** | `pendingCount` / `pendingAmount`. Clic → filtre « En attente ». |
-| Bouton **Approuver** (ligne en attente, `expenses.approve`) | Confirmation avec case « Décaisser immédiatement » (`payNow`, possible seulement si l'approbateur travaille dans le magasin de la dépense). |
+| Bouton **Approuver** (ligne en attente, `expenses.approve`, **jamais sur sa propre dépense**) | Confirmation avec case « Décaisser tout de suite » (`payNow`, proposée seulement si l'approbateur travaille dans le magasin de la dépense). |
 | Bouton **Rejeter** | Motif obligatoire → `decision: 'reject'`. |
 | Bouton **Décaisser** (ligne « À décaisser ») | `POST …/decaisser`, depuis le magasin de la dépense. |
 | **Nouvelle dépense** | Inchangé ; avertir « au-delà de X GNF, la dépense devra être approuvée » (seuil lu dans `useSettings()`). |

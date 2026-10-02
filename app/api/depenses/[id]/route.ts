@@ -57,7 +57,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.referenceId !== undefined) patch.referenceId = body.referenceId;
 
     const storeId = await requireActiveStore(user);
-    const expense = await updateExpense(expenseId, patch as any, { userId: user.id, storeId });
+    const expense = await updateExpense(expenseId, patch as any, { userId: user.id, storeId, canSkipApproval: user.role === 'admin' });
 
     await writeAudit({
       user,

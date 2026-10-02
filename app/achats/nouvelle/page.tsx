@@ -1094,7 +1094,7 @@ function AchatsNouvelleContent() {
 
                 <div className="space-y-4">
                   <FormField label="Date de l’achat" htmlFor="purchase-date" required>
-                    <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
+                    <DatePicker value={date} onChange={setDate} placeholder="jj mois aaaa" />
                   </FormField>
 
                   <FormField label="Moyen de paiement" htmlFor="purchase-payment-method" required>
@@ -1159,7 +1159,7 @@ function AchatsNouvelleContent() {
                       htmlFor="purchase-due-date"
                       hint="Achat à crédit : date promise de règlement au fournisseur."
                     >
-                      <DatePicker value={dueDate} onChange={setDueDate} placeholder="jj/mm/aaaa" />
+                      <DatePicker value={dueDate} onChange={setDueDate} placeholder="jj mois aaaa" />
                     </FormField>
                   )}
                 </div>

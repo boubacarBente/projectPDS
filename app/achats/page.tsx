@@ -601,7 +601,7 @@ export default function AchatsPage() {
                   setFrom(value);
                   setPage(1);
                 }}
-                placeholder="jj/mm/aaaa"
+                placeholder="jj mois aaaa"
               />
             </div>
 
@@ -613,7 +613,7 @@ export default function AchatsPage() {
                   setTo(value);
                   setPage(1);
                 }}
-                placeholder="jj/mm/aaaa"
+                placeholder="jj mois aaaa"
               />
             </div>
           </>

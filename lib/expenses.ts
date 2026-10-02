@@ -31,7 +31,7 @@ import { eq } from 'drizzle-orm';
 import { ValidationError, NotFoundError } from '@/lib/api';
 import { addCashMovement } from '@/lib/caisse';
 import { getSettings } from '@/lib/settings';
-import { roundMoney } from '@/lib/format';
+import { formatCurrency, roundMoney } from '@/lib/format';
 import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /* ------------------------------------------------------------------ *
@@ -372,6 +372,12 @@ export async function decideExpense(
     if (expense.approvalStatus !== 'pending') {
       throw new ValidationError('Cette dépense n’est pas en attente d’approbation');
     }
+    // Séparation des tâches : celui qui engage la dépense ne l'approuve pas.
+    if (expense.userId !== null && expense.userId === options.userId) {
+      throw new ValidationError(
+        'Vous ne pouvez pas approuver ou rejeter votre propre dépense : un autre responsable doit le faire.',
+      );
+    }
 
     if (decision === 'reject') {
       await db
@@ -449,7 +455,7 @@ function cashRelevantChanges(previous: ExpenseRow, next: ExpenseRow): boolean {
 export async function updateExpense(
   id: number,
   patch: ExpensePatch,
-  options: { userId?: number | null; storeId?: number | null } = {},
+  options: { userId?: number | null; storeId?: number | null; canSkipApproval?: boolean } = {},
 ): Promise<ExpenseRow> {
   return withTransaction(async () => {
     const previous = await getExpense(id);
@@ -475,9 +481,28 @@ export async function updateExpense(
       referenceId: patch.referenceId !== undefined ? patch.referenceId : previous.referenceId,
     };
 
+    /*
+     * Une hausse de montant au-delà du seuil d'approbation ne doit pas
+     * contourner le circuit (avant v2 : on pouvait saisir 100 000 GNF, puis
+     * passer la dépense approuvée à 10 000 000 GNF). Pas encore décaissée →
+     * elle repart « en attente » ; déjà décaissée → refus, il faut l'annuler et
+     * la ressaisir.
+     */
+    const threshold = Number((await getSettings()).expenseApprovalThreshold ?? 0) || 0;
+    const needsNewApproval =
+      threshold > 0 && next.amount > threshold && next.amount > previous.amount + 0.001 && !options.canSkipApproval;
+    let approvalReset = false;
+    if (needsNewApproval && previous.approvalStatus === 'approved') {
+      throw new ValidationError(
+        `Cette dépense est déjà décaissée : porter son montant au-delà de ${formatCurrency(threshold)} exige une nouvelle approbation. Annulez-la puis ressaisissez-la.`,
+      );
+    }
+    if (needsNewApproval && previous.approvalStatus === 'to_pay') approvalReset = true;
+
     await db
       .update(expenses)
       .set({
+        ...(approvalReset ? { approvalStatus: 'pending', approvedBy: null, approvedAt: null } : {}),
         category: next.category,
         amount: next.amount,
         paymentMethod: next.paymentMethod,

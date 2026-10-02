@@ -771,7 +771,7 @@ export default function CaissePage() {
                       setFrom(value);
                       setPage(1);
                     }}
-                    placeholder="jj/mm/aaaa"
+                    placeholder="jj mois aaaa"
                   />
                 </div>
                 <div>
@@ -782,7 +782,7 @@ export default function CaissePage() {
                       setTo(value);
                       setPage(1);
                     }}
-                    placeholder="jj/mm/aaaa"
+                    placeholder="jj mois aaaa"
                   />
                 </div>
               </div>

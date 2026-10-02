@@ -2223,7 +2223,10 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
    compte détenant `stock.adjust` peut cocher « j'accepte le stock négatif », et le
    journal enregistre `negativeStockOverride`. *Changement v2* : en v1, l'annulation
    passait toujours, sans que personne ne l'ait décidé.
-7. **Interface** : toute carte d'indicateur porte une **infobulle en mots simples**
+7. **Séparation des tâches sur les dépenses** : au-delà du seuil, la dépense de
+   quiconque n'est pas administrateur général attend l'accord d'**un autre**
+   responsable ; augmenter une dépense ne contourne pas le circuit.
+8. **Interface** : toute carte d'indicateur porte une **infobulle en mots simples**
    (`StatCardDelta tooltip="…"`, la pastille de la carte ouvre l'explication) ; toute
    page est vérifiée à **1366 px et 400 px** sans débordement horizontal.
 
@@ -2239,7 +2242,8 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | **`/utilisateurs`** : colonne et filtre « Magasins », affectations (cases + gérant + période) à la création et par le bouton « Magasins », rôle Administrateur réservé à l'administrateur général, comptes d'administrateur non modifiables par un gérant, consultation seule sur poste magasin ; compteurs bornés au périmètre du gérant ; **historique** filtrable par magasin | ✅ | guide §6.19 |
 | **`/transferts`** (compteurs cliquables, entrants / sortants, statuts, portée), **`/transferts/nouveau`** (création et modification d'un brouillon, disponible à la source), **`/transferts/[id]`** (suivi des étapes, boutons calculés par le serveur, expédition et réception ligne par ligne, litige, historique). Nouvelles routes `GET /api/transferts/disponible` et `GET /api/transferts/magasins` ; filtre multi-statuts ; correctif « en transit » d'un transfert clos | ✅ | guide §6.15 |
 | **`/inventaires`** (liste, ouverture dans le magasin actif, une catégorie ou tout le magasin) et **`/inventaires/[id]`** (feuille de comptage : recherche, « non comptés » / « avec écart », enregistrement des seules lignes modifiées, validation, annulation). **Règles corrigées** : chaque écart doit être **justifié** avant validation (cahier §7) ; une ligne pas encore comptée affiche le stock **actuel**, pas celui de l'ouverture | ✅ | guide §6.16 |
-| `/depenses` : circuit d'approbation ; `/produits` : prix et seuil locaux | ⏳ | guide §6.7, §6.9 |
+| **`/depenses`** : onglets En attente / À décaisser / Décaissées / Rejetées, carte « en attente » cliquable, Approuver (avec « décaisser tout de suite ») / Rejeter (motif) / Décaisser, portée magasin. **Règles corrigées** : seul l'administrateur général est dispensé d'approbation ; personne n'approuve sa propre dépense ; une hausse au-delà du seuil fait repasser « en attente » (ou est refusée si déjà décaissée) | ✅ | guide §6.7 |
+| `/produits` : prix et seuil locaux | ⏳ | guide §6.9 |
 | Portée magasin (`StoreScopeSelect` + colonne « Magasin ») sur toutes les listes ; en-têtes de factures et reçus au nom du magasin. **À corriger au passage** : en 1366 px, les tableaux de `/ventes`, `/caisse`, `/stocks`, `/produits`, `/chantiers`, `/rapports`, `/recus` sont trop larges (dernières colonnes cachées) — `verify:ui` le signale | ⏳ | guide §6.3 → §6.13 |
 | Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
 | **Jeu de démonstration** (`lib/seed-data.ts`, `npm run demo:seed`) : 3 magasins, 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |

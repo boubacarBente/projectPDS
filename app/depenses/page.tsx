@@ -15,6 +15,12 @@
  * La **catégorie** est une liste fermée (`settings.expenseCategories`, §6.6) :
  * la page renvoie donc vers `/parametres` pour la gérer, et n'offre aucune
  * saisie libre.
+ *
+ * **Circuit d'approbation** (cahier multi-magasins §12) : au-delà du seuil
+ * `expenseApprovalThreshold`, une dépense saisie par un autre que
+ * l'administrateur général est « en attente » ; un responsable (jamais son
+ * auteur) l'approuve — elle devient « à décaisser » — ou la rejette. Seules les
+ * dépenses décaissées sortent de la caisse et comptent dans les résultats.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -37,6 +43,10 @@ import {
   StatCardDelta,
 } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
+import { useAuth } from '@/components/auth-provider';
+import { ConfirmDialog } from '@/components/confirm-dialog';
+import { FormField } from '@/components/design-system';
+import { StoreScopeSelect, useStoreScope } from '@/components/store-scope';
 import { useSettings } from '@/app/parametres/page';
 import {
   CancelExpenseModal,
@@ -74,6 +84,24 @@ function periodRange(key: PeriodKey, reference = today()): { from: string; to: s
   }
 }
 
+type ApprovalFilter = '' | 'pending' | 'to_pay' | 'approved' | 'rejected';
+
+/** Onglets du circuit d'approbation ; « Toutes » montre aussi les rejetées, avec leur badge. */
+const APPROVAL_TABS: { key: ApprovalFilter; label: string }[] = [
+  { key: '', label: 'Toutes' },
+  { key: 'pending', label: 'En attente' },
+  { key: 'to_pay', label: 'À décaisser' },
+  { key: 'approved', label: 'Décaissées' },
+  { key: 'rejected', label: 'Rejetées' },
+];
+
+const APPROVAL_BADGES: Record<string, { label: string; tone: 'warning' | 'info' | 'success' | 'error' }> = {
+  pending: { label: 'En attente', tone: 'warning' },
+  to_pay: { label: 'À décaisser', tone: 'info' },
+  approved: { label: 'Décaissée', tone: 'success' },
+  rejected: { label: 'Rejetée', tone: 'error' },
+};
+
 type ViewState = {
   search: string;
   category: string;
@@ -88,6 +116,17 @@ export default function DepensesPage() {
   const canCreate = usePermission('expenses.create');
   const canUpdate = usePermission('expenses.update');
   const canCancel = usePermission('expenses.delete');
+  const canApprove = usePermission('expenses.approve');
+  const { user, activeStoreId } = useAuth();
+  const { scope, setScope, apply, isConsolidated } = useStoreScope('depenses');
+  const threshold = Number(settings.expenseApprovalThreshold ?? 0) || 0;
+
+  const [approval, setApproval] = useState<ApprovalFilter>('');
+  /** Décision en cours : approbation (avec « décaisser tout de suite ») ou rejet (motif). */
+  const [decision, setDecision] = useState<{ expense: ExpenseRow; kind: 'approve' | 'reject' } | null>(null);
+  const [decisionReason, setDecisionReason] = useState('');
+  const [payNow, setPayNow] = useState(true);
+  const [isDeciding, setIsDeciding] = useState(false);
 
   const currency = settings.currency;
   const expenseCategories = useMemo(() => settings.expenseCategories ?? [], [settings.expenseCategories]);
@@ -158,6 +197,8 @@ export default function DepensesPage() {
           page: String(page),
           limit: String(PAGE_LIMIT),
         });
+        apply(params);
+        if (approval) params.set('approvalStatus', approval);
         if (debouncedSearch) params.set('search', debouncedSearch);
         if (category) params.set('category', category);
         if (paymentMethod) params.set('paymentMethod', paymentMethod);
@@ -211,7 +252,7 @@ export default function DepensesPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, debouncedSearch, category, paymentMethod, from, to, page, refreshToken]);
+  }, [rehydrated, debouncedSearch, category, paymentMethod, from, to, page, refreshToken, apply, approval]);
 
   /* Cartes de synthèse : total, nombre, moyenne, catégorie la plus lourde. */
   useEffect(() => {
@@ -223,7 +264,7 @@ export default function DepensesPage() {
     async function loadSummary() {
       setIsSummaryLoading(true);
       try {
-        const params = new URLSearchParams();
+        const params = apply(new URLSearchParams());
         if (from) params.set('from', from);
         if (to) params.set('to', to);
 
@@ -266,7 +307,7 @@ export default function DepensesPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, from, to, refreshToken]);
+  }, [rehydrated, from, to, refreshToken, apply]);
 
   const hasFilters = Boolean(debouncedSearch || category || paymentMethod || from || to);
   const activePeriodCount = (from ? 1 : 0) + (to ? 1 : 0);
@@ -306,6 +347,55 @@ export default function DepensesPage() {
    * Rechargement manuel : un seul toast par action (§26.3). Toute écriture
    * passe par l'API puis recharge liste **et** synthèse via `refresh`.
    */
+  /** Approuver / rejeter (`POST /api/depenses/[id]/approbation`). */
+  const submitDecision = async () => {
+    if (!decision) return;
+    if (decision.kind === 'reject' && !decisionReason.trim()) {
+      toast.error('Le motif du rejet est obligatoire.');
+      return;
+    }
+    setIsDeciding(true);
+    try {
+      const response = await fetch(`/api/depenses/${decision.expense.id}/approbation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          decision: decision.kind,
+          reason: decisionReason.trim() || null,
+          payNow: decision.kind === 'approve' && payNow && decision.expense.storeId === activeStoreId,
+        }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'La décision n’a pas pu être enregistrée.'));
+      const saved = (await response.json()) as ExpenseRow;
+      toast.success(
+        decision.kind === 'reject'
+          ? 'Dépense rejetée.'
+          : saved.approvalStatus === 'approved'
+            ? 'Dépense approuvée et décaissée.'
+            : 'Dépense approuvée : elle est maintenant à décaisser.',
+      );
+      setDecision(null);
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'La décision n’a pas pu être enregistrée.', { autoClose: 9000 });
+    } finally {
+      setIsDeciding(false);
+    }
+  };
+
+  /** Décaisser une dépense approuvée (`POST /api/depenses/[id]/decaisser`) : sortie de caisse. */
+  const payExpense = async (expense: ExpenseRow) => {
+    try {
+      const response = await fetch(`/api/depenses/${expense.id}/decaisser`, { method: 'POST', credentials: 'same-origin' });
+      if (!response.ok) throw new Error(await readApiError(response, 'Le décaissement a échoué.'));
+      toast.success(`Dépense décaissée : ${formatCurrency(expense.amount, currency)} sortis de la caisse.`);
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Le décaissement a échoué.', { autoClose: 9000 });
+    }
+  };
+
   const handleManualRefresh = useCallback(() => {
     refresh();
     toast.success('Liste actualisée.');
@@ -334,26 +424,40 @@ export default function DepensesPage() {
         key: 'category',
         label: 'Catégorie',
         primary: true,
-        render: (expense) => <span className="font-medium">{expense.category}</span>,
-      },
-      {
-        key: 'description',
-        label: 'Description',
-        hideOnMobile: true,
+        // Description et bénéficiaire sous la catégorie : deux colonnes de moins,
+        // le tableau tient en largeur ordinateur même avec la colonne « Magasin ».
         render: (expense) => (
-          <span className="text-sm text-base-content/70">{expense.description || '—'}</span>
+          <span className="block min-w-0 max-w-xs">
+            <span className="block font-medium">{expense.category}</span>
+            {expense.description && (
+              <span className="block truncate text-xs text-base-content/60" title={expense.description}>
+                {expense.description}
+              </span>
+            )}
+            {expense.beneficiary && (
+              <span className="block text-xs text-base-content/60">Bénéficiaire : {expense.beneficiary}</span>
+            )}
+          </span>
         ),
       },
       {
-        key: 'beneficiary',
-        label: 'Bénéficiaire',
-        render: (expense) => <span className="text-sm">{expense.beneficiary || '—'}</span>,
+        key: 'approval',
+        label: 'Statut',
+        render: (expense) => {
+          const badge = APPROVAL_BADGES[expense.approvalStatus] ?? APPROVAL_BADGES.approved;
+          return <Badge tone={badge.tone}>{badge.label}</Badge>;
+        },
       },
-      {
-        key: 'paymentMethod',
-        label: 'Moyen',
-        render: (expense) => <Badge tone="neutral">{expense.paymentMethod}</Badge>,
-      },
+      ...(isConsolidated || typeof scope === 'number'
+        ? [
+            {
+              key: 'store',
+              label: 'Magasin',
+              hideOnMobile: true,
+              render: (expense: ExpenseRow) => <span className="text-sm">{expense.storeName ?? '—'}</span>,
+            },
+          ]
+        : []),
       {
         key: 'amount',
         label: 'Montant',
@@ -369,7 +473,7 @@ export default function DepensesPage() {
         ),
       },
     ],
-    [currency],
+    [currency, isConsolidated, scope],
   );
 
   const topCategory = summary?.byCategory?.[0] ?? null;
@@ -383,19 +487,38 @@ export default function DepensesPage() {
         tone="error"
         value={<MoneyText value={summary?.totalAmount ?? 0} currency={currency} />}
         hint={from || to ? 'Dépenses de la période sélectionnée' : 'Toutes les dépenses'}
+        tooltip="Argent réellement sorti pour les frais (loyer, transport, salaires…) sur la période. Les dépenses en attente d’approbation, rejetées ou annulées ne sont pas comptées."
       />
       <StatCardDelta
         label="Nombre de dépenses"
         value={<span className="tabular">{formatNumber(summary?.expensesCount ?? 0)}</span>}
-        hint="Dépenses non annulées"
+        hint={`Moyenne : ${formatCurrency(summary?.averageAmount ?? 0, currency)}`}
+        tooltip="Nombre de dépenses décaissées sur la période, et leur montant moyen."
       />
-      <StatCardDelta
-        label="Montant moyen"
-        value={<MoneyText value={summary?.averageAmount ?? 0} currency={currency} />}
-        hint="Par dépense"
-      />
+      <button
+        type="button"
+        className="rounded-2xl text-left focus-visible:outline-2 focus-visible:outline-primary"
+        onClick={() => {
+          setApproval('pending');
+          setPage(1);
+        }}
+        aria-label="Afficher les dépenses en attente d’approbation"
+      >
+        <StatCardDelta
+          label="En attente d’approbation"
+          tone={(summary?.pendingCount ?? 0) > 0 ? 'warning' : 'neutral'}
+          value={<span className="tabular">{formatNumber(summary?.pendingCount ?? 0)}</span>}
+          hint={(summary?.pendingCount ?? 0) > 0 ? `${formatCurrency(summary?.pendingAmount ?? 0, currency)} — cliquez pour voir` : 'Rien à approuver'}
+          tooltip={
+            threshold > 0
+              ? `Dépenses de plus de ${formatCurrency(threshold, currency)} qui attendent l’accord d’un responsable avant de sortir de la caisse. Celui qui a saisi la dépense ne peut pas l’approuver lui-même.`
+              : 'Le seuil d’approbation est à 0 dans les paramètres : aucune dépense n’a besoin d’être approuvée.'
+          }
+        />
+      </button>
       <StatCardDelta
         label="Catégorie la plus lourde"
+        tooltip="Le poste de dépense qui a coûté le plus cher sur la période."
         tone="warning"
         value={
           <span className="text-base font-semibold">{topCategory ? topCategory.category : '—'}</span>
@@ -450,6 +573,31 @@ export default function DepensesPage() {
 
       {summaryCards}
 
+      {threshold > 0 && (
+        <p className="rounded-xl border border-info/30 bg-info/10 px-3 py-2 text-sm">
+          Au-delà de <strong>{formatCurrency(threshold, currency)}</strong>, une dépense doit être approuvée par
+          un responsable avant d’être payée (réglage dans les paramètres).
+        </p>
+      )}
+
+      <div role="tablist" className="tabs tabs-border overflow-x-auto">
+        {APPROVAL_TABS.map((tab) => (
+          <button
+            key={tab.key || 'all'}
+            type="button"
+            role="tab"
+            aria-selected={approval === tab.key}
+            className={`tab min-h-11 whitespace-nowrap ${approval === tab.key ? 'tab-active' : ''}`}
+            onClick={() => {
+              setApproval(tab.key);
+              setPage(1);
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <DataToolbar
         search={search}
         onSearchChange={(value) => {
@@ -470,6 +618,14 @@ export default function DepensesPage() {
                 placeholder="Toutes les catégories"
               />
             </div>
+            <StoreScopeSelect
+              value={scope}
+              onChange={(value) => {
+                setScope(value);
+                setPage(1);
+              }}
+              className="min-h-11 w-full sm:w-52"
+            />
             <div className="w-full sm:w-44">
               <FilterSelect
                 value={paymentMethod}
@@ -527,7 +683,7 @@ export default function DepensesPage() {
                     setFrom(value);
                     setPage(1);
                   }}
-                  placeholder="jj/mm/aaaa"
+                  placeholder="jj mois aaaa"
                 />
               </div>
               <div>
@@ -538,7 +694,7 @@ export default function DepensesPage() {
                     setTo(value);
                     setPage(1);
                   }}
-                  placeholder="jj/mm/aaaa"
+                  placeholder="jj mois aaaa"
                 />
               </div>
             </div>
@@ -622,10 +778,41 @@ export default function DepensesPage() {
             data={rows}
             getRowKey={(expense) => expense.id}
             actions={
-              canUpdate || canCancel
+              canUpdate || canCancel || canApprove || canCreate
                 ? (expense) => (
                     <RowActions>
-                      {canUpdate && (
+                      {canApprove && expense.approvalStatus === 'pending' && expense.userId !== user?.id && (
+                        <IconAction
+                          icon="activate"
+                          tone="success"
+                          label="Approuver cette dépense"
+                          onClick={() => {
+                            setDecisionReason('');
+                            setPayNow(expense.storeId === activeStoreId);
+                            setDecision({ expense, kind: 'approve' });
+                          }}
+                        />
+                      )}
+                      {canApprove && expense.approvalStatus === 'pending' && expense.userId !== user?.id && (
+                        <IconAction
+                          icon="deactivate"
+                          tone="danger"
+                          label="Rejeter cette dépense"
+                          onClick={() => {
+                            setDecisionReason('');
+                            setDecision({ expense, kind: 'reject' });
+                          }}
+                        />
+                      )}
+                      {canCreate && expense.approvalStatus === 'to_pay' && expense.storeId === activeStoreId && (
+                        <IconAction
+                          icon="pay"
+                          tone="success"
+                          label="Décaisser cette dépense (sortie de caisse)"
+                          onClick={() => void payExpense(expense)}
+                        />
+                      )}
+                      {canUpdate && expense.approvalStatus !== 'rejected' && (
                         <IconAction
                           icon="edit"
                           label="Modifier cette dépense"
@@ -661,6 +848,60 @@ export default function DepensesPage() {
         paymentMethods={paymentMethods}
         onSaved={refresh}
       />
+
+      <ConfirmDialog
+        isOpen={decision !== null}
+        onClose={() => {
+          if (!isDeciding) setDecision(null);
+        }}
+        onConfirm={() => void submitDecision()}
+        title={decision?.kind === 'reject' ? 'Rejeter la dépense' : 'Approuver la dépense'}
+        tone={decision?.kind === 'reject' ? 'error' : 'success'}
+        confirmLabel={decision?.kind === 'reject' ? 'Rejeter' : 'Approuver'}
+        isSubmitting={isDeciding}
+        message={
+          decision ? (
+            <>
+              {decision.expense.category} — <strong>{formatCurrency(decision.expense.amount, currency)}</strong>
+              {decision.expense.description ? ` — ${decision.expense.description}` : ''}, saisie par{' '}
+              {decision.expense.userName ?? '—'}
+              {decision.expense.storeName ? ` (${decision.expense.storeName})` : ''}.
+              <span className="mt-2 block text-sm text-base-content/70">
+                {decision.kind === 'reject'
+                  ? 'La dépense ne sera pas payée. Le motif est conservé.'
+                  : 'Une fois approuvée, la dépense peut sortir de la caisse du magasin.'}
+              </span>
+            </>
+          ) : (
+            ''
+          )
+        }
+      >
+        {decision?.kind === 'reject' ? (
+          <FormField label="Motif du rejet" required className="mb-4">
+            <textarea
+              className="textarea textarea-bordered w-full"
+              rows={2}
+              value={decisionReason}
+              onChange={(event) => setDecisionReason(event.target.value)}
+            />
+          </FormField>
+        ) : decision && decision.expense.storeId === activeStoreId ? (
+          <label className="mb-4 flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="checkbox checkbox-sm mt-0.5"
+              checked={payNow}
+              onChange={(event) => setPayNow(event.target.checked)}
+            />
+            <span>Décaisser tout de suite (sortie de la caisse de ce magasin)</span>
+          </label>
+        ) : decision ? (
+          <p className="mb-4 text-sm text-base-content/70">
+            Elle sera décaissée depuis {decision.expense.storeName ?? 'son magasin'}, par une personne qui y travaille.
+          </p>
+        ) : null}
+      </ConfirmDialog>
 
       <CancelExpenseModal
         isOpen={isCancelOpen}

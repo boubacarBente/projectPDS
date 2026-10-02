@@ -1038,7 +1038,7 @@ export default function RapportsPage() {
                     setFrom(value);
                     setPeriodKey('custom');
                   }}
-                  placeholder="jj/mm/aaaa"
+                  placeholder="jj mois aaaa"
                 />
               </div>
               <div>
@@ -1050,7 +1050,7 @@ export default function RapportsPage() {
                     setTo(value);
                     setPeriodKey('custom');
                   }}
-                  placeholder="jj/mm/aaaa"
+                  placeholder="jj mois aaaa"
                 />
               </div>
             </div>
