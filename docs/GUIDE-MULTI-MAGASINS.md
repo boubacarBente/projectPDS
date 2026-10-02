@@ -121,6 +121,9 @@
   `components/utilisateurs/store-assignments.tsx` (éditeur + modale d'affectations).
   Correctif serveur : `GET /api/users?stats=true` est borné au périmètre du gérant.
 - **Sélecteur de magasin actif** (barre latérale) : texte blanc sur fond blanc corrigé.
+- **Transferts** (§6.15) : les trois écrans, composant `components/transferts/transfer-ui.tsx`
+  (libellés recopiés de `lib/transfers.ts`). Cycle vérifié de bout en bout par l'API
+  (demande, validation, expédition, réception partielle, litige, clôture, stocks).
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -128,7 +131,6 @@
 
 | Page | Travail | Section |
 |---|---|---|
-| `/transferts`, `/transferts/nouveau`, `/transferts/[id]` | à créer | §6.15 |
 | `/inventaires`, `/inventaires/[id]` | à créer | §6.16 |
 | `/` tableau de bord | filtre magasin, comparaison, alertes | §6.3 |
 | `/ventes`, `/achats`, `/caisse`, `/depenses`, `/stocks`, `/produits`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, colonne « Magasin » en vue consolidée, cas particuliers décrits. Tableaux trop larges en 1366 px à resserrer : ventes, caisse, stocks, produits, chantiers, rapports, reçus | §6.4 → §6.13 |
@@ -481,7 +483,7 @@ que depuis le magasin du chantier.
 
 ---
 
-### 6.15 Transferts entre magasins ⏳ (à créer)
+### 6.15 Transferts entre magasins ✅
 
 **Cycle de vie** (statuts) :
 
@@ -514,7 +516,7 @@ brouillon ─soumettre─▶ en attente ─valider─▶ validé ─préparer─
 
 | Élément | Action |
 |---|---|
-| 4 **cartes compteurs** | À valider, À expédier, À recevoir, En litige. Un clic filtre la liste. |
+| 4 **cartes compteurs** | À valider, À expédier, À recevoir, En litige (infobulle sur chacune). Un clic filtre la liste sur les mêmes transferts : `status=pending` ; `status=approved,preparing&direction=outgoing` ; `status=in_transit,partially_received&direction=incoming` ; `status=disputed`. `status` accepte une liste séparée par des virgules. |
 | Onglets **Tous / Entrants / Sortants** | Paramètre `direction`. |
 | Filtre **Statut** | Défaut « En cours » (`open`). |
 | **Recherche** | Référence ou motif. |
@@ -526,10 +528,11 @@ brouillon ─soumettre─▶ en attente ─valider─▶ validé ─préparer─
 
 | Élément | Action |
 |---|---|
-| **Magasin source** | Liste `GET /api/magasins` (ou `stores` de `useAuth`). C'est le magasin qui **donne** la marchandise. |
+| **Magasin source** | Liste `GET /api/transferts/magasins` (annuaire des magasins actifs : `GET /api/magasins` ne renvoie à un gérant que ses magasins, or la source est le plus souvent un autre magasin). C'est le magasin qui **donne** la marchandise. Par défaut : le siège. |
 | **Magasin destinataire** | Défaut : magasin actif. Doit être différent de la source. L'utilisateur doit appartenir à l'un des deux magasins. |
 | **Motif**, **Date souhaitée**, **Notes** | Facultatifs. |
-| **Lignes produits** | Recherche produit (`GET /api/stocks?store=<source>&search=`), quantité, **disponible à la source** affiché. Avertir si la quantité dépasse le disponible ; le blocage réel se fait à l'expédition. |
+| **Lignes produits** | Catalogue de la source chargé une fois : `GET /api/transferts/disponible?source=<id>` → `[{ id, name, unit, barcode, available }]` (ni prix ni valeur ; `/api/stocks?store=<source>` serait refusé à un gérant du magasin destinataire). Quantité, **disponible à la source** affiché, avertissement si dépassé ; le blocage réel se fait à l'expédition. `?productId=` préremplit une ligne. |
+| **Modifier** (brouillon / en attente) | Même page : `/transferts/nouveau?edit=<id>` → `POST /api/transferts/[id]` `{ action:'edit', … }` ; les magasins ne changent pas. |
 | Bouton **Enregistrer le brouillon** | `POST /api/transferts` `{ sourceStoreId, destinationStoreId, reason, requestedDate, notes, items:[{productId, quantity}], submit:false }` → redirige vers la fiche. |
 | Bouton **Soumettre la demande** | Même appel avec `submit: true`. |
 | Erreurs | « Choisissez le magasin source et le magasin destinataire », « … doivent être différents », « Vous devez être affecté au magasin source ou au magasin destinataire », « Le magasin X n'accepte pas de nouvelles opérations », « Un transfert doit contenir au moins un produit », « Ligne N : la quantité doit être supérieure à zéro ». |

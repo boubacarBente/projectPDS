@@ -207,8 +207,12 @@ export async function listTransfers(options: {
     if (options.status === 'open') {
       where.push(`t.status IN ('draft', 'pending', 'approved', 'preparing', 'in_transit', 'partially_received', 'disputed')`);
     } else {
-      where.push('t.status = ?');
-      args.push(options.status);
+      // `approved,preparing` : plusieurs statuts (filtres des compteurs « À expédier »…).
+      const statuses = options.status.split(',').map((v) => v.trim()).filter(Boolean);
+      if (statuses.length > 0) {
+        where.push(`t.status IN (${statuses.map(() => '?').join(', ')})`);
+        args.push(...statuses);
+      }
     }
   }
   if (options.search) {
@@ -244,6 +248,15 @@ export async function getTransfer(id: number): Promise<TransferDetail | null> {
     ),
   ]);
 
+  /*
+   * « En transit » n'a de sens que tant que le transfert est ouvert : une fois le
+   * litige clôturé (statut « reçu »), l'écart est une perte constatée, pas une
+   * marchandise en route. Constaté en recette : un transfert « Reçu » affichait
+   * encore « En transit : 1 ». En litige, l'écart reste affiché (non encore
+   * constaté) ; `inTransitExpr` (lib/stock.ts) ne le compte déjà plus en stock.
+   */
+  const open = ['in_transit', 'partially_received', 'disputed'].includes(String(row.status));
+
   return {
     transfer: mapTransfer(row),
     items: items.map((i) => ({
@@ -254,7 +267,7 @@ export async function getTransfer(id: number): Promise<TransferDetail | null> {
       quantityRequested: round3(Number(i.quantity_requested)),
       quantityShipped: round3(Number(i.quantity_shipped)),
       quantityReceived: round3(Number(i.quantity_received)),
-      inTransit: round3(Number(i.quantity_shipped) - Number(i.quantity_received)),
+      inTransit: open ? round3(Number(i.quantity_shipped) - Number(i.quantity_received)) : 0,
       discrepancyNote: i.discrepancy_note ?? null,
     })),
     events: events.map((e) => ({

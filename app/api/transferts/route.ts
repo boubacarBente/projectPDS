@@ -6,7 +6,8 @@ import { createTransfer, listTransfers } from '@/lib/transfers';
  * GET /api/transferts — liste paginée des transferts intermagasins.
  *
  * `?store=all|<id>` (défaut : magasin actif), `?direction=incoming|outgoing|all`,
- * `?status=open|draft|pending|…|all`, `?search=` (référence ou motif).
+ * `?status=open|draft|pending|…|all` (plusieurs statuts : `approved,preparing`),
+ * `?search=` (référence ou motif).
  * Un transfert apparaît s'il part de **ou** arrive dans un magasin de la portée.
  * Permission : `transfers.view`.
  */
