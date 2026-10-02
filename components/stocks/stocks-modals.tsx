@@ -8,6 +8,7 @@ import { ToolbarButton } from '@/components/data-toolbar';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import { formatQuantity } from '@/lib/format';
 import { formatDateTime } from '@/lib/date-format';
+import { StoreTag } from '@/components/store-scope';
 
 /* ==================================================================
  * Composants propres au domaine « Stocks » (§2 : components/stocks/).
@@ -52,6 +53,10 @@ export type StockProduct = {
   saleValue: number;
   isLow: boolean;
   isOut: boolean;
+  /** Quantité en route vers le(s) magasin(s) consulté(s) (transferts expédiés, pas encore reçus). */
+  inTransit?: number;
+  /** Détail par magasin (vue « tous les magasins »). */
+  byStore?: { storeId: number; storeName: string; stock: number }[];
 };
 
 /** Ligne du journal de stock — `listStockMovements()`. */
@@ -69,6 +74,8 @@ export type StockMovementRow = {
   referenceId: number | null;
   userId: number | null;
   userName: string | null;
+  /** Magasin du mouvement (vue « tous les magasins »). */
+  storeName?: string | null;
   /** Horodatage sérialisé en JSON par la route (jamais une `Date` côté client). */
   createdAt: string | null;
 };
@@ -129,59 +136,77 @@ function SignedQuantityText({ movement }: { movement: StockMovementRow }) {
   );
 }
 
-/** Colonnes du journal des mouvements — partagées par la page et la modale. */
-export const movementColumns: Column<StockMovementRow>[] = [
-  {
-    key: 'date',
-    label: 'Date',
-    className: 'whitespace-nowrap text-xs text-base-content/60',
-    render: (m) => formatDateTime(m.createdAt),
-  },
-  {
-    key: 'product',
-    label: 'Produit',
-    primary: true,
-    render: (m) => (
-      <div className="min-w-0">
-        <div className="truncate font-medium">{m.productName}</div>
-      </div>
-    ),
-  },
-  {
-    key: 'type',
-    label: 'Type',
-    render: (m) => <MovementTypeBadge type={m.type} />,
-  },
-  {
-    key: 'quantity',
-    label: 'Quantité',
-    className: 'whitespace-nowrap',
-    render: (m) => <SignedQuantityText movement={m} />,
-  },
-  {
-    key: 'motif',
-    label: 'Motif',
-    className: 'max-w-[16rem] truncate',
-    render: (m) => <span title={m.motif}>{m.motif || '—'}</span>,
-  },
-  {
-    key: 'before',
-    label: 'Avant',
-    hideOnMobile: true,
-    render: (m) => <QuantityText value={m.stockBefore} unit={m.unit} />,
-  },
-  {
-    key: 'after',
-    label: 'Après',
-    hideOnMobile: true,
-    render: (m) => <QuantityText value={m.stockAfter} unit={m.unit} />,
-  },
-  {
-    key: 'user',
-    label: 'Utilisateur',
-    render: (m) => <span className="text-sm">{m.userName ?? 'Système'}</span>,
-  },
-];
+/**
+ * Colonnes du journal des mouvements — partagées par la page et la modale.
+ *
+ * Cinq colonnes au lieu de huit (le tableau débordait en 1366 px) : le motif
+ * et le magasin passent sous le produit, le type avec la quantité, le stock
+ * avant → après dans une seule colonne.
+ */
+export function buildMovementColumns(options: { showStore?: boolean } = {}): Column<StockMovementRow>[] {
+  return [
+    {
+      key: 'date',
+      label: 'Date',
+      className: 'text-xs text-base-content/60',
+      render: (m) => {
+        const [day, ...rest] = formatDateTime(m.createdAt).split(' ');
+        return (
+          <span className="block whitespace-nowrap">
+            <span className="block">{day}</span>
+            {rest.join(' ')}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'product',
+      label: 'Produit',
+      primary: true,
+      render: (m) => (
+        <div className="min-w-0 max-w-xs">
+          <div className="truncate font-medium">{m.productName}</div>
+          {m.motif && (
+            <div className="truncate text-xs text-base-content/60" title={m.motif}>
+              {m.motif}
+            </div>
+          )}
+          <StoreTag name={m.storeName} show={Boolean(options.showStore)} />
+        </div>
+      ),
+    },
+    {
+      key: 'quantity',
+      label: 'Mouvement',
+      className: 'whitespace-nowrap',
+      render: (m) => (
+        <span className="flex flex-col items-start gap-1">
+          <MovementTypeBadge type={m.type} />
+          <SignedQuantityText movement={m} />
+        </span>
+      ),
+    },
+    {
+      key: 'after',
+      label: 'Stock avant → après',
+      hideOnMobile: true,
+      className: 'whitespace-nowrap',
+      render: (m) => (
+        <span className="tabular text-sm">
+          <QuantityText value={m.stockBefore} /> → <QuantityText value={m.stockAfter} unit={m.unit} />
+        </span>
+      ),
+    },
+    {
+      key: 'user',
+      label: 'Utilisateur',
+      render: (m) => <span className="text-sm">{m.userName ?? 'Système'}</span>,
+    },
+  ];
+}
+
+/** Colonnes par défaut (magasin actif). */
+export const movementColumns: Column<StockMovementRow>[] = buildMovementColumns();
 
 /* ------------------------------------------------------------------
  * Modale — historique des mouvements d'un produit

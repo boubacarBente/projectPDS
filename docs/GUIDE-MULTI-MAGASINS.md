@@ -395,7 +395,7 @@ L'entrée en stock se fait dans le magasin actif. À ajouter : StoreScopeSelect 
 | Bouton **Décaisser** (ligne « À décaisser ») | `POST …/decaisser`, depuis le magasin de la dépense. |
 | **Nouvelle dépense** | Inchangé ; avertir « au-delà de X GNF, la dépense devra être approuvée » (seuil lu dans `useSettings()`). |
 
-### 6.8 `/stocks` ⏳
+### 6.8 `/stocks` ✅
 
 - **Permissions :** `stock.view`, `stock.adjust`.
 - **API :**

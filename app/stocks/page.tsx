@@ -23,12 +23,13 @@ import { useViewStateRehydration, writeViewState, clampPage } from '@/lib/view-s
 import {
   ProductHistoryModal,
   StockAdjustModal,
-  movementColumns,
+  buildMovementColumns,
   type Paginated,
   type StockMovementRow,
   type StockProduct,
   type StockSummary,
 } from '@/components/stocks/stocks-modals';
+import { StoreScopeSelect, scopeShowsStore, useStoreScope } from '@/components/store-scope';
 
 /* ==================================================================
  * Page « Stocks » (README §12 — Stock et inventaire).
@@ -91,6 +92,12 @@ function buildQuery(entries: Record<string, string | number | boolean | undefine
 
 export default function StocksPage() {
   const canAdjust = usePermission('stock.adjust');
+  const canTransfer = usePermission('transfers.create');
+  // Portée : la consultation peut couvrir plusieurs magasins ; l'ajustement reste
+  // celui du magasin actif (le serveur l'impose).
+  const { scope, setScope, apply } = useStoreScope('stocks');
+  const showStore = scopeShowsStore(scope);
+  const storeParam = apply(new URLSearchParams()).get('store') ?? undefined;
 
   /* ── Onglet actif (un seul état booléen/discriminant) ─────────────── */
   const [activeTab, setActiveTab] = useState<Tab>('products');
@@ -162,7 +169,7 @@ export default function StocksPage() {
     setSummaryLoading(true);
     setSummaryError(null);
 
-    fetch('/api/stocks/summary', { signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
+    fetch(`/api/stocks/summary?${buildQuery({ store: storeParam })}`, { signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
       .then((response) => readJson<StockSummary>(response))
       .then((payload) => {
         if (controller.signal.aborted) return;
@@ -177,7 +184,7 @@ export default function StocksPage() {
       });
 
     return () => controller.abort();
-  }, [summaryReloadToken]);
+  }, [summaryReloadToken, storeParam]);
 
   /* ── Chargement de la liste complète (filtre catégorie + modale) ──── */
   useEffect(() => {
@@ -222,6 +229,7 @@ export default function StocksPage() {
       outOfStockOnly,
       page,
       limit: PRODUCTS_LIMIT,
+      store: storeParam,
     });
 
     fetch(`/api/stocks?${query}`, { signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
@@ -256,6 +264,7 @@ export default function StocksPage() {
     lowStockOnly,
     outOfStockOnly,
     productsReloadToken,
+    storeParam,
   ]);
 
   /* ── Chargement de l'historique des mouvements ───────────────────── */
@@ -274,6 +283,7 @@ export default function StocksPage() {
       to: movementTo,
       page: movementPage,
       limit: MOVEMENTS_LIMIT,
+      store: storeParam,
     });
 
     fetch(`/api/stocks/mouvements?${query}`, {
@@ -311,6 +321,7 @@ export default function StocksPage() {
     movementFrom,
     movementTo,
     movementsReloadToken,
+    storeParam,
   ]);
 
   /* ── Restauration d'état au retour arrière (§5) ───────────────────── */
@@ -426,69 +437,71 @@ export default function StocksPage() {
   }
 
   /* ── Colonnes ─────────────────────────────────────────────────────── */
+  /*
+   * Quatre colonnes au lieu de huit (le tableau débordait en 1366 px) : la
+   * catégorie sous le nom, le seuil sous le stock, la valeur de vente sous la
+   * valeur d'achat. En vue « tous les magasins », le stock de chaque magasin et
+   * la quantité en transit s'affichent sous le total.
+   */
   const productColumns: Column<StockProduct>[] = useMemo(
     () => [
       {
         key: 'name',
-        label: 'Nom',
+        label: 'Produit',
         primary: true,
         render: (p) => (
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-xs">
             <div className="truncate font-medium">{p.name}</div>
-            {(p.isOut || p.isLow) && (
-              <div className="mt-1">
-                <Badge tone={p.isOut ? 'error' : 'warning'}>
-                  {p.isOut ? 'Rupture' : 'Stock faible'}
-                </Badge>
+            <div className="text-xs text-base-content/55">{p.categoryName ?? 'Non classé'}</div>
+          </div>
+        ),
+      },
+      {
+        key: 'stock',
+        label: 'Stock',
+        render: (p) => (
+          <div className="text-sm">
+            <QuantityText
+              value={p.stock}
+              unit={p.unit}
+              className={p.isOut ? 'font-semibold text-error' : p.isLow ? 'font-semibold text-warning' : 'font-semibold'}
+            />
+            <div className="text-xs text-base-content/55">
+              Seuil : <QuantityText value={p.stockMin} unit={p.unit} />
+            </div>
+            {(p.inTransit ?? 0) > 0 && (
+              <div className="text-xs text-info">
+                + <QuantityText value={p.inTransit ?? 0} unit={p.unit} /> en transit
+              </div>
+            )}
+            {showStore && (p.byStore?.length ?? 0) > 0 && (
+              <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-base-content/60">
+                {p.byStore!.map((row) => (
+                  <span key={row.storeId} className="whitespace-nowrap">
+                    {row.storeName} : <QuantityText value={row.stock} />
+                  </span>
+                ))}
               </div>
             )}
           </div>
         ),
       },
       {
-        key: 'category',
-        label: 'Catégorie',
-        render: (p) => <span className="text-sm">{p.categoryName ?? 'Non classé'}</span>,
-      },
-      {
-        key: 'unit',
-        label: 'Unité',
-        hideOnMobile: true,
-        render: (p) => <span className="text-sm">{p.unit}</span>,
-      },
-      {
-        key: 'stock',
-        label: 'Stock',
-        render: (p) => (
-          <QuantityText
-            value={p.stock}
-            unit={p.unit}
-            className={p.isOut ? 'font-semibold text-error' : p.isLow ? 'font-semibold text-warning' : ''}
-          />
-        ),
-      },
-      {
-        key: 'stockMin',
-        label: 'Seuil',
-        hideOnMobile: true,
-        render: (p) => <QuantityText value={p.stockMin} unit={p.unit} />,
-      },
-      {
         key: 'stockValue',
-        label: "Valeur d'achat",
+        label: 'Valeur',
         hideOnMobile: true,
-        render: (p) => <MoneyText value={p.stockValue} />,
-      },
-      {
-        key: 'saleValue',
-        label: 'Valeur de vente',
-        hideOnMobile: true,
-        render: (p) => <MoneyText value={p.saleValue} />,
+        render: (p) => (
+          <div className="text-sm">
+            <MoneyText value={p.stockValue} />
+            <div className="text-xs text-base-content/55">
+              à la vente : <MoneyText value={p.saleValue} />
+            </div>
+          </div>
+        ),
       },
       {
         key: 'state',
         label: 'État',
-        hideOnMobile: true,
         render: (p) =>
           p.isOut ? (
             <Badge tone="error">Rupture</Badge>
@@ -499,7 +512,7 @@ export default function StocksPage() {
           ),
       },
     ],
-    [],
+    [showStore],
   );
 
   /* ── Rendu ────────────────────────────────────────────────────────── */
@@ -538,36 +551,42 @@ export default function StocksPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           <StatCardDelta
             label="Produits suivis"
+            tooltip="Nombre de produits actifs du catalogue suivis en stock dans les magasins affichés."
             tone="primary"
             value={summary?.totalProducts ?? 0}
             hint="Produits actifs"
           />
           <StatCardDelta
             label="Stock total"
+            tooltip="Somme des quantités en stock, toutes unités confondues (pièces, m², kg…). Indicatif : additionner des unités différentes ne donne qu’un ordre de grandeur."
             tone="info"
             value={<QuantityText value={summary?.totalStock ?? 0} />}
             hint="Toutes unités confondues"
           />
           <StatCardDelta
             label="Valeur d'achat"
+            tooltip="Ce que la marchandise en stock a coûté : quantité × prix d’achat. C’est l’argent immobilisé dans le stock."
             tone="primary"
             value={<MoneyText value={summary?.totalStockValue ?? 0} />}
             hint="Stock × prix d'achat"
           />
           <StatCardDelta
             label="Valeur de vente"
+            tooltip="Ce que rapporterait la vente de tout le stock au prix de vente (prix local du magasin s’il existe)."
             tone="success"
             value={<MoneyText value={summary?.totalSaleValue ?? 0} />}
             hint="Stock × prix de vente"
           />
           <StatCardDelta
             label="Stocks faibles"
+            tooltip="Produits dont la quantité a atteint le seuil d’alerte : à racheter ou à faire venir d’un autre magasin (transfert)."
             tone="warning"
             value={summary?.lowStockCount ?? 0}
             hint="Alerte : stock ≤ seuil"
           />
           <StatCardDelta
             label="Ruptures"
+            tooltip="Produits épuisés : ils ne peuvent plus être vendus tant qu’il n’y a pas de réapprovisionnement."
             tone="error"
             value={summary?.outOfStockCount ?? 0}
             hint="Vente bloquée"
@@ -607,15 +626,27 @@ export default function StocksPage() {
             }}
             searchPlaceholder="Rechercher un produit…"
             filters={
-              <FilterSelect
-                value={categoryId}
-                onChange={(value) => {
-                  setCategoryId(value);
-                  setPage(1);
-                }}
-                options={categories}
-                placeholder="Toutes les catégories"
-              />
+              <>
+                <StoreScopeSelect
+                  value={scope}
+                  onChange={(value) => {
+                    setScope(value);
+                    setPage(1);
+                  }}
+                  className="min-h-11 w-full sm:w-52"
+                />
+                <div className="w-full sm:w-52">
+                  <FilterSelect
+                    value={categoryId}
+                    onChange={(value) => {
+                      setCategoryId(value);
+                      setPage(1);
+                    }}
+                    options={categories}
+                    placeholder="Toutes les catégories"
+                  />
+                </div>
+              </>
             }
             secondaryFilters={
               <>
@@ -713,7 +744,15 @@ export default function StocksPage() {
                         setIsHistoryOpen(true);
                       }}
                     />
-                    {canAdjust && (
+                    {canTransfer && (p.isLow || p.isOut) && (
+                      <IconAction
+                        icon="advance"
+                        tone="primary"
+                        label="Demander un transfert depuis un autre magasin"
+                        href={`/transferts/nouveau?productId=${p.id}`}
+                      />
+                    )}
+                    {canAdjust && !showStore && (
                       <IconAction
                         icon="adjust"
                         tone="primary"
@@ -846,7 +885,7 @@ export default function StocksPage() {
           ) : (
             <>
               <ResponsiveTable
-                columns={movementColumns}
+                columns={buildMovementColumns({ showStore })}
                 data={visibleMovements}
                 getRowKey={(m) => m.id}
               />
