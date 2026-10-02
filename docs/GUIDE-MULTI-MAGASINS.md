@@ -137,6 +137,10 @@
   auto-approbation interdite ; hausse au-delà du seuil → `pending` (ou refus si
   décaissée). Champs de date : `jj/mm/aaaa` remplacé par « jj mois aaaa » sur 5 écrans
   (AGENTS.md n° 10).
+- **Produits** (§6.9) : `ProductRow.localStockMin` ajouté ; la modale préremplit le
+  prix et le seuil **du catalogue** (`catalogSalePrice`, `catalogStockMin`) et non les
+  valeurs effectives ; `localPricesAllowed = false` ignore les prix locaux partout
+  (`productColumns`, `salePriceExpr`, `getEffectiveSalePrice`) sans les effacer.
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -400,7 +404,7 @@ L'entrée en stock se fait dans le magasin actif. À ajouter : StoreScopeSelect 
 | **Ajuster** (ligne) | Écart signé + motif obligatoire. Refusé si le stock deviendrait négatif. Pour un comptage complet, préférer **Inventaires**. |
 | Lien **Demander un transfert** (à ajouter, ligne en alerte) | Ouvre `/transferts/nouveau?productId=…`. |
 
-### 6.9 `/produits` ⏳
+### 6.9 `/produits` ✅
 
 - **Permissions :** `products.view/create/update/delete`.
 - **API :**

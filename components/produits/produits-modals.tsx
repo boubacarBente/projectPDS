@@ -24,6 +24,9 @@ import { formatPercent } from '@/lib/format';
 // `import type` uniquement : `lib/products.ts` touche la base et ne doit jamais
 // entrer dans le bundle navigateur.
 import type { CategoryKind, CategoryRow, ProductRow } from '@/lib/products';
+import { useAuth } from '@/components/auth-provider';
+import { useSettings } from '@/app/parametres/page';
+import { formatCurrency } from '@/lib/format';
 
 /** Ligne produit telle que sérialisée par l'API (`createdAt` devient une chaîne). */
 export type ProductView = Omit<ProductRow, 'createdAt'> & { createdAt?: string | null };
@@ -75,8 +78,12 @@ type ProductFormState = {
   salePrice: string;
   stock: string;
   stockMin: string;
+  barcode: string;
   description: string;
   isActive: boolean;
+  /** Réglages du magasin actif — vide = valeur du catalogue. */
+  localSalePrice: string;
+  localStockMin: string;
 };
 
 function emptyProductForm(units: string[]): ProductFormState {
@@ -88,8 +95,11 @@ function emptyProductForm(units: string[]): ProductFormState {
     salePrice: '0',
     stock: '0',
     stockMin: '0',
+    barcode: '',
     description: '',
     isActive: true,
+    localSalePrice: '',
+    localStockMin: '',
   };
 }
 
@@ -99,11 +109,20 @@ function productToForm(product: ProductView): ProductFormState {
     categoryId: product.categoryId ? String(product.categoryId) : '',
     unit: product.unit,
     purchasePrice: String(product.purchasePrice ?? 0),
-    salePrice: String(product.salePrice ?? 0),
+    /*
+     * Valeurs du **catalogue**, pas les valeurs effectives du magasin : avant
+     * correction, un produit qui avait un prix local voyait ce prix recopié
+     * dans le prix du catalogue à l'enregistrement — donc imposé à tous les
+     * magasins.
+     */
+    salePrice: String(product.catalogSalePrice ?? product.salePrice ?? 0),
     stock: String(product.stock ?? 0),
-    stockMin: String(product.stockMin ?? 0),
+    stockMin: String(product.catalogStockMin ?? product.stockMin ?? 0),
+    barcode: product.barcode ?? '',
     description: product.description ?? '',
     isActive: product.isActive,
+    localSalePrice: product.localSalePrice == null ? '' : String(product.localSalePrice),
+    localStockMin: product.localStockMin == null ? '' : String(product.localStockMin),
   };
 }
 
@@ -125,6 +144,11 @@ export function ProductFormModal({
   units: string[];
 }) {
   const isEdit = product !== null;
+  const { device, activeStore } = useAuth();
+  const { settings } = useSettings();
+  // Le catalogue est commun : sur un poste de magasin, seuls les réglages locaux se modifient.
+  const canEditCatalog = device?.mode !== 'store';
+  const localPricesAllowed = settings.localPricesAllowed;
   const [form, setForm] = useState<ProductFormState>(() => emptyProductForm(units));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,21 +181,41 @@ export function ProductFormModal({
       setError('Le nom du produit est obligatoire.');
       return;
     }
+    const localPrice = form.localSalePrice.trim();
+    const localMin = form.localStockMin.trim();
+    if ((localPrice && !(toAmount(localPrice) > 0)) || (localMin && toAmount(localMin) < 0)) {
+      setError('Le prix local doit être positif, et le seuil local positif ou nul (laissez vide pour le catalogue).');
+      return;
+    }
 
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const body: Record<string, unknown> = {
-        name,
-        categoryId: form.categoryId ? Number(form.categoryId) : null,
-        unit: form.unit,
-        purchasePrice: toAmount(form.purchasePrice),
-        salePrice: toAmount(form.salePrice),
-        stockMin: toAmount(form.stockMin),
-        description: form.description.trim() || null,
-        isActive: form.isActive,
-      };
+      const body: Record<string, unknown> = canEditCatalog
+        ? {
+            name,
+            categoryId: form.categoryId ? Number(form.categoryId) : null,
+            unit: form.unit,
+            purchasePrice: toAmount(form.purchasePrice),
+            salePrice: toAmount(form.salePrice),
+            stockMin: toAmount(form.stockMin),
+            barcode: form.barcode.trim() || null,
+            description: form.description.trim() || null,
+            isActive: form.isActive,
+          }
+        : {};
+      // Réglages du magasin actif : envoyés seulement s'ils ont changé.
+      if (isEdit) {
+        const previousPrice = product!.localSalePrice == null ? '' : String(product!.localSalePrice);
+        const previousMin = product!.localStockMin == null ? '' : String(product!.localStockMin);
+        if (localPricesAllowed && localPrice !== previousPrice) body.localSalePrice = localPrice ? toAmount(localPrice) : null;
+        if (localMin !== previousMin) body.localStockMin = localMin ? toAmount(localMin) : null;
+      }
+      if (Object.keys(body).length === 0) {
+        onClose();
+        return;
+      }
       // À la création seulement : le stock initial devient un mouvement `entry`.
       if (!isEdit) {
         body.stock = toAmount(form.stock);
@@ -227,7 +271,7 @@ export function ProductFormModal({
             <input
               className="input input-bordered field-rounded w-full"
               value={form.name}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               placeholder="Ex. Alucobond 4 mm"
               onChange={(event) => set('name', event.target.value)}
             />
@@ -244,7 +288,7 @@ export function ProductFormModal({
             <select
               className="select select-bordered field-rounded w-full"
               value={form.categoryId}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('categoryId', event.target.value)}
             >
               <option value="">Sans catégorie</option>
@@ -260,7 +304,7 @@ export function ProductFormModal({
             <select
               className="select select-bordered field-rounded w-full"
               value={form.unit}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('unit', event.target.value)}
             >
               {unitOptions.map((unit) => (
@@ -279,7 +323,7 @@ export function ProductFormModal({
               inputMode="decimal"
               className="input input-bordered field-rounded w-full tabular"
               value={form.purchasePrice}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('purchasePrice', event.target.value)}
             />
           </FormField>
@@ -292,7 +336,7 @@ export function ProductFormModal({
               inputMode="decimal"
               className="input input-bordered field-rounded w-full tabular"
               value={form.salePrice}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('salePrice', event.target.value)}
             />
           </FormField>
@@ -334,7 +378,7 @@ export function ProductFormModal({
                 inputMode="decimal"
                 className="input input-bordered field-rounded w-full tabular"
                 value={form.stock}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canEditCatalog}
                 onChange={(event) => set('stock', event.target.value)}
               />
             </FormField>
@@ -351,8 +395,18 @@ export function ProductFormModal({
               inputMode="decimal"
               className="input input-bordered field-rounded w-full tabular"
               value={form.stockMin}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('stockMin', event.target.value)}
+            />
+          </FormField>
+
+          <FormField label="Code-barres" hint="Facultatif : permet de retrouver le produit en le scannant.">
+            <input
+              className="input input-bordered field-rounded w-full font-mono"
+              value={form.barcode}
+              disabled={isSubmitting || !canEditCatalog}
+              onChange={(event) => set('barcode', event.target.value)}
+              autoComplete="off"
             />
           </FormField>
 
@@ -361,7 +415,7 @@ export function ProductFormModal({
               className="textarea textarea-bordered field-rounded w-full"
               rows={2}
               value={form.description}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('description', event.target.value)}
             />
           </FormField>
@@ -376,13 +430,64 @@ export function ProductFormModal({
                 type="checkbox"
                 className="toggle toggle-primary"
                 checked={form.isActive}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canEditCatalog}
                 onChange={(event) => set('isActive', event.target.checked)}
               />
               <span className="text-sm">{form.isActive ? 'Actif' : 'Désactivé'}</span>
             </label>
           </FormField>
         </div>
+
+        {isEdit && (
+          <div className="mt-5 rounded-xl border border-primary/25 bg-primary/5 p-4">
+            <h3 className="text-sm font-semibold">Réglages de {activeStore?.name ?? 'ce magasin'}</h3>
+            <p className="mt-1 text-xs text-base-content/60">
+              Ne concernent que ce magasin. Laissez vide pour appliquer la valeur du catalogue.
+            </p>
+            <div className="mt-3 grid gap-4 sm:grid-cols-2">
+              <FormField
+                label="Prix de vente local"
+                hint={
+                  localPricesAllowed
+                    ? `Catalogue : ${formatCurrency(toAmount(form.salePrice))}`
+                    : 'Prix locaux désactivés dans les paramètres : le prix du catalogue s’applique.'
+                }
+              >
+                <input
+                  type="number"
+                  min={0}
+                  step="1"
+                  inputMode="decimal"
+                  className="input input-bordered field-rounded w-full tabular"
+                  value={form.localSalePrice}
+                  placeholder="Prix du catalogue"
+                  disabled={isSubmitting || !localPricesAllowed}
+                  onChange={(event) => set('localSalePrice', event.target.value)}
+                />
+              </FormField>
+              <FormField label="Seuil d’alerte local" hint={`Catalogue : ${form.stockMin || '0'}`}>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.001"
+                  inputMode="decimal"
+                  className="input input-bordered field-rounded w-full tabular"
+                  value={form.localStockMin}
+                  placeholder="Seuil du catalogue"
+                  disabled={isSubmitting}
+                  onChange={(event) => set('localStockMin', event.target.value)}
+                />
+              </FormField>
+            </div>
+          </div>
+        )}
+
+        {!canEditCatalog && (
+          <p className="mt-4 rounded-xl border border-info/30 bg-info/10 px-3 py-2 text-sm">
+            Le catalogue (nom, prix, unité…) est géré au siège. Depuis ce poste, seuls les réglages du
+            magasin se modifient.
+          </p>
+        )}
 
         {error && (
           <p className="mt-4 rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">
@@ -451,6 +556,9 @@ export function CategoryFormModal({
   category: CategoryView | null;
 }) {
   const isEdit = category !== null;
+  // Les catégories sont centrales : verrouillées sur un poste de magasin (le serveur refuse aussi).
+  const { device } = useAuth();
+  const canEditCatalog = device?.mode !== 'store';
   const [form, setForm] = useState<CategoryFormState>(emptyCategoryForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -532,7 +640,7 @@ export function CategoryFormModal({
             <input
               className="input input-bordered field-rounded w-full"
               value={form.name}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               placeholder="Ex. Alucobond"
               onChange={(event) => set('name', event.target.value)}
             />
@@ -546,7 +654,7 @@ export function CategoryFormModal({
             <select
               className="select select-bordered field-rounded w-full"
               value={form.kind}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('kind', event.target.value as CategoryKind)}
             >
               {CATEGORY_KIND_OPTIONS.map((option) => (
@@ -562,7 +670,7 @@ export function CategoryFormModal({
               className="textarea textarea-bordered field-rounded w-full"
               rows={2}
               value={form.description}
-              disabled={isSubmitting}
+              disabled={isSubmitting || !canEditCatalog}
               onChange={(event) => set('description', event.target.value)}
             />
           </FormField>
@@ -573,7 +681,7 @@ export function CategoryFormModal({
                 type="checkbox"
                 className="toggle toggle-primary"
                 checked={form.isActive}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !canEditCatalog}
                 onChange={(event) => set('isActive', event.target.checked)}
               />
               <span className="text-sm">{form.isActive ? 'Active' : 'Désactivée'}</span>

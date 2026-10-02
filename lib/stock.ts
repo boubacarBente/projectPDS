@@ -19,6 +19,7 @@ import { db, schema, rawAll, rawGet, rawRun, withTransaction } from '@/db';
 import { and, eq } from 'drizzle-orm';
 import { DEFAULT_LIST_SORT, type ListSort } from '@/lib/list-sort';
 import { scopeSql, type StoreScope } from '@/lib/stores';
+import { getSettings } from '@/lib/settings';
 
 export type StockMovementType = 'entry' | 'exit' | 'adjustment';
 
@@ -236,8 +237,9 @@ function stockMinExpr(scope: StoreScope): string {
   return `(p.stock_min * ${Math.max(1, scope.length)})`;
 }
 
-function salePriceExpr(scope: StoreScope): string {
-  if (scope.length === 1) {
+/** Prix effectif : local au magasin s'il existe **et** si les prix locaux sont autorisés. */
+function salePriceExpr(scope: StoreScope, allowLocalPrice: boolean): string {
+  if (scope.length === 1 && allowLocalPrice) {
     return `COALESCE((SELECT ps.sale_price FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${Number(scope[0])}), p.sale_price)`;
   }
   return 'p.sale_price';
@@ -290,7 +292,7 @@ export async function listStockProducts(options: {
   const [rows, totalRow] = await Promise.all([
     rawAll<any>(
       `SELECT p.id, p.name, p.unit, p.barcode, p.category_id, p.purchase_price,
-              ${salePriceExpr(scope)} AS sale_price,
+              ${salePriceExpr(scope, (await getSettings()).localPricesAllowed)} AS sale_price,
               c.name AS category_name, c.kind AS category_kind,
               ${stock} AS stock, ${stockMin} AS stock_min, ${inTransitExpr(scope)} AS in_transit
          FROM products p
@@ -436,7 +438,7 @@ export type StockSummary = {
 export async function getStockSummary(scope: StoreScope): Promise<StockSummary> {
   const rows = await rawAll<any>(
     `SELECT ${stockExpr(scope)} AS stock, ${stockMinExpr(scope)} AS stock_min,
-            p.purchase_price, ${salePriceExpr(scope)} AS sale_price, ${inTransitExpr(scope)} AS in_transit
+            p.purchase_price, ${salePriceExpr(scope, (await getSettings()).localPricesAllowed)} AS sale_price, ${inTransitExpr(scope)} AS in_transit
        FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL`,
   );
 
@@ -509,8 +511,9 @@ export async function setLocalProductSettings(
 
 /** Prix de vente effectif d'un produit dans un magasin (prix local sinon catalogue). */
 export async function getEffectiveSalePrice(storeId: number, productId: number): Promise<number> {
+  const allowLocal = (await getSettings()).localPricesAllowed;
   const row = await rawGet<{ price: number }>(
-    `SELECT COALESCE(ps.sale_price, p.sale_price) AS price
+    `SELECT ${allowLocal ? 'COALESCE(ps.sale_price, p.sale_price)' : 'p.sale_price'} AS price
        FROM products p LEFT JOIN product_stocks ps ON ps.product_id = p.id AND ps.store_id = ?
       WHERE p.id = ?`,
     [storeId, productId],

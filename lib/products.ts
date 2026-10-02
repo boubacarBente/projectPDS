@@ -57,8 +57,10 @@ export type ProductRow = {
   catalogStockMin: number;
   /** Prix de vente du catalogue (le `salePrice` peut être un prix local). */
   catalogSalePrice: number;
-  /** Prix local défini pour le magasin consulté, sinon `null`. */
+  /** Prix local défini pour le magasin consulté (et prix locaux autorisés), sinon `null`. */
   localSalePrice: number | null;
+  /** Seuil d'alerte local du magasin consulté, sinon `null` (seuil du catalogue). */
+  localStockMin: number | null;
   barcode: string | null;
   description: string | null;
   isActive: boolean;
@@ -144,21 +146,29 @@ const PRODUCT_FROM = `
   LEFT JOIN categories c ON c.id = p.category_id
 `;
 
-/** Colonnes, avec stock / seuil / prix calculés pour la portée demandée. */
-function productColumns(scope: StoreScope): string {
+/**
+ * Colonnes, avec stock / seuil / prix calculés pour la portée demandée.
+ *
+ * `allowLocalPrice` = paramètre `localPricesAllowed`. Désactivé, le prix du
+ * catalogue s'applique partout : les prix locaux déjà saisis sont **ignorés**
+ * (mais conservés, pour une réactivation). Avant v2, ils continuaient de
+ * s'appliquer : le réglage ne bloquait que la saisie de nouveaux prix.
+ */
+function productColumns(scope: StoreScope, allowLocalPrice: boolean): string {
   const single = scope.length === 1 ? Number(scope[0]) : null;
   const stock = `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
   const localMin = single
     ? `(SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${single})`
     : 'NULL';
-  const localPrice = single
-    ? `(SELECT ps.sale_price FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${single})`
-    : 'NULL';
+  const localPrice =
+    single && allowLocalPrice
+      ? `(SELECT ps.sale_price FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ${single})`
+      : 'NULL';
   const effectiveMin = single ? `COALESCE(${localMin}, p.stock_min)` : `(p.stock_min * ${Math.max(1, scope.length)})`;
   return `
   p.id, p.name, p.category_id, p.unit, p.purchase_price, p.sale_price, p.barcode,
   ${stock} AS stock, ${effectiveMin} AS stock_min, p.stock_min AS catalog_stock_min,
-  ${localPrice} AS local_sale_price,
+  ${localPrice} AS local_sale_price, ${localMin} AS local_stock_min,
   p.description, p.is_active, p.created_at,
   c.name AS category_name, c.kind AS category_kind`;
 }
@@ -186,6 +196,7 @@ function mapProductRow(row: any): ProductRow {
     catalogStockMin: Number(row.catalog_stock_min ?? row.stock_min ?? 0),
     catalogSalePrice,
     localSalePrice,
+    localStockMin: row.local_stock_min == null ? null : Number(row.local_stock_min),
     barcode: row.barcode ?? null,
     description: row.description ?? null,
     isActive: Boolean(row.is_active),
@@ -246,7 +257,7 @@ export async function listProducts(options: ProductListOptions = {}): Promise<{
   const { whereSql, args } = buildProductWhere(options);
 
   const rows = await rawAll<any>(
-    `SELECT ${productColumns(options.scope ?? [])}
+    `SELECT ${productColumns(options.scope ?? [], (await getSettings()).localPricesAllowed)}
      ${PRODUCT_FROM}
      ${whereSql}
      ORDER BY ${sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'p', ['recent', 'name'])}
@@ -273,7 +284,7 @@ export async function listProducts(options: ProductListOptions = {}): Promise<{
 /** Une ligne enrichie, ou `null` (le Route Handler traduit en 404). */
 export async function getProduct(id: number, scope: StoreScope = []): Promise<ProductRow | null> {
   const row = await rawGet<any>(
-    `SELECT ${productColumns(scope)} ${PRODUCT_FROM} WHERE p.id = ?`,
+    `SELECT ${productColumns(scope, (await getSettings()).localPricesAllowed)} ${PRODUCT_FROM} WHERE p.id = ?`,
     [id],
   );
 

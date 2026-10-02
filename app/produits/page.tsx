@@ -48,6 +48,8 @@ import { formatNumber } from '@/lib/format';
 import type { ProductsSummary } from '@/lib/products';
 // Le `SettingsProvider` vit dans ce module (monté par `app/layout.tsx`) : le
 // contexte donne la liste **fermée** des unités et la devise, sans requête.
+import { useAuth } from '@/components/auth-provider';
+import { StoreScopeSelect, useStoreScope } from '@/components/store-scope';
 import { useSettings } from '@/app/parametres/page';
 
 const PAGE_SIZE = 20;
@@ -66,6 +68,10 @@ export default function ProduitsPage() {
   const canCreate = usePermission('products.create');
   const canUpdate = usePermission('products.update');
   const canDelete = usePermission('products.delete');
+  const { device } = useAuth();
+  /** Catalogue commun : créé et désactivé au siège seulement (le serveur renvoie 403 sinon). */
+  const canEditCatalog = device?.mode !== 'store';
+  const { scope, setScope, apply } = useStoreScope('produits');
 
   const currency = settings.currency || 'GNF';
   const units = settings.units.length > 0 ? settings.units : ['pièce'];
@@ -111,7 +117,7 @@ export default function ProduitsPage() {
     setError(null);
 
     try {
-      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+      const params = apply(new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) }));
       if (search.trim()) params.set('search', search.trim());
       if (categoryId) params.set('categoryId', categoryId);
       if (kind) params.set('kind', kind);
@@ -146,13 +152,13 @@ export default function ProduitsPage() {
     } finally {
       if (abortRef.current === controller) setIsLoading(false);
     }
-  }, [page, search, categoryId, kind, lowStockOnly, includeInactive]);
+  }, [page, search, categoryId, kind, lowStockOnly, includeInactive, apply]);
 
   /** Compteurs et catégories : jamais bloquants pour l'affichage de la liste. */
   const loadSummary = useCallback(async () => {
     try {
       const [statsResponse, categoriesResponse] = await Promise.all([
-        fetch('/api/produits/stats', { cache: 'no-store', credentials: 'same-origin' }),
+        fetch(`/api/produits/stats?${apply(new URLSearchParams())}`, { cache: 'no-store', credentials: 'same-origin' }),
         fetch('/api/produits/categories?includeInactive=true&limit=200', {
           cache: 'no-store',
           credentials: 'same-origin',
@@ -167,7 +173,7 @@ export default function ProduitsPage() {
     } catch {
       // Un compteur indisponible ne doit pas transformer la page en écran blanc.
     }
-  }, []);
+  }, [apply]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([load(), loadSummary()]);
@@ -322,11 +328,6 @@ export default function ProduitsPage() {
           ),
       },
       {
-        key: 'unit',
-        label: 'Unité',
-        render: (product) => product.unit,
-      },
-      {
         key: 'purchasePrice',
         label: 'Prix d’achat',
         render: (product) => <MoneyText value={product.purchasePrice} currency={currency} />,
@@ -334,7 +335,13 @@ export default function ProduitsPage() {
       {
         key: 'salePrice',
         label: 'Prix de vente',
-        render: (product) => <MoneyText value={product.salePrice} currency={currency} />,
+        // Prix effectif du magasin consulté ; « local » quand il diffère du catalogue.
+        render: (product) => (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <MoneyText value={product.salePrice} currency={currency} />
+            {product.localSalePrice != null && <Badge tone="info">prix local</Badge>}
+          </span>
+        ),
       },
       {
         key: 'stock',
@@ -374,7 +381,7 @@ export default function ProduitsPage() {
         />
       )}
 
-      {canDelete &&
+      {canDelete && canEditCatalog &&
         (product.isActive ? (
           <IconAction
             icon="deactivate"
@@ -401,6 +408,7 @@ export default function ProduitsPage() {
         description="Catalogue, prix d’achat et de vente, unités et état du stock en temps réel."
         actions={
           <RoleGate action="products.create">
+            {canEditCatalog && (
             <button
               type="button"
               className="btn btn-primary min-h-11 sm:min-h-0"
@@ -408,45 +416,61 @@ export default function ProduitsPage() {
             >
               Nouveau produit
             </button>
+            )}
           </RoleGate>
         }
       />
+
+      {!canEditCatalog && (
+        <div className="alert border border-info/30 bg-info/10 text-sm">
+          <span>
+            <strong>Catalogue géré au siège.</strong> Depuis ce poste, vous pouvez fixer le prix et le
+            seuil d’alerte propres à votre magasin (bouton « Modifier »).
+          </span>
+        </div>
+      )}
 
       {/* Cartes de synthèse — état de chargement : SkeletonCards */}
       {stats ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatCardDelta
             label="Produits actifs"
+            tooltip="Produits du catalogue proposés à la vente. Un produit désactivé reste sur les anciennes factures mais n’apparaît plus dans les listes de vente."
             value={formatNumber(stats.activeProducts)}
             hint={`${formatNumber(stats.totalProducts)} au total, désactivés compris`}
             tone="primary"
           />
           <StatCardDelta
             label="Catégories actives"
+            tooltip="Familles de produits (meubles, peinture, quincaillerie…). La catégorie indique aussi le type : produit fini, matière première ou service."
             value={formatNumber(stats.categoriesCount)}
             hint="Le type est porté par la catégorie"
             tone="info"
           />
           <StatCardDelta
             label="Stock faible"
+            tooltip="Produits dont la quantité en stock a atteint le seuil d’alerte, dans les magasins affichés. Pensez à racheter ou à demander un transfert."
             value={formatNumber(stats.lowStockCount)}
             hint="Seuil d’alerte atteint"
             tone="warning"
           />
           <StatCardDelta
             label="En rupture"
+            tooltip="Produits dont le stock est à zéro (ou en dessous) dans les magasins affichés : ils ne peuvent plus être vendus."
             value={formatNumber(stats.outOfStockCount)}
             hint="Stock nul"
             tone="error"
           />
           <StatCardDelta
             label="Valeur du stock (achat)"
+            tooltip="Ce que la marchandise en stock a coûté : quantité × prix d’achat. C’est l’argent immobilisé dans le stock."
             value={<MoneyText value={stats.stockPurchaseValue} currency={currency} />}
             hint="Stock × prix d’achat"
             tone="neutral"
           />
           <StatCardDelta
             label="Valeur du stock (vente)"
+            tooltip="Ce que rapporterait la vente de tout le stock au prix de vente (prix local du magasin s’il existe)."
             value={<MoneyText value={stats.stockSaleValue} currency={currency} />}
             hint="Stock × prix de vente"
             tone="success"
@@ -487,6 +511,14 @@ export default function ProduitsPage() {
         searchPlaceholder="Rechercher un nom ou une description…"
         filters={
           <>
+            <StoreScopeSelect
+              value={scope}
+              onChange={(value) => {
+                setScope(value);
+                setPage(1);
+              }}
+              className="min-h-11 w-full sm:w-52"
+            />
             <div className="w-full sm:w-52">
               <FilterSelect
                 value={categoryId}
