@@ -141,6 +141,10 @@
   prix et le seuil **du catalogue** (`catalogSalePrice`, `catalogStockMin`) et non les
   valeurs effectives ; `localPricesAllowed = false` ignore les prix locaux partout
   (`productColumns`, `salePriceExpr`, `getEffectiveSalePrice`) sans les effacer.
+- **Ventes** (§6.4) et **en-têtes de documents** : faits (voir README §28.3). Règle
+  commune des listes : `StoreScopeSelect` + `StoreTag` (nom du magasin sous
+  l'identifiant) ; `scopeShowsStore(scope)` dit quand l'afficher.
+- **Exports** : voir README §11.1 (troisième piège, règles pour tout futur export).
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -327,7 +331,7 @@ Fichiers : `components/app-shell.tsx`, `store-switcher.tsx`, `sync-indicator.tsx
 
 ---
 
-### 6.4 `/ventes`, `/ventes/nouvelle`, `/ventes/[id]` ⏳ (adaptations légères)
+### 6.4 `/ventes`, `/ventes/nouvelle`, `/ventes/[id]` ✅
 
 - **Permissions :** `sales.view`, `sales.create`, `sales.update`, `sales.cancel`.
 - **API :**
@@ -343,7 +347,7 @@ Fichiers : `components/app-shell.tsx`, `store-switcher.tsx`, `sync-indicator.tsx
 | **StoreScopeSelect** dans la barre d'outils | Ajoute `store=` à la liste et aux stats. En vue consolidée, colonne **Magasin** (`storeName`). |
 | **Nouvelle vente** | Inchangé. Le catalogue affiche le **stock du magasin actif** et le **prix effectif** (prix local s'il existe). Bouton masqué si le poste est en consultation seule. |
 | **Valider / Annuler / Encaisser** (fiche) | Inchangés. Une facture d'un autre magasin s'affiche en lecture (le serveur renvoie 403 pour une écriture). |
-| **Imprimer / Exporter** la facture | **À faire :** l'en-tête doit afficher nom, adresse, téléphone et pied de ticket **du magasin de la facture** (`store` dans la réponse ; sinon `GET /api/magasins/[storeId]`), puis les informations légales de l'entreprise (paramètres). |
+| **Imprimer / Exporter** la facture | ✅ L'en-tête affiche le magasin de la facture : `GET /api/ventes/[id]` renvoie `store` (`getStoreLetterhead`), appliqué par `applyStoreLetterhead(settings, store)` avant `companyFromSettings` et `exportCompanyFromSettings` (même chose pour reçus, bons d'achat, devis). |
 | Numéro de facture | Généré par le serveur : `{PREFIX}-{STORE}{POSTE}-{AAAA}-{NNNNNN}` (format modifiable dans Paramètres). |
 
 ### 6.5 `/achats` ⏳ (adaptations légères)

@@ -20,6 +20,7 @@ import {
   updateServiceJob,
 } from '@/lib/jobs';
 import { writeAudit } from '@/lib/audit';
+import { getStoreLetterhead } from '@/lib/stores';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -33,7 +34,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
     if (!detail) throw new NotFoundError('Chantier introuvable');
     assertStoreVisible(user, detail.job.storeId);
 
-    return ok(detail);
+    // En-tête du devis : coordonnées du magasin du chantier.
+    return ok({ ...detail, store: await getStoreLetterhead(detail.job.storeId) });
   } catch (error) {
     return fail(error);
   }

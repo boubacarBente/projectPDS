@@ -15,6 +15,7 @@
     "icons": "node scripts/generate-icons.js",
     "verify:routes": "node scripts/verify-routes-e2e.js",
     "verify:export": "node scripts/verify-export-e2e.js",
+    "verify:export-image": "node scripts/verify-export-image.js",
     "verify:purchases": "node scripts/verify-purchases-e2e.js",
     "verify:draft": "node scripts/verify-sales-draft-e2e.js",
     "verify:ui": "node scripts/verify-ui.js",

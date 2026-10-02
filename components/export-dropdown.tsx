@@ -4,47 +4,27 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Tooltip } from '@/components/tooltip';
 
+/**
+ * Photo d'un document pour le partage (WhatsApp, Web Share).
+ *
+ * Passe par la **même** capture que le PDF et l'image (`exportDocumentAsBlob`,
+ * lib/export-document.ts) — invariant 5 d'AGENTS.md. Avant, ce fichier avait sa
+ * propre capture html2canvas : cadre de 1200 px fixe (bande blanche) et texte
+ * décalé vers le bas, que le correctif commun ne couvrait pas.
+ */
 export async function generateInvoiceBlob(
   invoiceHTML: string,
 ): Promise<Blob | null> {
   try {
-    const html2canvasModule = await import('html2canvas');
-    const hc = html2canvasModule.default;
-
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:800px;height:1200px;border:none;';
-    document.body.appendChild(iframe);
-
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!iframeDoc) throw new Error('Cannot access iframe');
-
+    const { exportDocumentAsBlob } = await import('@/lib/export-document');
     const isCompleteDocument = /<(?:!doctype|html)(?:\s|>)/i.test(invoiceHTML);
-
-    iframeDoc.open();
-    iframeDoc.write(isCompleteDocument ? invoiceHTML : `<!DOCTYPE html><html><head><style>
+    const html = isCompleteDocument
+      ? invoiceHTML
+      : `<!DOCTYPE html><html><head><style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: Arial, Helvetica, sans-serif; background: rgb(255,255,255); padding: 40px; }
-    </style></head><body>${invoiceHTML}</body></html>`);
-    iframeDoc.close();
-
-    await Promise.all(
-      Array.from(iframeDoc.images).map((image) => {
-        if (image.complete) return Promise.resolve();
-
-        return new Promise<void>((resolve) => {
-          image.addEventListener('load', () => resolve(), { once: true });
-          image.addEventListener('error', () => resolve(), { once: true });
-        });
-      }),
-    );
-
-    const canvas = await hc(iframeDoc.body, {
-      scale: 2, useCORS: true, allowTaint: true, backgroundColor: 'rgb(255,255,255)', logging: false,
-    });
-
-    document.body.removeChild(iframe);
-
-    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
+      body { font-family: Arial, Helvetica, sans-serif; background: #ffffff; padding: 40px; }
+    </style></head><body>${invoiceHTML}</body></html>`;
+    return await exportDocumentAsBlob(html, isCompleteDocument ? 794 : 800);
   } catch (err) {
     console.error('Invoice image generation error:', err);
     return null;

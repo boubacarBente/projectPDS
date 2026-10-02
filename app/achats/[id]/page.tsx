@@ -62,10 +62,13 @@ import {
 } from '@/lib/export-document';
 import { formatDateShort, formatDateTime } from '@/lib/date-format';
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format';
+import { applyStoreLetterhead, type StoreLetterheadView } from '@/lib/settings-schema';
 
 const DOCUMENT_ID = 'purchase-document';
 
 type LoadedPurchase = {
+  /** Coordonnées du magasin émetteur, pour l'en-tête du document. */
+  store?: StoreLetterheadView;
   invoice: PurchaseInvoiceRow;
   items: PurchaseInvoiceItemRow[];
   payments: PaymentRow[];
@@ -133,6 +136,7 @@ export default function AchatDetailPage() {
           items?: unknown;
           payments?: unknown;
           schedule?: PaymentSchedule | null;
+          store?: StoreLetterheadView;
         };
 
         const invoice = normalizePurchaseRow(payload.invoice);
@@ -154,7 +158,7 @@ export default function AchatDetailPage() {
           isOverdue: Boolean(invoice.dueDate) && invoice.remainingAmount > 0.001,
         };
 
-        setData({ invoice, items, payments, schedule });
+        setData({ invoice, items, payments, schedule, store: payload.store ?? null });
       } catch (caught) {
         if (caught instanceof Error && caught.name === 'AbortError') return;
         setData(null);
@@ -174,7 +178,12 @@ export default function AchatDetailPage() {
 
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
 
-  const company = useMemo(() => companyFromSettings(settings), [settings]);
+  // En-tête au nom du magasin émetteur (cahier §9) — même objet pour l'écran et l'export.
+  const docSettings = useMemo(
+    () => applyStoreLetterhead(settings, (data as { store?: StoreLetterheadView } | null)?.store),
+    [settings, data],
+  );
+  const company = useMemo(() => companyFromSettings(docSettings), [docSettings]);
 
   const documentInvoice = useMemo(
     () => (data ? toPurchaseDocument(data.invoice) : null),
@@ -230,17 +239,20 @@ export default function AchatDetailPage() {
       partial: { label: 'Partiellement payé', tone: 'warning' },
       unpaid: { label: 'À payer', tone: 'danger' },
     };
-    const badge = statusLabels[invoice.paymentStatus] ?? {
+    const paymentBadge = statusLabels[invoice.paymentStatus] ?? {
       label: invoice.paymentStatus,
       tone: 'warning' as const,
     };
+    // Statut du document d'abord : un achat annulé n'a pas d'état de paiement à afficher.
+    const badge = invoice.status === 'cancelled' ? { label: 'Annulé', tone: 'danger' as const } : paymentBadge;
+    const remainingPayable = invoice.status === 'active' && invoice.remainingAmount > 0.001;
 
     return renderExportDocument({
       documentTitle: "BON D'ACHAT",
       documentNumber: invoice.reference,
       documentDate: `Date : ${formatDateShort(invoice.date)}`,
-      badge: invoice.status === 'cancelled' ? { label: 'ANNULÉ', tone: 'danger' } : badge,
-      company: exportCompanyFromSettings(settings),
+      badge,
+      company: exportCompanyFromSettings(docSettings),
       meta: [
         ['Fournisseur', invoice.supplierName || '—'],
         ['Réf. fournisseur', invoice.supplierReference || '—'],
@@ -291,13 +303,13 @@ export default function AchatDetailPage() {
             {
               label: 'Reste à payer',
               value: formatCurrency(invoice.remainingAmount, company.currency),
-              tone: invoice.remainingAmount > 0 ? ('warning' as const) : ('normal' as const),
+              tone: remainingPayable ? ('warning' as const) : ('normal' as const),
             },
           ],
         },
       ],
       notes: invoice.notes,
-      footer: settings.invoiceFooterNote || undefined,
+      footer: docSettings.invoiceFooterNote || undefined,
     });
   }, [data, settings, company.currency]);
 

@@ -631,3 +631,33 @@ export async function getStoreIndicators(storeId: number, from: string, to: stri
     users: Number(row?.users ?? 0),
   };
 }
+
+/**
+ * En-tête de document d'un magasin (facture, reçu, bon d'achat, devis) :
+ * coordonnées **publiques** du magasin émetteur (cahier des charges §9 : « les
+ * modèles de facture doivent afficher les coordonnées de l'établissement
+ * émetteur »). Renvoyé avec chaque document par les routes de détail, pour
+ * qu'un vendeur n'ait pas besoin du droit de lire la fiche du magasin.
+ */
+export type StoreLetterhead = {
+  code: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  receiptFooter: string | null;
+};
+
+export async function getStoreLetterhead(storeId: number | null | undefined): Promise<StoreLetterhead | null> {
+  if (!storeId) return null;
+  const store = await getStore(storeId);
+  if (!store) return null;
+  return {
+    code: store.code,
+    name: store.name,
+    address: store.address,
+    phone: store.phone,
+    email: store.email,
+    receiptFooter: store.receiptFooter,
+  };
+}

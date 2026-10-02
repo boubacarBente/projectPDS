@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, parseId, requireAction, NotFoundError, assertStoreVisible } from '@/lib/api';
 import { getReceiptData } from '@/lib/payments';
+import { getStoreLetterhead } from '@/lib/stores';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -17,7 +18,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
     if (!data) throw new NotFoundError('Reçu introuvable');
     assertStoreVisible(user, data.payment.storeId);
 
-    return ok(data);
+    // En-tête du reçu : coordonnées du magasin qui a encaissé.
+    return ok({ ...data, store: await getStoreLetterhead(data.payment.storeId) });
   } catch (error) {
     return fail(error);
   }

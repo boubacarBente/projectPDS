@@ -108,20 +108,24 @@ export function VentesStatsCards({
         <MiniStat
           label={`Chiffre d'affaires — ${periodLabel.toLowerCase()}`}
           tone="primary"
+          tooltip="Total des ventes validées sur la période, qu’elles soient payées ou non. Les brouillons et les ventes annulées ne comptent pas."
           value={<span className="tabular text-base">{formatCurrency(stats.revenue)}</span>}
         />
         <MiniStat
           label="Encaissé"
           tone="success"
+          tooltip="Argent réellement reçu des clients sur ces ventes. Il peut être inférieur au chiffre d’affaires quand des clients paient à crédit."
           value={<span className="tabular text-base">{formatCurrency(stats.collected)}</span>}
         />
         <MiniStat
           label="Restant dû"
           tone={stats.outstanding > 0.001 ? 'error' : 'success'}
+          tooltip="Ce que les clients doivent encore sur les ventes de la période : chiffre d’affaires moins ce qui a été encaissé."
           value={<span className="tabular text-base">{formatCurrency(stats.outstanding)}</span>}
         />
         <MiniStat
           label="Panier moyen"
+          tooltip="Montant moyen d’une vente : chiffre d’affaires divisé par le nombre de ventes."
           value={<span className="tabular text-base">{formatCurrency(stats.averageBasket)}</span>}
         />
       </div>

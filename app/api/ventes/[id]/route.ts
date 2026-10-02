@@ -18,6 +18,7 @@ import {
   updateSalesInvoice,
   withoutSalesProfit,
 } from '@/lib/sales';
+import { getStoreLetterhead } from '@/lib/stores';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -39,9 +40,11 @@ export async function GET(_request: NextRequest, { params }: Params) {
     if (!detail) throw new NotFoundError('Facture introuvable');
     assertStoreVisible(user, detail.invoice.storeId);
 
-    if (await canViewSalesProfit(user)) return ok(detail);
+    // En-tête du document : coordonnées du magasin émetteur.
+    const store = await getStoreLetterhead(detail.invoice.storeId);
+    if (await canViewSalesProfit(user)) return ok({ ...detail, store });
 
-    return ok({ ...detail, invoice: withoutSalesProfit(detail.invoice) });
+    return ok({ ...detail, store, invoice: withoutSalesProfit(detail.invoice) });
   } catch (error) {
     return fail(error);
   }

@@ -25,6 +25,7 @@ import {
   type QuoteStatus,
   type ServiceJobDetail,
 } from '@/components/chantiers/chantiers-modals';
+import { applyStoreLetterhead, type StoreLetterheadView } from '@/lib/settings-schema';
 
 /* ==================================================================
  * Devis d'un chantier — document imprimable et exportable (README §19).
@@ -109,7 +110,12 @@ export default function ChantierDevisPage() {
 
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
 
-  const company = useMemo(() => companyFromSettings(settings), [settings]);
+  // En-tête au nom du magasin émetteur (cahier §9) — même objet pour l'écran et l'export.
+  const docSettings = useMemo(
+    () => applyStoreLetterhead(settings, (detail as { store?: StoreLetterheadView } | null)?.store),
+    [settings, detail],
+  );
+  const company = useMemo(() => companyFromSettings(docSettings), [docSettings]);
 
   const job = detail?.job ?? null;
   const fileBase = job ? `devis-${job.reference}` : 'devis';
@@ -140,7 +146,7 @@ export default function ChantierDevisPage() {
       documentNumber: job.reference,
       documentDate: job.startDate ? `Début prévu : ${formatDateShort(job.startDate)}` : null,
       badge: quoteLabels[job.quoteStatus] ?? { label: job.quoteStatus, tone: 'neutral' },
-      company: exportCompanyFromSettings(settings),
+      company: exportCompanyFromSettings(docSettings),
       meta: [
         ['Client', job.customerName],
         ['Téléphone', job.customerPhone ?? '—'],
@@ -198,7 +204,12 @@ export default function ChantierDevisPage() {
             ...(job.amountPaid
               ? [{ label: 'Déjà réglé', value: money(job.amountPaid), tone: 'success' as const }]
               : []),
-            ...(job.remainingAmount
+            /*
+             * Un devis n'est une dette qu'une fois **accepté** (et le chantier non
+             * annulé) : avant, un devis simplement envoyé affichait tout son
+             * montant en « Reste à payer », en orange (recette).
+             */
+            ...(job.remainingAmount && job.quoteStatus === 'accepted' && job.status !== 'cancelled'
               ? [{ label: 'Reste à payer', value: money(job.remainingAmount), tone: 'warning' as const }]
               : []),
           ],

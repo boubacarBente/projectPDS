@@ -30,6 +30,7 @@ import { Tooltip } from '@/components/tooltip';
 import { EmptyState, ErrorState, SkeletonTable } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
 import { VentesTable } from '@/components/ventes/ventes-table';
+import { StoreScopeSelect, scopeShowsStore, useStoreScope } from '@/components/store-scope';
 import {
   VentesStatsCards,
   type VentesStats,
@@ -96,6 +97,8 @@ export default function VentesPage() {
    * Le serveur applique la même règle de son côté (`canViewSalesProfit`).
    */
   const canViewProfit = usePermission('balances.view');
+  // Portée magasin (`?store=`) : magasin actif, tous les magasins ou un magasin précis.
+  const { scope, setScope, apply } = useStoreScope('ventes');
 
   /* ------------------------------- État liste ------------------------------ */
   const [invoices, setInvoices] = useState<SalesInvoiceRow[]>([]);
@@ -167,6 +170,7 @@ export default function VentesPage() {
           page: String(page),
           limit: String(PAGE_LIMIT),
         });
+        apply(params);
         if (debouncedSearch) params.set('search', debouncedSearch);
         if (paymentStatus === 'cancelled') {
           params.set('status', 'cancelled');
@@ -219,7 +223,7 @@ export default function VentesPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, debouncedSearch, paymentStatus, customerId, from, to, page, refreshToken]);
+  }, [rehydrated, debouncedSearch, paymentStatus, customerId, from, to, page, refreshToken, apply]);
 
   /* Cartes de statistiques : un agrégat indisponible ne casse pas la liste. */
   useEffect(() => {
@@ -231,7 +235,7 @@ export default function VentesPage() {
     void (async () => {
       setIsStatsLoading(true);
       try {
-        const response = await fetch(`/api/ventes/stats?period=${period}`, {
+        const response = await fetch(`/api/ventes/stats?${apply(new URLSearchParams({ period }))}`, {
           cache: 'no-store',
           credentials: 'same-origin',
           signal: controller.signal,
@@ -267,7 +271,7 @@ export default function VentesPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, period, refreshToken]);
+  }, [rehydrated, period, refreshToken, apply]);
 
   /* Clients pour le filtre — liste tolérante : un échec laisse le filtre vide. */
   useEffect(() => {
@@ -486,6 +490,15 @@ export default function VentesPage() {
          */
         searchPlaceholder="Rechercher un n° de facture ou un client…"
         filters={
+          <>
+          <StoreScopeSelect
+            value={scope}
+            onChange={(value) => {
+              setScope(value);
+              setPage(1);
+            }}
+            className="min-h-11 w-full sm:w-52"
+          />
           <div className="w-full sm:w-52">
             <FilterSelect
               value={paymentStatus}
@@ -497,6 +510,7 @@ export default function VentesPage() {
               placeholder="Toutes les ventes"
             />
           </div>
+          </>
         }
         secondaryFilters={
           <>
@@ -594,6 +608,7 @@ export default function VentesPage() {
           canCancel={canCancel}
           canValidate={canValidate}
           canViewProfit={canViewProfit}
+          showStore={scopeShowsStore(scope)}
           onOpenDetail={openDetailModal}
           onOpenInvoice={openInvoicePage}
           onOpenPayment={openPaymentModal}

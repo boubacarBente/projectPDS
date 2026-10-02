@@ -46,11 +46,13 @@ import {
 import { shareOnWhatsApp } from '@/components/export-dropdown';
 import { formatDateLong, formatDateShort } from '@/lib/date-format';
 import { formatCurrency, formatNumber } from '@/lib/format';
-import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
+import { DEFAULT_COMPANY_LOGO, applyStoreLetterhead, type StoreLetterheadView } from '@/lib/settings-schema';
 
 const DOCUMENT_ID = 'receipt-document';
 
 type ReceiptData = {
+  /** Coordonnées du magasin qui a encaissé, pour l'en-tête du reçu. */
+  store?: StoreLetterheadView;
   payment: PaymentRow;
   documentLabel: string;
   documentNumber: string;
@@ -116,6 +118,7 @@ export default function RecuPage() {
           documentDate?: string | null;
           dueDate?: string | null;
           payments?: unknown[];
+          store?: StoreLetterheadView;
         };
 
         if (!payload.payment) {
@@ -137,6 +140,7 @@ export default function RecuPage() {
           payments: Array.isArray(payload.payments)
             ? payload.payments.map(normalizePaymentRow)
             : [],
+          store: payload.store ?? null,
         });
       } catch (caught) {
         if (caught instanceof Error && caught.name === 'AbortError') return;
@@ -155,8 +159,24 @@ export default function RecuPage() {
     return () => controller.abort();
   }, [load, reloadToken]);
 
-  const company = settings;
+  // En-tête au nom du magasin émetteur (cahier §9) — même objet pour l'écran et l'export.
+  const docSettings = useMemo(
+    () => applyStoreLetterhead(settings, (data as { store?: StoreLetterheadView } | null)?.store),
+    [settings, data],
+  );
+  const company = docSettings;
   const currency = company.currency || 'GNF';
+
+  /*
+   * Sens du paiement : un règlement de facture d'achat est une **sortie**
+   * d'argent vers un fournisseur. Avant, ce document disait « Client »,
+   * « Encaissé par » et « Montant reçu » pour un paiement fournisseur
+   * (constaté en recette sur ACH-2026-000080).
+   */
+  const outgoing = data?.payment.type === 'purchase';
+  const labels = outgoing
+    ? { title: 'Justificatif de paiement', party: 'Fournisseur', from: 'Versé à', by: 'Payé par', amount: 'Montant versé' }
+    : { title: 'Reçu de paiement', party: 'Client', from: 'Reçu de', by: 'Encaissé par', amount: 'Montant reçu' };
 
   const fileBase = data ? `recu-${data.payment.receiptNumber}` : 'recu';
 
@@ -172,19 +192,19 @@ export default function RecuPage() {
     const isPaid = data.remainingAmount <= 0.001;
 
     return renderExportDocument({
-      documentTitle: 'Reçu de paiement',
+      documentTitle: labels.title,
       documentNumber: data.payment.receiptNumber,
       documentDate: `Date : ${formatDateShort(data.payment.date)}`,
       badge: {
         label: isPaid ? 'Soldée' : data.amountPaid > 0.001 ? 'Partiellement réglée' : 'Impayée',
         tone: isPaid ? 'success' : 'warning',
       },
-      company: exportCompanyFromSettings(settings),
+      company: exportCompanyFromSettings(docSettings),
       meta: [
-        ['Client', data.customerName || 'Client comptoir'],
+        [labels.party, data.customerName || (outgoing ? '—' : 'Client comptoir')],
         ['Document réglé', `${data.documentLabel} ${data.documentNumber}`],
         ['Moyen de paiement', data.payment.paymentMethod || '—'],
-        ['Encaissé par', data.payment.userName || '—'],
+        [labels.by, data.payment.userName || '—'],
       ],
       blocks: [
         {
@@ -198,7 +218,7 @@ export default function RecuPage() {
               tone: data.remainingAmount > 0.001 ? 'warning' : 'normal',
             },
             {
-              label: 'Montant reçu',
+              label: labels.amount,
               value: formatCurrency(data.payment.amount, currency),
               tone: 'strong',
             },
@@ -227,7 +247,7 @@ export default function RecuPage() {
           : []),
       ],
       notes: data.payment.notes,
-      footer: `Reçu émis le ${formatDateShort(data.payment.date)} — conservez ce document comme preuve de paiement.`,
+      footer: `${labels.title} émis le ${formatDateShort(data.payment.date)} — conservez ce document comme preuve de paiement.`,
     });
   }, [data, settings, currency]);
 
@@ -264,7 +284,7 @@ export default function RecuPage() {
       `*${company.companyName}*`,
       `Reçu ${data.payment.receiptNumber}`,
       `${data.documentLabel} ${data.documentNumber}`,
-      `Montant reçu : ${formatCurrency(data.payment.amount, currency)}`,
+      `${labels.amount} : ${formatCurrency(data.payment.amount, currency)}`,
       `Reste dû : ${formatCurrency(data.remainingAmount, currency)}`,
     ].join('\n');
 
@@ -272,7 +292,7 @@ export default function RecuPage() {
     try {
       // Même document que le PDF et l'image : partager `element.outerHTML`
       // enverrait des classes Tailwind sans leur feuille de styles.
-      await shareOnWhatsApp(exportHtml, message, `${fileBase}.png`, 'Reçu de paiement');
+      await shareOnWhatsApp(exportHtml, message, `${fileBase}.png`, labels.title);
     } catch (error: any) {
       toast.error(error?.message ?? 'Le partage WhatsApp n’a pas pu être effectué.', {
         autoClose: 10000,
@@ -410,7 +430,7 @@ export default function RecuPage() {
         />
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MiniStat label="Montant reçu" tone="success" value={<MoneyText value={payment.amount} bold />} />
+          <MiniStat label={labels.amount} tone="success" value={<MoneyText value={payment.amount} bold />} />
           <MiniStat label="Total facture" value={<MoneyText value={data.total} />} />
           <MiniStat label="Total payé" value={<MoneyText value={data.amountPaid} />} />
           <MiniStat
@@ -459,7 +479,7 @@ export default function RecuPage() {
 
           <div className="text-right">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-              Reçu de paiement
+              {labels.title}
             </p>
             <p className="tabular text-lg font-bold leading-tight sm:text-xl">
               {payment.receiptNumber}
@@ -473,7 +493,7 @@ export default function RecuPage() {
         <section className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-base-200 px-3 py-2.5">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-base-content/50">
-              Reçu de
+              {labels.from}
             </p>
             <p className="mt-0.5 text-sm font-semibold break-words">{data.customerName}</p>
             <p className="text-xs text-base-content/70">
@@ -493,14 +513,14 @@ export default function RecuPage() {
             <p className="mt-0.5 text-sm font-semibold">{payment.paymentMethod || '—'}</p>
             <p className="text-xs text-base-content/70">{paymentLabel}</p>
             <p className="text-xs text-base-content/70">
-              Caissier : {payment.userName || '—'}
+              {labels.by} : {payment.userName || '—'}
             </p>
           </div>
         </section>
 
         <section className="mt-4 rounded-xl border border-base-200 px-4 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm font-semibold">Montant reçu</span>
+            <span className="text-sm font-semibold">{labels.amount}</span>
             <span className="tabular text-xl font-bold sm:text-2xl">
               {formatCurrency(payment.amount, currency)}
             </span>

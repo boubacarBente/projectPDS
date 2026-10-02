@@ -249,3 +249,46 @@ export function renderDocumentNumber(
     .replace(/--+/g, '-')
     .replace(/^-|-$/g, '');
 }
+
+/**
+ * Coordonnées du magasin émetteur d'un document (champ `store` des routes de
+ * détail ; voir `getStoreLetterhead`, lib/stores.ts).
+ */
+export type StoreLetterheadView = {
+  code: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  receiptFooter: string | null;
+} | null;
+
+/**
+ * En-tête d'un document **au nom du magasin émetteur** (cahier des charges §9).
+ *
+ * S'applique aux paramètres **avant** `companyFromSettings` (affichage) et
+ * `exportCompanyFromSettings` (PDF, image, WhatsApp) : l'écran et l'export
+ * restent ainsi le même document (AGENTS.md, invariant 5). Le nom et le NIF de
+ * l'entreprise ne changent pas ; la ligne « filiale » nomme le magasin, et ses
+ * adresse, téléphone et e-mail remplacent ceux du siège quand ils existent. Le
+ * pied de ticket du magasin précède la note de bas de facture.
+ */
+export function applyStoreLetterhead<
+  T extends {
+    companyBranch: string;
+    companyAddress: string;
+    companyPhone: string;
+    companyEmail: string;
+    invoiceFooterNote: string;
+  },
+>(settings: T, store: StoreLetterheadView | undefined): T {
+  if (!store) return settings;
+  return {
+    ...settings,
+    companyBranch: settings.companyBranch ? `${settings.companyBranch} — ${store.name}` : store.name,
+    companyAddress: store.address || settings.companyAddress,
+    companyPhone: store.phone || settings.companyPhone,
+    companyEmail: store.email || settings.companyEmail,
+    invoiceFooterNote: [store.receiptFooter, settings.invoiceFooterNote].filter((v) => v && v.trim()).join('\n'),
+  };
+}

@@ -301,8 +301,16 @@ export function renderExportDocument(input: ExportDocumentInput): string {
   }
   .doc-number { font-size: 14px; font-weight: 600; margin-top: 2px; }
   .doc-date { font-size: 11px; color: ${COLORS.muted}; margin-top: 2px; }
+  /*
+   * Hauteur fixe = hauteur de ligne, sans rembourrage vertical : html2canvas
+   * place le texte d'un \`inline-block\` à rembourrage vertical trop bas, et le
+   * texte du badge (« Partiellement payée ») débordait sous la pastille dans
+   * l'image exportée (signalé en recette). Ce réglage centre le texte de façon
+   * identique à l'écran, en PDF et en image.
+   */
   .badge {
-    display: inline-block; margin-top: 8px; padding: 3px 10px;
+    display: inline-block; margin-top: 8px; padding: 0 12px;
+    height: 22px; line-height: 20px; white-space: nowrap; vertical-align: middle;
     border-radius: 999px; border: 1px solid ${COLORS.lineStrong};
     font-size: 11px; font-weight: 600;
   }
@@ -447,6 +455,8 @@ async function captureHtml(html: string, width = 794): Promise<HTMLCanvasElement
    */
   iframe.style.cssText = `position:fixed;left:-10000px;top:0;width:${width}px;height:0;border:none;background:${COLORS.surface};`;
   document.body.appendChild(iframe);
+  // Correctif temporaire de la mesure des polices (voir `installFontMetricsFix`).
+  let fontMetricsFix: HTMLStyleElement | null = null;
 
   try {
     const frameDocument = iframe.contentDocument ?? iframe.contentWindow?.document;
@@ -481,6 +491,7 @@ async function captureHtml(html: string, width = 794): Promise<HTMLCanvasElement
     // Seconde passe : le cadre vient de changer de hauteur.
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
+    fontMetricsFix = installFontMetricsFix();
     return await html2canvas(frameDocument.body, {
       scale: 2,
       useCORS: true,
@@ -493,8 +504,49 @@ async function captureHtml(html: string, width = 794): Promise<HTMLCanvasElement
       windowHeight: contentHeight,
     });
   } finally {
+    fontMetricsFix?.remove();
     iframe.remove();
   }
+}
+
+/**
+ * Image témoin que html2canvas 1.4.1 insère pour mesurer la ligne de base des
+ * polices (constante `SMALL_IMAGE` de la bibliothèque).
+ */
+const HTML2CANVAS_PROBE_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/**
+ * ## Piège : texte décalé vers le bas dans les exports (PDF, image, WhatsApp)
+ *
+ * **Symptôme** (recette du 2 oct. 2026) : dans l'image exportée, tout le texte
+ * était dessiné ~7 px trop bas ; visible surtout dans les pastilles (le badge
+ * « Partiellement payée » débordait sous son cadre) et les lignes de tableau
+ * (texte collé au trait du bas). À l'écran, rien.
+ *
+ * **Cause** : html2canvas mesure la ligne de base de chaque police avec une
+ * petite image insérée dans le document **principal** — la page de
+ * l'application, pas notre iframe (`new FontMetrics(document)`). Le reset de
+ * Tailwind y impose `img { display: block }` : l'image n'est plus posée sur la
+ * ligne de base, la mesure est fausse, et chaque texte est décalé d'autant.
+ * Un document capturé hors de l'application (sans Tailwind) est correct, ce
+ * qui rend le défaut invisible dans un test isolé.
+ *
+ * **Correctif** : pendant la capture **seulement**, une règle rend à cette
+ * image témoin son affichage normal (`inline`). Elle vise l'image par son
+ * `src` exact : aucune autre image de l'application n'est touchée, et la règle
+ * est retirée dès la capture terminée.
+ *
+ * **Pour tout futur export** : passer par `captureHtml()` (jamais un appel
+ * direct à html2canvas sur la page), et vérifier le fichier produit avec
+ * `scripts/verify-export-image.js` — un test hors application ne montre pas ce
+ * défaut.
+ */
+function installFontMetricsFix(): HTMLStyleElement {
+  const style = document.createElement('style');
+  style.setAttribute('data-export-fix', 'html2canvas-font-metrics');
+  style.textContent = `img[src="${HTML2CANVAS_PROBE_IMAGE}"] { display: inline !important; }`;
+  document.head.appendChild(style);
+  return style;
 }
 
 /**
@@ -546,6 +598,19 @@ export async function exportDocumentAsImage(html: string, fileName: string): Pro
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+/**
+ * Image PNG d'un document, en mémoire (partage WhatsApp / Web Share).
+ *
+ * Même capture que le PDF et l'image téléchargée (`captureHtml`) : avant,
+ * `components/export-dropdown.tsx` appelait html2canvas de son côté — cadre de
+ * hauteur fixe et texte décalé (voir `installFontMetricsFix`), donc une photo
+ * WhatsApp différente du PDF.
+ */
+export async function exportDocumentAsBlob(html: string, width = 794): Promise<Blob | null> {
+  const canvas = await captureHtml(html, width);
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png'));
 }
 
 /** Nom de fichier sûr, à partir d'une référence de document. */

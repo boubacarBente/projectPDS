@@ -1305,6 +1305,44 @@ relevé client) :
   bruts**. Le même relevé client pesait **13 Mo** ; il pèse **183 Ko** après
   compression, pour un rendu identique.
 
+**Troisième piège — texte décalé vers le bas (recette du 2 octobre 2026).**
+
+- *Symptôme* : dans l'image (et le PDF, et la photo WhatsApp), **tout le texte** était
+  dessiné ~7 px trop bas. Le défaut se voyait surtout dans les pastilles, au cadre
+  serré : le badge « Partiellement payée » débordait sous sa pastille. Les lignes de
+  tableau collaient aussi à leur trait du bas. À l'écran : rien.
+- *Cause* : pour connaître la ligne de base de chaque police, html2canvas insère une
+  petite image témoin dans le document **principal** (la page de l'application, pas
+  l'iframe d'export : `new FontMetrics(document)`). Le reset de Tailwind y impose
+  `img { display: block }`. L'image n'est plus posée sur la ligne de base, la mesure
+  est fausse, et **chaque texte** est décalé d'autant. Piège dans le piège : un test
+  **hors de l'application** (page sans Tailwind) est parfaitement correct.
+- *Solution* (`installFontMetricsFix` dans `lib/export-document.ts`) : pendant la
+  capture **seulement**, une règle `display: inline !important` vise l'image témoin
+  par son `src` exact (constante `SMALL_IMAGE` de html2canvas 1.4.1). Aucune autre
+  image n'est touchée, et la règle est retirée dès la fin de la capture. Le badge a
+  aussi une hauteur fixe égale à sa hauteur de ligne (centrage sûr).
+- *Second écart corrigé au passage* : le partage WhatsApp
+  (`components/export-dropdown.tsx`) avait **sa propre** capture html2canvas (cadre de
+  1200 px fixe, sans le correctif). Il passe désormais par `exportDocumentAsBlob`,
+  donc par la même `captureHtml` que le PDF et l'image.
+
+**Règles pour tout futur export** :
+
+1. Construire le document avec `renderExportDocument` (hexadécimaux uniquement), puis
+   exporter **uniquement** par `exportDocumentAsPDF`, `exportDocumentAsImage` ou
+   `exportDocumentAsBlob`. Ne **jamais** appeler html2canvas ou jsPDF ailleurs : tous
+   les correctifs ci-dessus vivent dans `captureHtml`.
+2. Le statut affiché suit le **document** avant le paiement : une facture annulée
+   dit « Annulée » (badge **et** bloc « Statut »), un brouillon « Brouillon » ; un reste
+   n'est en couleur que s'il est réellement payable (facture active, devis accepté).
+3. Le sens du paiement change les libellés : règlement fournisseur = « Justificatif de
+   paiement », « Fournisseur », « Payé par », « Montant versé ».
+4. Vérifier le **fichier produit**, pas l'écran :
+   `APP_PASSWORD=… OUT=./exports npm run verify:export-image -- /ventes/12 /recus/3`
+   (`scripts/verify-export-image.js` clique « Télécharger » → « Image » dans un vrai
+   Chrome et enregistre les PNG à regarder).
+
 **Documents exportables** : facture (`/ventes/[id]`), reçu (`/recus/[id]`),
 rapport (`/rapports`), bon d'achat (`/achats/[id]`) et **relevé client**
 (`/clients/[id]` — coordonnées, récapitulatif, **solde à payer**, factures
@@ -2244,10 +2282,13 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | **`/inventaires`** (liste, ouverture dans le magasin actif, une catégorie ou tout le magasin) et **`/inventaires/[id]`** (feuille de comptage : recherche, « non comptés » / « avec écart », enregistrement des seules lignes modifiées, validation, annulation). **Règles corrigées** : chaque écart doit être **justifié** avant validation (cahier §7) ; une ligne pas encore comptée affiche le stock **actuel**, pas celui de l'ouverture | ✅ | guide §6.16 |
 | **`/depenses`** : onglets En attente / À décaisser / Décaissées / Rejetées, carte « en attente » cliquable, Approuver (avec « décaisser tout de suite ») / Rejeter (motif) / Décaisser, portée magasin. **Règles corrigées** : seul l'administrateur général est dispensé d'approbation ; personne n'approuve sa propre dépense ; une hausse au-delà du seuil fait repasser « en attente » (ou est refusée si déjà décaissée) | ✅ | guide §6.7 |
 | **`/produits`** : modale en deux niveaux (« Catalogue — tous les magasins » / « Réglages de ce magasin » : prix et seuil locaux), code-barres, mention « prix local », portée magasin, catalogue en consultation sur poste magasin, infobulles. **Défauts corrigés** : la modification recopiait le prix local dans le prix du catalogue ; « prix locaux désactivés » n'empêchait que la saisie (les prix déjà saisis s'appliquaient encore) | ✅ | guide §6.9 |
-| Portée magasin (`StoreScopeSelect` + colonne « Magasin ») sur toutes les listes ; en-têtes de factures et reçus au nom du magasin. **À corriger au passage** : en 1366 px, les tableaux de `/ventes`, `/caisse`, `/stocks`, `/produits`, `/chantiers`, `/rapports`, `/recus` sont trop larges (dernières colonnes cachées) — `verify:ui` le signale | ⏳ | guide §6.3 → §6.13 |
+| Portée magasin sur les listes restantes : `/achats`, `/caisse`, `/stocks`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/recus` (règle : `StoreScopeSelect` dans la barre d'outils, nom du magasin **sous l'identifiant** de la ligne avec `StoreTag` — pas de colonne de plus). **À corriger au passage** : tableaux trop larges en 1366 px sur `/caisse`, `/stocks`, `/chantiers`, `/rapports`, `/recus` — `verify:ui` le signale | ⏳ | guide §6.5 → §6.13 |
 | Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
 | **Jeu de démonstration** (`lib/seed-data.ts`, `npm run demo:seed`) : 3 magasins, 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |
 | **Annulation d'achat** : refus si la marchandise est déjà vendue, dérogation explicite réservée à `stock.adjust` (§28.2 règle 6) | ✅ | `lib/purchases.ts` |
+| **En-tête des documents au nom du magasin émetteur** (facture, reçu, bon d'achat, devis ; écran, PDF, image, WhatsApp) : champ `store` des routes de détail (`getStoreLetterhead`) + `applyStoreLetterhead` | ✅ | §11.1, guide §6.4 |
+| **Exports** : texte décalé vers le bas corrigé (mesure des polices de html2canvas faussée par Tailwind), WhatsApp sur la capture commune, statut du document (annulée / brouillon) et reste payable cohérents, justificatif de paiement fournisseur, devis non accepté sans « reste à payer » ; `npm run verify:export-image` | ✅ | §11.1 |
+| **`/ventes`** : portée magasin, magasin sous le n° de facture, payé sous le total, date sur deux lignes (tient en 1366 px), infobulles des cartes (`MiniStat tooltip`) | ✅ | guide §6.4 |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette

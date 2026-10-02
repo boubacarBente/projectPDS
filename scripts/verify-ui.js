@@ -239,20 +239,20 @@ async function main() {
         WIDTH >= 1024
           ? await evaluate(
               ws,
-              `[...document.querySelectorAll('table')].map((t) => t.parentElement)
-                 .filter((c) => c && c.scrollWidth - c.clientWidth > 1).length`,
+              `Math.max(0, ...[...document.querySelectorAll('table')].map((t) => t.parentElement)
+                 .map((c) => (c ? c.scrollWidth - c.clientWidth : 0)))`,
             )
           : 0;
 
       check(
         screen.path,
-        missing.length === 0 && broken.length === 0 && realErrors.length === 0 && overflow <= 1 && hiddenColumns === 0,
+        missing.length === 0 && broken.length === 0 && realErrors.length === 0 && overflow <= 1 && hiddenColumns <= 1,
         [
           missing.length ? `texte manquant : ${missing.join(', ')}` : '',
           broken.length ? `écran d'erreur : ${broken.join(', ')}` : '',
           realErrors.length ? `console : ${realErrors.slice(0, 3).join(' | ').slice(0, 400)}` : '',
           overflow > 1 ? `débordement horizontal de ${overflow}px` : '',
-          hiddenColumns > 0 ? `${hiddenColumns} tableau(x) trop large(s) : colonnes cachées à droite` : '',
+          hiddenColumns > 1 ? `tableau trop large de ${hiddenColumns}px : colonnes cachées à droite` : '',
         ]
           .filter(Boolean)
           .join(' ; ') || `${text.length} caractères`,

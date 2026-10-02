@@ -64,9 +64,12 @@ import {
 import { shareOnWhatsApp } from '@/components/export-dropdown';
 import { formatDateShort, formatDateTime } from '@/lib/date-format';
 import { formatCurrency, formatNumber, formatQuantity } from '@/lib/format';
+import { applyStoreLetterhead, type StoreLetterheadView } from '@/lib/settings-schema';
 const DOCUMENT_ID = 'vente-invoice-document';
 
 type LoadedInvoice = {
+  /** Coordonnées du magasin émetteur, pour l'en-tête du document. */
+  store?: StoreLetterheadView;
   invoice: SalesInvoiceRow;
   items: SalesInvoiceItemRow[];
   payments: PaymentRow[];
@@ -134,6 +137,7 @@ export default function VenteDetailPage() {
           items?: unknown;
           payments?: unknown;
           schedule?: PaymentSchedule | null;
+          store?: StoreLetterheadView;
         };
 
         const invoice = normalizeInvoiceRow(payload.invoice);
@@ -153,7 +157,7 @@ export default function VenteDetailPage() {
           isOverdue: Boolean(invoice.dueDate) && invoice.remainingAmount > 0.001,
         };
 
-        setData({ invoice, items, payments, schedule });
+        setData({ invoice, items, payments, schedule, store: payload.store ?? null });
       } catch (caught) {
         if (caught instanceof Error && caught.name === 'AbortError') return;
         setData(null);
@@ -175,7 +179,12 @@ export default function VenteDetailPage() {
 
   const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
 
-  const company = useMemo(() => companyFromSettings(settings), [settings]);
+  // En-tête au nom du magasin émetteur (cahier §9) — même objet pour l'écran et l'export.
+  const docSettings = useMemo(
+    () => applyStoreLetterhead(settings, (data as { store?: StoreLetterheadView } | null)?.store),
+    [settings, data],
+  );
+  const company = useMemo(() => companyFromSettings(docSettings), [docSettings]);
 
   const documentInvoice = useMemo(
     () => (data ? toInvoiceDocument(data.invoice) : null),
@@ -224,17 +233,30 @@ export default function VenteDetailPage() {
       partial: { label: 'Partiellement payée', tone: 'warning' },
       unpaid: { label: 'Impayée', tone: 'danger' },
     };
-    const badge = statusLabels[invoice.paymentStatus] ?? {
+    const paymentBadge = statusLabels[invoice.paymentStatus] ?? {
       label: invoice.paymentStatus,
       tone: 'warning' as const,
     };
+    /*
+     * Statut du **document** d'abord : une facture annulée ou en brouillon n'a
+     * pas d'état de paiement à afficher. Avant, le badge disait « ANNULÉE » et le
+     * bloc « Statut » « Partiellement payée » sur le même document (recette).
+     */
+    const badge =
+      invoice.status === 'cancelled'
+        ? { label: 'Annulée', tone: 'danger' as const }
+        : invoice.status === 'draft'
+          ? { label: 'Brouillon — non validée', tone: 'neutral' as const }
+          : paymentBadge;
+    // Un reste n'est à payer que sur une facture active (invariant 9 d'AGENTS.md).
+    const remainingPayable = invoice.status === 'active' && invoice.remainingAmount > 0.001;
 
     return renderExportDocument({
       documentTitle: 'Facture',
       documentNumber: invoice.invoiceNumber,
       documentDate: `Date : ${formatDateShort(invoice.date)}`,
-      badge: invoice.status === 'cancelled' ? { label: 'ANNULÉE', tone: 'danger' } : badge,
-      company: exportCompanyFromSettings(settings),
+      badge,
+      company: exportCompanyFromSettings(docSettings),
       meta: [
         ['Client', invoice.customerName || 'Client comptoir'],
         ['Règlement', invoice.paymentMethod || '—'],
@@ -288,13 +310,13 @@ export default function VenteDetailPage() {
             {
               label: 'Reste à payer',
               value: formatCurrency(invoice.remainingAmount, company.currency),
-              tone: invoice.remainingAmount > 0 ? ('warning' as const) : ('normal' as const),
+              tone: remainingPayable ? ('warning' as const) : ('normal' as const),
             },
           ],
         },
       ],
       notes: invoice.notes,
-      footer: settings.invoiceFooterNote || undefined,
+      footer: docSettings.invoiceFooterNote || undefined,
     });
   }, [data, settings, company.currency]);
 

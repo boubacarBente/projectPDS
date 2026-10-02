@@ -579,15 +579,33 @@ export function MiniStat({
   label,
   value,
   tone = 'neutral',
+  tooltip,
 }: {
   label: string;
   value: ReactNode;
   tone?: BadgeTone;
+  /** Explication en mots simples ; toute la carte devient la commande de l'infobulle. */
+  tooltip?: ReactNode;
 }) {
-  return (
-    <div className={`rounded-xl border px-3 py-2 ${TONE_CLASSES[tone]}`}>
-      <div className="text-[11px] uppercase tracking-wide opacity-80">{label}</div>
+  const content = (
+    <>
+      <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide opacity-80">
+        <span>{label}</span>
+        {tooltip ? (
+          <span className="shrink-0" aria-hidden>
+            <InfoIcon />
+          </span>
+        ) : null}
+      </div>
       <div className="text-sm font-semibold tabular">{value}</div>
-    </div>
+    </>
+  );
+  if (!tooltip) return <div className={`rounded-xl border px-3 py-2 ${TONE_CLASSES[tone]}`}>{content}</div>;
+  return (
+    <Tooltip label={tooltip} maxWidth={CARD_TOOLTIP_MAX_WIDTH}>
+      <div className={`cursor-pointer rounded-xl border px-3 py-2 ${TONE_CLASSES[tone]}`} tabIndex={0}>
+        {content}
+      </div>
+    </Tooltip>
   );
 }

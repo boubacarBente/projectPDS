@@ -64,6 +64,27 @@ export function useStoreScope(screenKey: string) {
 }
 
 /**
+ * Nom du magasin d'une ligne, affiché **sous l'identifiant** (n° de facture,
+ * référence…) quand la liste montre plusieurs magasins. Règle commune à toutes
+ * les listes : une colonne « Magasin » de plus rendait les tableaux trop larges
+ * en 1366 px (dernières colonnes — souvent les actions — cachées).
+ */
+export function StoreTag({ name, show }: { name: string | null | undefined; show: boolean }) {
+  if (!show || !name) return null;
+  return (
+    <span className="block truncate text-xs font-normal text-base-content/55">
+      <span className="sr-only">Magasin : </span>
+      {name}
+    </span>
+  );
+}
+
+/** Vrai si la portée affiche un autre magasin que le magasin actif (consolidé ou magasin choisi). */
+export function scopeShowsStore(scope: StoreScopeValue): boolean {
+  return scope !== 'current';
+}
+
+/**
  * Liste déroulante « Magasin actif / Tous les magasins / <magasin> ».
  * Ne s'affiche que si l'utilisateur a accès à plusieurs magasins.
  */

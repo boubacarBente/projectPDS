@@ -32,6 +32,7 @@ npm run verify:routes  # découvre et appelle toutes les pages et routes d'API :
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
 npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
+npm run verify:export-image # exporte de vrais documents en PNG (OUT=<dossier>) pour les regarder
 npm run verify:ui          # ouvre chaque écran dans Chrome (CDP 9333) : rendu, console, 404, débordement
                            # WIDTH=400 pour le téléphone, SHOTS=<dossier> pour des captures (README §28.4)
 npm run db:migrate         # applique les migrations sans démarrer Next (avant les verify:*)
@@ -68,6 +69,10 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
    iframe invisible. Trois réglages sont fonctionnels, pas cosmétiques :
    `compress: true` sur jsPDF, cadre d'iframe à hauteur nulle puis mesuré, et le **même**
    document pour PDF, image et WhatsApp. Voir README §11.1.
+   **Jamais** de html2canvas ni de jsPDF hors de `captureHtml` : c'est là que vit le
+   correctif du texte décalé vers le bas (`installFontMetricsFix`, mesure des polices
+   faussée par le `img { display: block }` de Tailwind). Un export se vérifie sur le
+   **fichier produit** : `npm run verify:export-image`.
 6. **Le front ne parle qu'à l'API.** Un composant client ne doit **jamais** importer une
    *valeur* depuis un module serveur (`lib/sales.ts`, `lib/payments.ts`, `lib/customers.ts`…
    importent `@/db`) : uniquement `import type`. Sinon `@libsql/client` et `fs` entrent

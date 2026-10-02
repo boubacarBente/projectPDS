@@ -23,6 +23,7 @@ import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
 import { formatCurrency } from '@/lib/format';
 import type { SalesInvoiceRow } from '@/components/ventes/ventes-modals';
+import { StoreTag } from '@/components/store-scope';
 
 /** Une facture reste-t-elle encaissable ? (brouillon, annulée ou soldée ⇒ non) */
 export function canCollect(invoice: SalesInvoiceRow, canPay: boolean): boolean {
@@ -42,6 +43,7 @@ export function VentesTable({
   onOpenCancel,
   onOpenValidate,
   emptyState,
+  showStore = false,
 }: {
   data: SalesInvoiceRow[];
   /** Le squelette est rendu par la page ; ce drapeau évite un état vide trompeur. */
@@ -59,6 +61,8 @@ export function VentesTable({
   onOpenCancel: (invoice: SalesInvoiceRow) => void;
   onOpenValidate: (invoice: SalesInvoiceRow) => void;
   emptyState: ReactNode;
+  /** Plusieurs magasins affichés : le nom du magasin apparaît sous le n° de facture. */
+  showStore?: boolean;
 }) {
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
@@ -66,10 +70,17 @@ export function VentesTable({
     {
       key: 'date',
       label: 'Date',
-      className: 'whitespace-nowrap',
-      render: (invoice: SalesInvoiceRow) => (
-        <span className="tabular text-base-content/70">{formatDateShort(invoice.date)}</span>
-      ),
+      // Jour de la semaine au-dessus de la date : la colonne la plus étroite
+      // possible, pour que le tableau tienne en 1366 px avec les n° longs du siège.
+      render: (invoice: SalesInvoiceRow) => {
+        const [day, date] = formatDateShort(invoice.date).split(' ');
+        return (
+          <span className="block tabular text-base-content/70">
+            <span className="block text-xs text-base-content/50">{day}</span>
+            {date ?? day}
+          </span>
+        );
+      },
     },
     {
       key: 'invoiceNumber',
@@ -81,6 +92,7 @@ export function VentesTable({
           {invoice.status !== 'active' && (
             <StatusBadge status={invoice.status} kind="invoice" />
           )}
+          <StoreTag name={invoice.storeName} show={showStore} />
         </span>
       ),
     },
@@ -97,14 +109,15 @@ export function VentesTable({
       key: 'total',
       label: 'Total',
       className: 'text-right whitespace-nowrap',
-      render: (invoice: SalesInvoiceRow) => <MoneyText value={invoice.total} bold />,
-    },
-    {
-      key: 'amountPaid',
-      label: 'Payé',
-      hideOnMobile: true,
-      className: 'text-right whitespace-nowrap',
-      render: (invoice: SalesInvoiceRow) => <MoneyText value={invoice.amountPaid} />,
+      // Le payé passe sous le total : une colonne de moins, le tableau tient en 1366 px.
+      render: (invoice: SalesInvoiceRow) => (
+        <span className="block">
+          <MoneyText value={invoice.total} bold />
+          <span className="block text-xs text-base-content/55">
+            payé <MoneyText value={invoice.amountPaid} />
+          </span>
+        </span>
+      ),
     },
     {
       key: 'remainingAmount',
@@ -168,7 +181,7 @@ export function VentesTable({
       data={data}
       getRowKey={(invoice) => invoice.id}
       tableClassName="table-sm"
-      actionsClassName="w-44"
+      actionsClassName="w-40"
       actions={(invoice) => (
         <RowActions>
           <IconAction icon="view" label="Voir le détail de la facture" onClick={() => onOpenDetail(invoice)} />

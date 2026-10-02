@@ -7,6 +7,7 @@ import {
   updatePurchaseInvoice,
 } from '@/lib/purchases';
 import { requirePermission } from '@/lib/permissions';
+import { getStoreLetterhead } from '@/lib/stores';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -26,7 +27,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
     if (!detail) throw new NotFoundError('Achat introuvable');
     assertStoreVisible(user, detail.invoice.storeId);
 
-    return ok(detail);
+    // En-tête du bon d'achat : coordonnées du magasin acheteur.
+    return ok({ ...detail, store: await getStoreLetterhead(detail.invoice.storeId) });
   } catch (error) {
     return fail(error);
   }
