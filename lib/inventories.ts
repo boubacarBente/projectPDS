@@ -3,7 +3,7 @@
  *
  * Étapes : **ouverture** (liste des produits à compter, éventuellement limitée
  * à une catégorie) → **comptage** (saisie des quantités constatées, avec
- * justification des écarts) → **validation** (chaque écart devient un
+ * justification des écarts, **obligatoire** pour valider) → **validation** (chaque écart devient un
  * mouvement `adjustment` signé dans le journal de stock du magasin).
  *
  * Le stock théorique de chaque ligne est relevé **au moment où le comptage
@@ -136,18 +136,29 @@ export async function getInventory(
 ): Promise<{ inventory: InventoryRow; items: InventoryItemRow[] } | null> {
   const row = await rawGet<any>(`${INVENTORY_SELECT} WHERE i.id = ?`, [id]);
   if (!row) return null;
+  /*
+   * Ligne pas encore comptée d'un inventaire ouvert : on montre le stock
+   * **actuel**, pas celui relevé à l'ouverture. Sinon, après une vente faite
+   * pendant l'inventaire, la feuille affichait un théorique périmé et un écart
+   * faux pendant la saisie (constaté en recette). Le serveur relève de toute
+   * façon le théorique au moment où le comptage est enregistré.
+   */
   const items = await rawAll<any>(
-    `SELECT ii.*, COALESCE(p.purchase_price, 0) AS purchase_price
-       FROM inventory_items ii LEFT JOIN products p ON p.id = ii.product_id
+    `SELECT ii.*, COALESCE(p.purchase_price, 0) AS purchase_price,
+            CASE WHEN ii.counted_quantity IS NULL AND ? = 'open'
+                 THEN COALESCE(ps.quantity, 0) ELSE ii.expected_quantity END AS shown_expected
+       FROM inventory_items ii
+       LEFT JOIN products p ON p.id = ii.product_id
+       LEFT JOIN product_stocks ps ON ps.product_id = ii.product_id AND ps.store_id = ?
       WHERE ii.inventory_id = ?
       ORDER BY ii.product_name COLLATE NOCASE`,
-    [id],
+    [String(row.status), Number(row.store_id), id],
   );
   return {
     inventory: mapInventory(row),
     items: items.map((i) => {
       const counted = i.counted_quantity == null ? null : round3(Number(i.counted_quantity));
-      const expected = round3(Number(i.expected_quantity ?? 0));
+      const expected = round3(Number(i.shown_expected ?? i.expected_quantity ?? 0));
       return {
         id: Number(i.id),
         productId: Number(i.product_id),
@@ -288,6 +299,26 @@ export async function validateInventory(
 
     const counted = detail.items.filter((item) => item.countedQuantity !== null);
     if (counted.length === 0) throw new ValidationError('Aucun comptage saisi');
+
+    /*
+     * Chaque écart doit être expliqué (cahier des charges §7 : « écarts,
+     * justification et validation »). Un ajustement de stock sans motif est
+     * exactement ce que le contrôle interne doit empêcher : une perte (ou un
+     * surplus) que personne n'a expliquée. Avant v2, la justification était
+     * facultative.
+     */
+    const unexplained = counted.filter(
+      (item) =>
+        Math.abs(Number(item.countedQuantity) - Number(item.expectedQuantity)) > 0.0001 && !item.justification?.trim(),
+    );
+    if (unexplained.length > 0) {
+      throw new ValidationError(
+        `Justifiez chaque écart avant de valider (casse, vol, erreur de saisie…) : ${unexplained
+          .slice(0, 5)
+          .map((item) => item.productName)
+          .join(', ')}${unexplained.length > 5 ? ` et ${unexplained.length - 5} autre(s)` : ''}.`,
+      );
+    }
 
     let adjustments = 0;
     let value = 0;

@@ -128,6 +128,9 @@
 - **Règle corrigée** : annuler un achat déjà revendu est refusé par défaut ; dérogation
   explicite (`allowNegativeStock`, permission `stock.adjust`) proposée par la modale
   d'annulation et journalisée.
+- **Inventaires** (§6.16) : les deux écrans, `components/inventaires/inventory-ui.tsx`.
+  Règles corrigées dans `lib/inventories.ts` : justification **obligatoire** de chaque
+  écart à la validation ; théorique affiché = stock actuel pour une ligne non comptée.
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -135,7 +138,6 @@
 
 | Page | Travail | Section |
 |---|---|---|
-| `/inventaires`, `/inventaires/[id]` | à créer | §6.16 |
 | `/` tableau de bord | filtre magasin, comparaison, alertes | §6.3 |
 | `/ventes`, `/achats`, `/caisse`, `/depenses`, `/stocks`, `/produits`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, colonne « Magasin » en vue consolidée, cas particuliers décrits. Tableaux trop larges en 1366 px à resserrer : ventes, caisse, stocks, produits, chantiers, rapports, reçus | §6.4 → §6.13 |
 | Factures / reçus imprimés | en-tête avec les coordonnées **du magasin** | §6.4 |
@@ -571,7 +573,7 @@ Autres zones de la fiche :
 
 ---
 
-### 6.16 Inventaires ⏳ (à créer)
+### 6.16 Inventaires ✅
 
 #### Liste `/inventaires` (`inventory.view`)
 
@@ -592,7 +594,7 @@ Autres zones de la fiche :
 | Tableau | Produit, stock théorique, **quantité comptée** (saisie ; vide = non compté), écart (vert +, rouge −), valeur de l'écart, justification. |
 | Recherche + filtres | « Non comptés » / « Avec écart ». |
 | Bouton **Enregistrer les comptages** (`count`) | `POST /api/inventaires/[id]` `{ action:'count', counts:[{ itemId, countedQuantity|null, justification? }] }`. Plusieurs passages possibles. |
-| Bouton **Valider l'inventaire** (`validate`, `inventory.validate`) | Confirmation : « Un ajustement de stock sera créé pour chaque écart ». → `{ action:'validate' }` → réponse `result { adjustments, value }`. Erreurs : « Aucun comptage saisi », « Cet inventaire est déjà clôturé ». |
+| Bouton **Valider l'inventaire** (`validate`, `inventory.validate`) | Enregistre d'abord la saisie en cours, puis confirmation : nombre d'écarts et perte / surplus estimé. → `{ action:'validate' }` → réponse `result { adjustments, value }`. Erreurs : « Aucun comptage saisi », « Cet inventaire est déjà clôturé », « Justifiez chaque écart avant de valider… » (la justification est obligatoire pour tout écart). |
 | Bouton **Annuler l'inventaire** (`cancel`) | Motif obligatoire → `{ action:'cancel', reason }` ; le stock n'est pas modifié. |
 | Lecture seule | Si statut ≠ ouvert, ou si le magasin actif n'est pas celui de l'inventaire (message « Cet inventaire appartient à un autre magasin »). |
 
