@@ -12,6 +12,12 @@ import { ROLES, ROLE_LABELS, type Role } from '@/lib/permissions';
 // Turbopack refuse. `UserRow` reste un `import type`, donc effacé au build.
 import { MIN_PASSWORD_LENGTH } from '@/lib/constants';
 import type { UserRow } from '@/lib/users';
+import { useAuth } from '@/components/auth-provider';
+import {
+  StoreAssignmentEditor,
+  useAssignableStores,
+  type AssignmentDraft,
+} from '@/components/utilisateurs/store-assignments';
 
 /**
  * Les quatre modales du module Utilisateurs (README §8) :
@@ -36,6 +42,8 @@ export type UserFormValues = {
   password: string;
   role: Role;
   phone: string;
+  /** Création uniquement : magasins affectés (`POST /api/users` → `stores`). */
+  stores: AssignmentDraft[];
 };
 
 const EMPTY_FORM: UserFormValues = {
@@ -44,6 +52,7 @@ const EMPTY_FORM: UserFormValues = {
   password: '',
   role: 'seller',
   phone: '',
+  stores: [],
 };
 
 type Props = {
@@ -55,7 +64,7 @@ type Props = {
   /** 2. Modification — `null` hors modale */
   editingUser: UserRow | null;
   onEditClose: () => void;
-  onEditSubmit: (id: number, values: Omit<UserFormValues, 'password'>) => Promise<void>;
+  onEditSubmit: (id: number, values: Omit<UserFormValues, 'password' | 'stores'>) => Promise<void>;
   isEditing: boolean;
   /** 3. Changement de mot de passe — `null` hors modale */
   passwordUser: UserRow | null;
@@ -157,6 +166,10 @@ function UserFormModal({
 }) {
   const [form, setForm] = useState<UserFormValues>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+  // Seul l'administrateur général attribue le rôle Administrateur (le serveur le revérifie).
+  const { allStores, activeStoreId } = useAuth();
+  const roleChoices = ROLES.filter((role) => allStores || role !== 'admin' || user?.role === 'admin');
+  const { stores, error: storesError } = useAssignableStores(isOpen && mode === 'create');
 
   // Le formulaire se réamorce à chaque ouverture (et à chaque cible) : rouvrir
   // la modale ne doit jamais réafficher la saisie précédente.
@@ -171,10 +184,15 @@ function UserFormModal({
             role: user.role,
             phone: user.phone ?? '',
             password: '',
+            stores: [],
           }
-        : EMPTY_FORM,
+        : // Par défaut, le nouveau compte travaille dans le magasin actif.
+          {
+            ...EMPTY_FORM,
+            stores: activeStoreId ? [{ storeId: activeStoreId, isManager: false, startsAt: null, endsAt: null }] : [],
+          },
     );
-  }, [isOpen, mode, user]);
+  }, [isOpen, mode, user, activeStoreId]);
 
   const set = <K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) =>
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -184,6 +202,9 @@ function UserFormModal({
     if (!form.username.trim()) return setError("L'identifiant de connexion est obligatoire");
     if (mode === 'create' && form.password.length < MIN_PASSWORD_LENGTH) {
       return setError(`Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères`);
+    }
+    if (mode === 'create' && form.role !== 'admin' && form.stores.length === 0) {
+      return setError('Affectez ce compte à au moins un magasin');
     }
     setError(null);
     await onSubmit({ ...form, name: form.name.trim(), username: form.username.trim().toLowerCase() });
@@ -264,7 +285,7 @@ function UserFormModal({
               onChange={(event) => set('role', event.target.value as Role)}
               disabled={isSubmitting}
             >
-              {ROLES.map((role) => (
+              {roleChoices.map((role) => (
                 <option key={role} value={role}>
                   {ROLE_LABELS[role]}
                 </option>
@@ -285,10 +306,31 @@ function UserFormModal({
           </FormField>
         </div>
 
+        {mode === 'create' && (
+          <FormField
+            label="Magasins affectés"
+            required={form.role !== 'admin'}
+            hint="Le compte ne pourra travailler que dans les magasins cochés. Modifiable ensuite avec le bouton « Magasins » de la liste."
+          >
+            {storesError ? (
+              <p className="text-sm text-error">{storesError}</p>
+            ) : stores === null ? (
+              <span className="loading loading-spinner loading-sm" />
+            ) : (
+              <StoreAssignmentEditor
+                stores={stores}
+                value={form.stores}
+                onChange={(next) => set('stores', next)}
+                disabled={isSubmitting}
+              />
+            )}
+          </FormField>
+        )}
+
         {mode === 'edit' && (
           <p className="rounded-xl border border-base-200 bg-base-200/60 px-3 py-2 text-xs text-base-content/60">
-            Le mot de passe ne se modifie pas ici : utilisez « Changer le mot de passe », qui passe par
-            une route dédiée et n’est jamais journalisé.
+            Le mot de passe ne se modifie pas ici : utilisez le bouton « Changer le mot de passe »
+            de la liste. Les magasins du compte se modifient avec le bouton « Magasins ».
           </p>
         )}
 

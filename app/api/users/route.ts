@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
 
     if (toBool(params.get('stats'), false)) {
-      return ok(await getUserStats());
+      return ok(await getUserStats(scopeStoreIds));
     }
 
     const { page, limit } = parsePagination(params);

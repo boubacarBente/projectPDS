@@ -2230,11 +2230,11 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | Connexion multi-magasins, sélecteur de magasin actif, indicateur de synchro, page `/synchronisation` | ✅ | guide §6.1, §6.2, §6.17 |
 | **`/parametres`** : ancienne synchro retirée, préfixes transfert/inventaire, aperçu exact du numéro, carte « Règles multi-magasins », sauvegarde automatique du poste, verrouillage sur poste magasin | ✅ | guide §6.18 |
 | **`/magasins`** (tableau comparatif + total réseau) et **`/magasins/[id]`** (indicateurs sur période, informations, équipe, activité, suspendre / réactiver / archiver, « Travailler dans ce magasin », raccourcis filtrés) | ✅ | guide §6.14 |
-| `/utilisateurs` : affectations aux magasins | ⏳ | guide §6.19 |
+| **`/utilisateurs`** : colonne et filtre « Magasins », affectations (cases + gérant + période) à la création et par le bouton « Magasins », rôle Administrateur réservé à l'administrateur général, comptes d'administrateur non modifiables par un gérant, consultation seule sur poste magasin ; compteurs bornés au périmètre du gérant ; **historique** filtrable par magasin | ✅ | guide §6.19 |
 | `/transferts`, `/transferts/nouveau`, `/transferts/[id]` | ⏳ | guide §6.15 |
 | `/inventaires`, `/inventaires/[id]` | ⏳ | guide §6.16 |
 | `/depenses` : circuit d'approbation ; `/produits` : prix et seuil locaux | ⏳ | guide §6.7, §6.9 |
-| Portée magasin (`StoreScopeSelect` + colonne « Magasin ») sur toutes les listes ; en-têtes de factures et reçus au nom du magasin | ⏳ | guide §6.3 → §6.13 |
+| Portée magasin (`StoreScopeSelect` + colonne « Magasin ») sur toutes les listes ; en-têtes de factures et reçus au nom du magasin. **À corriger au passage** : en 1366 px, les tableaux de `/ventes`, `/caisse`, `/stocks`, `/produits`, `/chantiers`, `/rapports`, `/recus` sont trop larges (dernières colonnes cachées) — `verify:ui` le signale | ⏳ | guide §6.3 → §6.13 |
 | Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
@@ -2244,7 +2244,8 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 - **`npm run verify:ui`** (`scripts/verify-ui.js`) — lance son propre Chrome sans
   interface (port CDP 9333, profil jetable), se connecte, ouvre chaque écran et
   échoue sur : texte attendu absent, erreur de console, écran d'erreur ou 404,
-  **débordement horizontal**. `WIDTH=400` pour le rendu téléphone, `SHOTS=<dossier>`
+  **débordement horizontal**, et (en largeur ≥ 1024 px) **tableau trop large** dont
+  les dernières colonnes seraient cachées. `WIDTH=400` pour le rendu téléphone, `SHOTS=<dossier>`
   pour des captures. Exemple :
   `APP_PASSWORD=… WIDTH=400 SHOTS=./captures npm run verify:ui -- /magasins /magasins/1`.
   Sous Git Bash, préfixer par `MSYS_NO_PATHCONV=1` (sinon `/magasins` devient un

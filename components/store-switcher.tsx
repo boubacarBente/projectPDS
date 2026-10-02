@@ -47,7 +47,10 @@ export function StoreSwitcher({ collapsed = false }: { collapsed?: boolean }) {
       ) : (
         <select
           id="store-switcher"
-          className="select select-sm w-full"
+          // Couleurs de la barre latérale : le texte de la barre est clair, une liste
+          // au fond blanc par défaut paraissait vide (texte blanc sur blanc).
+          className="select select-sm w-full border-0 font-medium"
+          style={{ backgroundColor: 'var(--sidebar-active)', color: 'var(--sidebar-text)' }}
           value={activeStoreId ?? ''}
           disabled={busy}
           onChange={async (event) => {
@@ -63,9 +66,13 @@ export function StoreSwitcher({ collapsed = false }: { collapsed?: boolean }) {
           }}
           aria-label="Changer de magasin actif"
         >
-          {activeStoreId === null && <option value="">Choisir un magasin…</option>}
+          {activeStoreId === null && (
+            <option value="" className="bg-base-100 text-base-content">
+              Choisir un magasin…
+            </option>
+          )}
           {stores.map((store) => (
-            <option key={store.id} value={store.id}>
+            <option key={store.id} value={store.id} className="bg-base-100 text-base-content">
               {store.name}
               {store.kind === 'headquarters' ? ' (siège)' : ''}
               {store.status !== 'active' ? ' — suspendu' : ''}

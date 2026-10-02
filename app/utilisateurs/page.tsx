@@ -16,11 +16,13 @@ import {
   ErrorState,
   SkeletonCards,
   SkeletonTable,
+  StatCardDelta,
 } from '@/components/design-system';
-import { MetricCard } from '@/components/metric-card';
 import { UserModals, type UserFormValues } from '@/components/utilisateurs/utilisateurs-modals';
 import { PermissionsEditorModal } from '@/components/utilisateurs/permissions-editor';
+import { StoreAssignmentsModal, useAssignableStores } from '@/components/utilisateurs/store-assignments';
 import { usePermission } from '@/components/role-gate';
+import { useAuth } from '@/components/auth-provider';
 import { formatDateTime } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
 import { ROLES, ROLE_LABELS, permissionsOf, type Action, type Role } from '@/lib/permissions';
@@ -136,8 +138,8 @@ export default function UtilisateursPage() {
         />
         <Card>
           <EmptyState
-            title="Accès réservé à l’administrateur"
-            description="La gestion des utilisateurs est réservée au rôle Administrateur (README §17.2). Le menu est filtré par rôle, et les API vérifient le droit de leur côté."
+            title="Accès réservé"
+            description="La gestion des comptes est réservée à l’administrateur et aux gérants qui en ont reçu le droit. Demandez-le à votre administrateur si vous en avez besoin."
           />
         </Card>
       </div>
@@ -156,6 +158,8 @@ function UtilisateursContent() {
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('');
   const [inactiveOnly, setInactiveOnly] = useState(false);
+  /** Filtre magasin (`?storeId=`) : chaîne vide = tous les magasins visibles. */
+  const [storeFilter, setStoreFilter] = useState('');
   const [page, setPage] = useState(1);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -177,6 +181,24 @@ function UtilisateursContent() {
    * par action, entre « hérité du rôle », « autorisé » et « refusé ».
    */
   const [permissionsUser, setPermissionsUser] = useState<UserRow | null>(null);
+  const [storesUser, setStoresUser] = useState<UserRow | null>(null);
+
+  const { device, allStores } = useAuth();
+  /*
+   * Les comptes sont des données centrales : sur un poste de magasin, ils
+   * arrivent du siège par la synchronisation et ne se modifient pas ici (le
+   * serveur renvoie 403). On garde la consultation.
+   */
+  const canEditCentral = device?.mode !== 'store';
+  const { stores: storeOptions } = useAssignableStores(true);
+  /** Un gérant ne modifie pas un compte administrateur (le serveur le refuse aussi). */
+  const canManageRow = (target: UserRow) => canEditCentral && (allStores || target.role !== 'admin');
+
+  // Lien « Gérer les affectations » de la fiche magasin : `/utilisateurs?storeId=<id>`.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('storeId');
+    if (fromUrl && /^\d+$/.test(fromUrl)) setStoreFilter(fromUrl);
+  }, []);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -207,6 +229,7 @@ function UtilisateursContent() {
       if (search.trim()) params.set('search', search.trim());
       if (role) params.set('role', role);
       if (inactiveOnly) params.set('inactive', 'true');
+      if (storeFilter) params.set('storeId', storeFilter);
 
       setIsLoading(true);
       setLoadError(null);
@@ -235,7 +258,7 @@ function UtilisateursContent() {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [rehydrated, search, role, inactiveOnly, page, refreshToken]);
+  }, [rehydrated, search, role, inactiveOnly, storeFilter, page, refreshToken]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -302,7 +325,7 @@ function UtilisateursContent() {
     }
   };
 
-  const handleEdit = async (id: number, values: Omit<UserFormValues, 'password'>) => {
+  const handleEdit = async (id: number, values: Omit<UserFormValues, 'password' | 'stores'>) => {
     setIsEditing(true);
     try {
       const response = await fetch(`/api/users/${id}`, {
@@ -367,12 +390,13 @@ function UtilisateursContent() {
       key: 'name',
       label: 'Nom',
       primary: true,
-      render: (user) => <span className="font-semibold">{user.name}</span>,
-    },
-    {
-      key: 'username',
-      label: 'Identifiant',
-      render: (user) => <span className="font-mono text-xs sm:text-sm">{user.username}</span>,
+      // L'identifiant est sous le nom : une colonne de moins, les actions restent visibles.
+      render: (user) => (
+        <span className="block min-w-0">
+          <span className="block font-semibold">{user.name}</span>
+          <span className="block font-mono text-xs text-base-content/60">{user.username}</span>
+        </span>
+      ),
     },
     {
       key: 'role',
@@ -382,10 +406,21 @@ function UtilisateursContent() {
       ),
     },
     {
-      key: 'phone',
-      label: 'Téléphone',
-      hideOnMobile: true,
-      render: (user) => <span className="tabular-nums">{user.phone ?? '—'}</span>,
+      key: 'stores',
+      label: 'Magasins',
+      render: (user) =>
+        (user.stores ?? []).length === 0 ? (
+          <span className="text-base-content/50">{user.role === 'admin' ? 'Tous (administrateur)' : 'Aucun'}</span>
+        ) : (
+          <span className="flex flex-wrap gap-1">
+            {(user.stores ?? []).map((store) => (
+              <Badge key={store.id} tone={store.isManager ? 'primary' : 'neutral'}>
+                {store.code}
+                {store.isManager ? ' · gérant' : ''}
+              </Badge>
+            ))}
+          </span>
+        ),
     },
     {
       key: 'lastLoginAt',
@@ -407,14 +442,22 @@ function UtilisateursContent() {
   ];
 
   const isEmpty = !isLoading && !loadError && users.length === 0;
-  const hasFilters = Boolean(search.trim()) || Boolean(role) || inactiveOnly;
+  const hasFilters = Boolean(search.trim()) || Boolean(role) || inactiveOnly || Boolean(storeFilter);
 
   return (
     <div className="space-y-5">
+      {!canEditCentral && (
+        <div className="alert border border-info/30 bg-info/10 text-sm">
+          <span>
+            <strong>Comptes gérés au siège.</strong> Ce poste de magasin affiche les comptes en
+            consultation ; les créations et modifications se font sur le poste du siège.
+          </span>
+        </div>
+      )}
       <PageHeader
         eyebrow="Administration"
         title="Utilisateurs"
-        description="Comptes, rôles et droits d’accès. Chaque compte a un identifiant unique ; les mots de passe sont hachés (scrypt salé) et ne sont jamais affichés."
+        description="Comptes, rôles, magasins affectés et droits d’accès. Les mots de passe sont chiffrés : personne, pas même l’administrateur, ne peut les lire."
         actions={
           <>
             <Link href="/utilisateurs/historique" className="btn btn-ghost min-h-11">
@@ -434,6 +477,7 @@ function UtilisateursContent() {
               </svg>
               Historique des actions
             </Link>
+            {canEditCentral && (
             <button
               type="button"
               className="btn btn-primary min-h-11"
@@ -451,6 +495,7 @@ function UtilisateursContent() {
               </svg>
               Nouvel utilisateur
             </button>
+            )}
           </>
         }
       />
@@ -460,25 +505,32 @@ function UtilisateursContent() {
         <SkeletonCards count={4} />
       ) : stats ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
+          <StatCardDelta
             label="Utilisateurs"
             value={formatNumber(stats.totalUsers)}
             hint="Comptes enregistrés, actifs et inactifs"
+            tooltip="Nombre total de comptes créés dans l’application (ceux que vous pouvez gérer), y compris les comptes désactivés. Un compte n’est jamais supprimé, pour garder l’historique de ce qu’il a fait."
           />
-          <MetricCard
+          <StatCardDelta
             label="Comptes actifs"
             value={formatNumber(stats.activeUsers)}
             hint="Autorisés à se connecter"
+            tone="success"
+            tooltip="Comptes qui peuvent se connecter aujourd’hui. Chacun ne voit que les magasins qui lui sont affectés."
           />
-          <MetricCard
+          <StatCardDelta
             label="Comptes désactivés"
             value={formatNumber(stats.inactiveUsers)}
             hint="Conservés pour l’historique, réactivables"
+            tone="neutral"
+            tooltip="Comptes bloqués : ils ne peuvent plus se connecter (départ d’un employé, par exemple). Leurs ventes et opérations restent visibles et on peut les réactiver à tout moment."
           />
-          <MetricCard
+          <StatCardDelta
             label="Administrateurs actifs"
             value={formatNumber(stats.administrators)}
             hint="Au moins un doit rester actif à tout moment"
+            tone="warning"
+            tooltip="Comptes qui ont tous les droits sur tous les magasins. L’application refuse de désactiver le dernier administrateur, pour qu’il reste toujours quelqu’un capable de tout gérer."
           />
           <div className="sm:col-span-2 lg:col-span-4">
             <Card>
@@ -502,17 +554,16 @@ function UtilisateursContent() {
       {/* Encart pédagogique : masquer n'est pas protéger (README §5.4) */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="border-info/30 bg-info/5">
-          <h2 className="text-base font-semibold">Le menu est filtré par rôle — les API vérifient aussi</h2>
+          <h2 className="text-base font-semibold">Rôles, magasins et droits</h2>
           <p className="mt-2 text-sm leading-6 text-base-content/70">
-            Un vendeur ne voit ni <em>Utilisateurs</em>, ni <em>Paramètres</em>, ni{' '}
-            <em>Synchronisation</em> dans le menu. Ce filtrage n’est qu’un confort : chaque requête est
-            revérifiée côté serveur par <span className="font-mono text-xs">requireAction()</span>.{' '}
-            <strong>Masquer n’est pas protéger.</strong> Modifier l’adresse d’une page protégée dans le
-            navigateur ne donne donc aucun droit supplémentaire.
+            Chaque compte a un <strong>rôle</strong> (ce qu’il peut faire) et des <strong>magasins</strong>{' '}
+            (où il peut le faire). Un vendeur de Kaloum ne voit ni les ventes ni la caisse de Matoto. Le
+            menu n’affiche que ce que le compte a le droit d’utiliser, et l’application revérifie chaque
+            droit à chaque opération : changer l’adresse d’une page ne donne aucun accès supplémentaire.
           </p>
           <p className="mt-2 text-sm leading-6 text-base-content/70">
-            Le journal des actions consigne la création, la modification, la désactivation et la
-            réinitialisation de mot de passe de chaque compte.
+            L’historique des actions garde la trace de la création, de la modification, de la
+            désactivation, des changements de magasins et des mots de passe réinitialisés.
           </p>
         </Card>
 
@@ -523,14 +574,13 @@ function UtilisateursContent() {
           </h2>
           {!role ? (
             <p className="mt-2 text-sm text-base-content/60">
-              Choisissez un rôle dans le filtre « Rôle » pour afficher la liste exacte de ses
-              permissions (tableau §17.2 du cahier des charges).
+              Choisissez un rôle dans le filtre « Rôle » pour afficher la liste exacte de ce
+              qu’il autorise.
             </p>
           ) : (
             <>
               <p className="mt-2 text-sm text-base-content/60">
-                {selectedRolePermissions?.length ?? 0} permission(s) accordée(s) via{' '}
-                <span className="font-mono text-xs">permissionsOf()</span> :
+                {selectedRolePermissions?.length ?? 0} droit(s) accordé(s) à ce rôle :
               </p>
               <ul className="mt-3 flex flex-wrap gap-2">
                 {(selectedRolePermissions ?? []).map((label) => (
@@ -564,6 +614,19 @@ function UtilisateursContent() {
                 placeholder="Tous les rôles"
               />
             </div>
+            {(storeOptions ?? []).length > 1 && (
+              <div className="w-full sm:w-56">
+                <FilterSelect
+                  value={storeFilter}
+                  onChange={(value) => {
+                    setStoreFilter(value);
+                    setPage(1);
+                  }}
+                  options={(storeOptions ?? []).map((store) => ({ value: String(store.id), label: store.name }))}
+                  placeholder="Tous les magasins"
+                />
+              </div>
+            )}
             <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border-2 border-base-300 bg-base-200/50 px-3 text-sm">
               <input
                 type="checkbox"
@@ -613,6 +676,7 @@ function UtilisateursContent() {
                     setSearch('');
                     setRole('');
                     setInactiveOnly(false);
+                    setStoreFilter('');
                     setPage(1);
                   } else {
                     setIsCreateOpen(true);
@@ -631,16 +695,27 @@ function UtilisateursContent() {
           getRowKey={(user) => user.id}
           actions={(user) => (
             <RowActions>
-              <IconAction
-                icon="edit"
-                label={`Modifier ${user.name}`}
-                onClick={() => setEditingUser(user)}
-              />
-              <IconAction
-                icon="key"
-                label={`Changer le mot de passe de ${user.name}`}
-                onClick={() => setPasswordUser(user)}
-              />
+              {canManageRow(user) && (
+                <IconAction
+                  icon="edit"
+                  label={`Modifier ${user.name}`}
+                  onClick={() => setEditingUser(user)}
+                />
+              )}
+              {canManageRow(user) && (
+                <IconAction
+                  icon="store"
+                  label={`Magasins de ${user.name}`}
+                  onClick={() => setStoresUser(user)}
+                />
+              )}
+              {canManageRow(user) && (
+                <IconAction
+                  icon="key"
+                  label={`Changer le mot de passe de ${user.name}`}
+                  onClick={() => setPasswordUser(user)}
+                />
+              )}
               <IconAction
                 icon="shield"
                 label={
@@ -650,19 +725,23 @@ function UtilisateursContent() {
                 }
                 onClick={() => setPermissionsUser(user)}
               />
+              {canManageRow(user) && (
               <IconAction
                 icon={user.isActive ? 'deactivate' : 'activate'}
                 tone={user.isActive ? 'danger' : 'success'}
                 label={user.isActive ? `Désactiver ${user.name}` : `Réactiver ${user.name}`}
                 onClick={() => setStatusUser(user)}
               />
+              )}
             </RowActions>
           )}
-          actionsClassName="w-44"
+          actionsClassName="w-56"
         />
       )}
 
       <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+
+      <StoreAssignmentsModal user={storesUser} onClose={() => setStoresUser(null)} onSaved={reload} />
 
       <PermissionsEditorModal
         isOpen={permissionsUser !== null}

@@ -117,6 +117,10 @@
   `useStoreScope` qui lit `?store=<id>|all` dans l'URL (raccourcis de la fiche magasin).
 - **Infobulles** : `StatCardDelta` accepte `tooltip` ; chaque carte d'indicateur explique
   son chiffre en mots simples (règle pour toutes les pages).
+- **`/utilisateurs`** et **historique** (§6.19) : voir la fiche. Composant
+  `components/utilisateurs/store-assignments.tsx` (éditeur + modale d'affectations).
+  Correctif serveur : `GET /api/users?stats=true` est borné au périmètre du gérant.
+- **Sélecteur de magasin actif** (barre latérale) : texte blanc sur fond blanc corrigé.
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -126,9 +130,8 @@
 |---|---|---|
 | `/transferts`, `/transferts/nouveau`, `/transferts/[id]` | à créer | §6.15 |
 | `/inventaires`, `/inventaires/[id]` | à créer | §6.16 |
-| `/utilisateurs` (+ historique) | affectations aux magasins | §6.19 |
 | `/` tableau de bord | filtre magasin, comparaison, alertes | §6.3 |
-| `/ventes`, `/achats`, `/caisse`, `/depenses`, `/stocks`, `/produits`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, colonne « Magasin » en vue consolidée, cas particuliers décrits | §6.4 → §6.13 |
+| `/ventes`, `/achats`, `/caisse`, `/depenses`, `/stocks`, `/produits`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, colonne « Magasin » en vue consolidée, cas particuliers décrits. Tableaux trop larges en 1366 px à resserrer : ventes, caisse, stocks, produits, chantiers, rapports, reçus | §6.4 → §6.13 |
 | Factures / reçus imprimés | en-tête avec les coordonnées **du magasin** | §6.4 |
 | README.md / AGENTS.md | §28 du README et AGENTS.md à jour ; réécrire les anciennes sections §20, §21, §23 du README en fin de chantier | — |
 | Vérifications | `tsc`, `next build`, migration d'une ancienne base, test de synchro réel | §9 |
@@ -628,7 +631,7 @@ Enregistrement : `PUT /api/parametres` (`settings.update`).
 
 ---
 
-### 6.19 `/utilisateurs` et `/utilisateurs/historique` ⏳
+### 6.19 `/utilisateurs` et `/utilisateurs/historique` ✅
 
 - **Permission :** `users.manage` (lecture comprise) ; `audit.view` pour l'historique.
 - **Règles serveur** (`lib/user-scope.ts`) :
@@ -639,8 +642,9 @@ Enregistrement : `PUT /api/parametres` (`settings.update`).
 
 | Élément | Action |
 |---|---|
-| Filtre **Magasin** | `GET /api/users?storeId=<id>`. |
-| Colonne **Magasins** | Badges des magasins affectés (`stores`), mention « gérant ». |
+| Filtre **Magasin** | `GET /api/users?storeId=<id>` ; prérempli par `/utilisateurs?storeId=<id>` (lien de la fiche magasin). |
+| Colonne **Magasins** | Badges des codes de magasins (`stores`), mention « gérant ». L'identifiant est affiché sous le nom ; la colonne Téléphone a été retirée pour que les 5 actions restent visibles. |
+| Bouton **Magasins** (icône magasin, ligne) | Ouvre `StoreAssignmentsModal`. Masqué sur un poste magasin, et sur les comptes administrateurs pour un gérant. |
 | **Nouvel utilisateur** | Ajouter la section **Magasins affectés** : une case par magasin + case « gérant ». Rôle « Administrateur » masqué si `!allStores`. → `POST /api/users` `{ name, username, password, role, phone, stores:[{storeId, isManager}] }`. Erreurs : « Affectez ce compte à au moins un magasin », « Seul un administrateur général peut attribuer le rôle Administrateur », « Vous ne pouvez affecter un compte qu'à vos propres magasins ». |
 | Onglet **Magasins** de la fiche | `GET /api/users/[id]/magasins` puis **Enregistrer** → `PUT /api/users/[id]/magasins` `{ stores:[{storeId, isManager, startsAt?, endsAt?}] }`. Prévenir : « Les sessions ouvertes de ce compte seront fermées. » |
 | **Modifier / Désactiver / Mot de passe / Permissions** (existants) | `PUT/DELETE /api/users/[id]`, `PUT /api/users/[id]/password`, `PUT/DELETE /api/users/[id]/permissions`. Changer le rôle, désactiver le compte ou changer le mot de passe ferme ses sessions. On ne peut pas désactiver son propre compte. La matrice affiche le nouveau groupe « Magasins ». |

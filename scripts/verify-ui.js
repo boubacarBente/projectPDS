@@ -230,15 +230,29 @@ async function main() {
       // Le bruit de développement (HMR, React DevTools) n'est pas une erreur de l'écran.
       const realErrors = errors.filter((e) => e && !/Download the React DevTools|\[HMR\]|\[Fast Refresh\]/.test(e));
       const overflow = await evaluate(ws, 'document.documentElement.scrollWidth - window.innerWidth');
+      /*
+       * Un tableau dans un conteneur `overflow-x-auto` ne fait pas déborder la
+       * page, mais ses dernières colonnes (souvent les actions) sont cachées.
+       * Constaté sur /utilisateurs : en largeur ordinateur, c'est un défaut.
+       */
+      const hiddenColumns =
+        WIDTH >= 1024
+          ? await evaluate(
+              ws,
+              `[...document.querySelectorAll('table')].map((t) => t.parentElement)
+                 .filter((c) => c && c.scrollWidth - c.clientWidth > 1).length`,
+            )
+          : 0;
 
       check(
         screen.path,
-        missing.length === 0 && broken.length === 0 && realErrors.length === 0 && overflow <= 1,
+        missing.length === 0 && broken.length === 0 && realErrors.length === 0 && overflow <= 1 && hiddenColumns === 0,
         [
           missing.length ? `texte manquant : ${missing.join(', ')}` : '',
           broken.length ? `écran d'erreur : ${broken.join(', ')}` : '',
           realErrors.length ? `console : ${realErrors.slice(0, 3).join(' | ').slice(0, 400)}` : '',
           overflow > 1 ? `débordement horizontal de ${overflow}px` : '',
+          hiddenColumns > 0 ? `${hiddenColumns} tableau(x) trop large(s) : colonnes cachées à droite` : '',
         ]
           .filter(Boolean)
           .join(' ; ') || `${text.length} caractères`,

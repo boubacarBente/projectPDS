@@ -48,6 +48,7 @@ export type ActionIcon =
   | 'list'
   | 'workers'
   | 'trash'
+  | 'store'
   | 'menu';
 
 /** Tracés 24×24, `stroke` hérité de la couleur du bouton (aucune couleur en dur). */
@@ -182,6 +183,14 @@ const PATHS: Record<ActionIcon, ReactNode> = {
         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
       />
     </>
+  ),
+  /** Magasins affectés (même tracé que l'entrée « Magasins » du menu). */
+  store: (
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M3 9l1.5-5h15L21 9M3 9h18M3 9v1a3 3 0 006 0 3 3 0 006 0 3 3 0 006 0V9M5 13v8h14v-8M10 21v-5h4v5"
+    />
   ),
   menu: (
     <>

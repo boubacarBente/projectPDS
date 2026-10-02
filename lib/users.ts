@@ -266,8 +266,17 @@ export async function getUserWithStores(id: number): Promise<UserRow | null> {
 }
 
 /** Compteurs de l'en-tête de page : totaux et répartition par rôle. */
-export async function getUserStats(): Promise<UserStats> {
-  const rows = await listUsers();
+/**
+ * Compteurs de l'en-tête de `/utilisateurs`. `storeIds` borne le décompte aux
+ * comptes affectés à ces magasins : un gérant ne doit pas connaître l'effectif
+ * des autres magasins.
+ */
+export async function getUserStats(storeIds?: number[]): Promise<UserStats> {
+  let rows = await listUsers();
+  if (storeIds) {
+    const allowed = new Set(storeIds);
+    rows = (await withAssignments(rows)).filter((row) => (row.stores ?? []).some((store) => allowed.has(store.id)));
+  }
 
   const byRole: { role: Role; count: number }[] = [];
   for (const role of ROLES) {

@@ -16,6 +16,7 @@ import {
   SkeletonTable,
 } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
+import { StoreScopeSelect, useStoreScope } from '@/components/store-scope';
 // ⚠️ Les libellés viennent de `lib/audit-labels.ts`, et non de `lib/audit.ts` :
 // ce dernier est un module **serveur** (il importe `@/db`). L'importer dans un
 // composant client ferait entrer `@libsql/client` et `fs` dans le bundle
@@ -34,6 +35,8 @@ type AuditRow = {
   id: number;
   userId: number | null;
   userName: string;
+  /** Magasin où l'action a eu lieu ; `null` = action centrale (comptes, paramètres…). */
+  storeName: string | null;
   action: string;
   entity: string;
   entityId: number | null;
@@ -216,6 +219,9 @@ function HistoriqueContent() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // Portée magasin : magasin actif, tous les magasins ou un magasin (`?store=`).
+  const { scope, setScope, apply: applyScope, isMultiStore } = useStoreScope('historique');
+
   const rehydrated = useViewStateRehydration<{
     search: string;
     userId: string;
@@ -261,7 +267,7 @@ function HistoriqueContent() {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+      const params = applyScope(new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) }));
       if (search.trim()) params.set('search', search.trim());
       if (userId) params.set('userId', userId);
       if (action) params.set('action', action);
@@ -295,7 +301,7 @@ function HistoriqueContent() {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [rehydrated, search, userId, action, entity, from, to, page, refreshToken]);
+  }, [rehydrated, search, userId, action, entity, from, to, page, refreshToken, applyScope]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -342,6 +348,20 @@ function HistoriqueContent() {
       label: 'Utilisateur',
       render: (log) => <span className="text-sm">{log.userName}</span>,
     },
+    ...(isMultiStore
+      ? [
+          {
+            key: 'storeName',
+            label: 'Magasin',
+            render: (log: AuditRow) =>
+              log.storeName ? (
+                <span className="text-sm">{log.storeName}</span>
+              ) : (
+                <span className="text-sm text-base-content/50">Siège (central)</span>
+              ),
+          },
+        ]
+      : []),
     {
       key: 'action',
       label: 'Action',
@@ -419,6 +439,14 @@ function HistoriqueContent() {
         searchPlaceholder="Rechercher un utilisateur, une entité, un détail…"
         filters={
           <>
+            <StoreScopeSelect
+              value={scope}
+              onChange={(value) => {
+                setScope(value);
+                setPage(1);
+              }}
+              className="min-h-11 w-full sm:w-56"
+            />
             <div className="w-full sm:w-64">
               <FilterSelect
                 value={userId}
