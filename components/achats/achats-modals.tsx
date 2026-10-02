@@ -933,7 +933,7 @@ export function PurchasePaymentModal({
               </FormField>
 
               <FormField label="Date du règlement" htmlFor="purchase-payment-date" required>
-                <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
+                <DatePicker value={date} onChange={setDate} placeholder="jj mois aaaa" />
               </FormField>
 
               <FormField label="Note" htmlFor="purchase-payment-notes" hint="Facultatif.">

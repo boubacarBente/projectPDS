@@ -225,7 +225,7 @@ export function ExpenseFormModal({
         </FormField>
 
         <FormField label="Date" required error={errors.date}>
-          <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
+          <DatePicker value={date} onChange={setDate} placeholder="jj mois aaaa" />
         </FormField>
 
         <FormField label="Moyen de paiement" htmlFor="expense-payment-method">

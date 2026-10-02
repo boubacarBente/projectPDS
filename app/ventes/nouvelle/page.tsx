@@ -1398,7 +1398,7 @@ function NouvelleVenteForm() {
                       <DatePicker
                         value={date}
                         onChange={setDate}
-                        placeholder="jj/mm/aaaa"
+                        placeholder="jj mois aaaa"
                         className="pl-10"
                       />
                     </FormField>
@@ -1454,7 +1454,7 @@ function NouvelleVenteForm() {
                         <DatePicker
                           value={dueDate}
                           onChange={setDueDate}
-                          placeholder="jj/mm/aaaa"
+                          placeholder="jj mois aaaa"
                           className="pl-10"
                         />
                       </FormField>

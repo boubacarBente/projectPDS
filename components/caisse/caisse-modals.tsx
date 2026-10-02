@@ -642,7 +642,7 @@ export function CashMovementModal({
         </FormField>
 
         <FormField label="Date" required error={errors.date}>
-          <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
+          <DatePicker value={date} onChange={setDate} placeholder="jj mois aaaa" />
         </FormField>
 
         <FormField

@@ -352,7 +352,7 @@ export default function RecusPage() {
                   setFrom(value);
                   setPage(1);
                 }}
-                placeholder="jj/mm/aaaa"
+                placeholder="jj mois aaaa"
               />
             </div>
 
@@ -364,7 +364,7 @@ export default function RecusPage() {
                   setTo(value);
                   setPage(1);
                 }}
-                placeholder="jj/mm/aaaa"
+                placeholder="jj mois aaaa"
               />
             </div>
           </>

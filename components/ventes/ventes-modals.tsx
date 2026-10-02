@@ -903,7 +903,7 @@ export function SalePaymentModal({
               </FormField>
 
               <FormField label="Date d'encaissement" htmlFor="sale-payment-date" required>
-                <DatePicker value={date} onChange={setDate} placeholder="jj/mm/aaaa" />
+                <DatePicker value={date} onChange={setDate} placeholder="jj mois aaaa" />
               </FormField>
 
               <FormField label="Note" htmlFor="sale-payment-notes" hint="Facultatif.">
