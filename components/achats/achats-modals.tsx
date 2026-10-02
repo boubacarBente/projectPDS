@@ -66,6 +66,8 @@ export type {
 
 export type PurchaseInvoiceRow = {
   id: number;
+  /** Magasin acheteur (vue « tous les magasins »). */
+  storeName: string | null;
   reference: string;
   supplierReference: string | null;
   supplierId: number | null;
@@ -164,6 +166,7 @@ export function normalizePurchaseRow(raw: unknown): PurchaseInvoiceRow {
 
   return {
     id: num(row.id),
+    storeName: typeof row.storeName === 'string' ? row.storeName : null,
     reference: String(row.reference ?? '—'),
     supplierReference: (row.supplierReference ?? row.supplier_reference ?? null) as string | null,
     supplierId:

@@ -41,7 +41,7 @@ import { createPayment } from '@/lib/payments';
 import { approveTransfer, cancelTransfer, createTransfer, receiveTransfer, shipTransfer } from '@/lib/transfers';
 import { openInventory, recordCounts, validateInventory, getInventory } from '@/lib/inventories';
 import { addJobMaterial, addJobWorker, createServiceJob, updateStatus } from '@/lib/jobs';
-import { closeSession, getOpenSession, getSessionTheoreticalByMethod } from '@/lib/caisse';
+import { addCashMovement, closeSession, getOpenSession, getSessionTheoreticalByMethod } from '@/lib/caisse';
 import { getStoreStock } from '@/lib/stock';
 import { addDays, today } from '@/lib/format';
 import { getSettings, updateSettings } from '@/lib/settings';
@@ -263,6 +263,21 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   for (const worker of WORKERS) {
     await createWorker(worker);
     report.workers += 1;
+  }
+
+  /*
+   * Apport de trésorerie de départ (fonds de caisse et compte bancaire de
+   * chaque établissement). Sans lui, les premiers achats payés en espèces
+   * faisaient tomber la caisse du siège à −233 millions (constaté en recette) :
+   * une démonstration doit partir d'une situation réaliste.
+   */
+  for (const [store, cash, bank] of [
+    [hq, 400_000_000, 400_000_000],
+    [kaloum, 120_000_000, 180_000_000],
+    [matoto, 100_000_000, 160_000_000],
+  ] as const) {
+    await addCashMovement({ storeId: store.id, type: 'income', amount: cash, paymentMethod: 'Espèces', motif: 'Apport initial — fonds de caisse', date: start, userId: adminRef.id });
+    await addCashMovement({ storeId: store.id, type: 'income', amount: bank, paymentMethod: 'Virement', motif: 'Apport initial — compte bancaire', date: start, userId: adminRef.id });
   }
 
   /* ----------------------- Approvisionnement initial ------------------- */

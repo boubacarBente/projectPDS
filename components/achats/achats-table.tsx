@@ -17,6 +17,7 @@ import { IconAction, RowActions } from '@/components/row-actions';
 import { MoneyText, StatusBadge } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
 import type { PurchaseInvoiceRow } from '@/components/achats/achats-modals';
+import { StoreTag } from '@/components/store-scope';
 
 /** Un achat reste-t-il réglable ? (annulé ou soldé ⇒ non) */
 export function canSettle(invoice: PurchaseInvoiceRow, canPay: boolean): boolean {
@@ -35,6 +36,7 @@ export function AchatsTable({
   onOpenPayment,
   onOpenCancel,
   emptyState,
+  showStore = false,
 }: {
   data: PurchaseInvoiceRow[];
   /** Le squelette est rendu par la page ; ce drapeau évite un état vide trompeur. */
@@ -49,6 +51,8 @@ export function AchatsTable({
   onOpenPayment: (invoice: PurchaseInvoiceRow) => void;
   onOpenCancel: (invoice: PurchaseInvoiceRow) => void;
   emptyState: ReactNode;
+  /** Plusieurs magasins affichés : le magasin apparaît sous la référence. */
+  showStore?: boolean;
 }) {
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
@@ -85,6 +89,7 @@ export function AchatsTable({
         <span className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="tabular block truncate font-semibold">{invoice.reference}</span>
           {invoice.status !== 'active' && <StatusBadge status={invoice.status} kind="invoice" />}
+          <StoreTag name={invoice.storeName} show={showStore} />
         </span>
       ),
     },

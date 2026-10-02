@@ -50,9 +50,10 @@ import {
   readApiError,
 } from '@/components/caisse/caisse-modals';
 import { clampPage, useViewStateRehydration, writeViewState } from '@/lib/view-state';
-import { DEFAULT_CURRENCY, formatNumber } from '@/lib/format';
+import { DEFAULT_CURRENCY, formatCurrency, formatNumber } from '@/lib/format';
 import { formatDateShort, formatDateTime } from '@/lib/date-format';
 import type { CashMovementRow, CashSessionHistoryRow, CashSummary } from '@/lib/caisse';
+import { StoreScopeSelect, StoreTag, scopeShowsStore, useStoreScope } from '@/components/store-scope';
 
 const PAGE_LIMIT = 20;
 const VIEW_NAME = 'caisse';
@@ -114,6 +115,10 @@ export default function CaissePage() {
   const canOpen = usePermission('cash.open');
   const canClose = usePermission('cash.close');
   const canManual = usePermission('cash.manual');
+  // Portée : la consultation peut couvrir plusieurs magasins ; ouverture, clôture et
+  // mouvements restent toujours ceux du magasin actif (le serveur l'impose).
+  const { scope, setScope, apply } = useStoreScope('caisse');
+  const showStore = scopeShowsStore(scope);
 
   const currency = DEFAULT_CURRENCY;
   const paymentMethods = useMemo(
@@ -184,10 +189,10 @@ export default function CaissePage() {
       setError(null);
 
       try {
-        const params = new URLSearchParams({
+        const params = apply(new URLSearchParams({
           page: String(page),
           limit: String(PAGE_LIMIT),
-        });
+        }));
         if (debouncedSearch) params.set('search', debouncedSearch);
         if (type) params.set('type', type);
         if (paymentMethod) params.set('paymentMethod', paymentMethod);
@@ -248,7 +253,7 @@ export default function CaissePage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, debouncedSearch, type, paymentMethod, sessionId, from, to, page, refreshToken]);
+  }, [rehydrated, debouncedSearch, type, paymentMethod, sessionId, from, to, page, refreshToken, apply]);
 
   /* Session ouverte + historique des sessions. */
   useEffect(() => {
@@ -332,51 +337,41 @@ export default function CaissePage() {
     [paymentMethods],
   );
 
+  /*
+   * Cinq colonnes au lieu de huit (le tableau débordait en 1366 px) : le type
+   * accompagne le montant, qui porte déjà son signe (jamais la couleur seule) ;
+   * moyen de paiement et magasin sous le motif ; utilisateur sous l'origine.
+   * « Solde après » n'a de sens que pour une seule caisse : masqué quand
+   * plusieurs magasins sont affichés.
+   */
   const columns = useMemo<Column<CashMovementRow>[]>(
     () => [
       {
         key: 'date',
         label: 'Date',
-        render: (movement) => (
-          <span className="whitespace-nowrap text-sm">{formatDateShort(movement.date)}</span>
-        ),
-      },
-      {
-        key: 'type',
-        label: 'Type',
-        render: (movement) =>
-          movement.type === 'income' ? (
-            <Badge tone="success">Entrée</Badge>
-          ) : (
-            <Badge tone="error">Sortie</Badge>
-          ),
+        render: (movement) => {
+          const [day, date] = formatDateShort(movement.date).split(' ');
+          return (
+            <span className="block whitespace-nowrap text-sm">
+              <span className="block text-xs text-base-content/50">{day}</span>
+              {date ?? day}
+            </span>
+          );
+        },
       },
       {
         key: 'motif',
         label: 'Motif',
         primary: true,
-        render: (movement) => <span className="font-medium">{movement.motif}</span>,
-      },
-      {
-        key: 'paymentMethod',
-        label: 'Moyen',
-        render: (movement) => <Badge tone="neutral">{movement.paymentMethod}</Badge>,
-      },
-      {
-        key: 'amount',
-        label: 'Montant',
-        className: 'text-right',
-        render: (movement) => {
-          const signed = movement.type === 'income' ? movement.amount : -movement.amount;
-          return (
-            <span className="whitespace-nowrap">
-              <span className={`tabular font-semibold ${movement.type === 'income' ? 'text-success' : 'text-error'}`}>
-                {movement.type === 'income' ? '+' : '−'}
-              </span>{' '}
-              <MoneyText value={Math.abs(signed)} currency={currency} bold />
+        render: (movement) => (
+          <span className="block min-w-0 max-w-xs">
+            <span className="block font-medium">{movement.motif}</span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+              <Badge tone="neutral">{movement.paymentMethod}</Badge>
             </span>
-          );
-        },
+            <StoreTag name={movement.storeName} show={showStore} />
+          </span>
+        ),
       },
       {
         key: 'origin',
@@ -386,59 +381,75 @@ export default function CaissePage() {
             ? REFERENCE_LABELS[movement.referenceType] ?? movement.referenceType
             : '—';
           const href = referenceHref(movement.referenceType, movement.referenceId);
-
-          if (!href) return <span className="text-sm text-base-content/70">{label}</span>;
-
           return (
-            <Link href={href} className="text-sm text-primary hover:underline">
-              {label} #{movement.referenceId}
-            </Link>
+            <span className="block text-sm">
+              {href ? (
+                <Link href={href} className="text-primary hover:underline">
+                  {label} #{movement.referenceId}
+                </Link>
+              ) : (
+                <span className="text-base-content/70">{label}</span>
+              )}
+              <span className="block text-xs text-base-content/55">{movement.userName || '—'}</span>
+            </span>
           );
         },
       },
       {
-        key: 'balanceAfter',
-        label: 'Solde après',
+        key: 'amount',
+        label: 'Montant',
         className: 'text-right',
-        hideOnMobile: true,
-        render: (movement) => <MoneyText value={movement.balanceAfter} currency={currency} />,
-      },
-      {
-        key: 'userName',
-        label: 'Utilisateur',
-        hideOnMobile: true,
         render: (movement) => (
-          <span className="text-sm text-base-content/70">{movement.userName || '—'}</span>
+          <span className="block whitespace-nowrap">
+            <span className={`tabular font-semibold ${movement.type === 'income' ? 'text-success' : 'text-error'}`}>
+              {movement.type === 'income' ? '+' : '−'}
+            </span>{' '}
+            <MoneyText value={movement.amount} currency={currency} bold />
+            <span className="block text-xs text-base-content/55">
+              {movement.type === 'income' ? 'Entrée' : 'Sortie'}
+            </span>
+          </span>
         ),
       },
+      ...(showStore
+        ? []
+        : [
+            {
+              key: 'balanceAfter',
+              label: 'Solde après',
+              className: 'text-right',
+              hideOnMobile: true,
+              render: (movement: CashMovementRow) => <MoneyText value={movement.balanceAfter} currency={currency} />,
+            },
+          ]),
     ],
-    [currency],
+    [currency, showStore],
   );
 
   const sessionColumns = useMemo<Column<CashSessionHistoryRow>[]>(
     () => [
+      // Ouverture, clôture et utilisateurs dans une même colonne : six colonnes
+      // au lieu de huit, le tableau tient en 1366 px (il débordait de 120 px).
       {
         key: 'openedAt',
-        label: 'Ouverture',
+        label: 'Session',
         primary: true,
         render: (row) => (
-          <span className="whitespace-nowrap text-sm">
-            {row.openedAt ? formatDateTime(row.openedAt) : '—'}
-          </span>
-        ),
-      },
-      {
-        key: 'closedAt',
-        label: 'Clôture',
-        render: (row) => (
-          <span className="whitespace-nowrap text-sm">
-            {row.closedAt ? formatDateTime(row.closedAt) : '—'}
+          <span className="block text-sm">
+            <span className="block whitespace-nowrap">Ouverte : {row.openedAt ? formatDateTime(row.openedAt) : '—'}</span>
+            <span className="block whitespace-nowrap text-base-content/70">
+              Clôturée : {row.closedAt ? formatDateTime(row.closedAt) : 'en cours'}
+            </span>
+            <span className="block text-xs text-base-content/55">
+              {row.openedByName || '—'}
+              {row.closedByName ? ` → ${row.closedByName}` : ''}
+            </span>
           </span>
         ),
       },
       {
         key: 'openingAmount',
-        label: 'Ouverture (GNF)',
+        label: 'Fonds d’ouverture',
         className: 'text-right',
         render: (row) => <MoneyText value={row.openingAmount} currency={currency} />,
       },
@@ -478,17 +489,6 @@ export default function CaissePage() {
         label: 'Mouvements',
         className: 'text-right',
         render: (row) => <span className="tabular">{formatNumber(row.movementsCount)}</span>,
-      },
-      {
-        key: 'users',
-        label: 'Utilisateurs',
-        hideOnMobile: true,
-        render: (row) => (
-          <span className="text-sm text-base-content/70">
-            {row.openedByName || '—'}
-            {row.closedByName ? ` → ${row.closedByName}` : ''}
-          </span>
-        ),
       },
     ],
     [currency],
@@ -633,24 +633,32 @@ export default function CaissePage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCardDelta
             label="Solde disponible"
+            tooltip={
+              showStore
+                ? 'Argent en caisse dans les magasins affichés, additionné : la somme du dernier solde connu de chaque caisse.'
+                : 'Argent présent dans la caisse de ce magasin d’après les opérations enregistrées (ventes encaissées, dépenses payées, apports et retraits).'
+            }
             tone={sessionOpen ? 'success' : 'neutral'}
             value={<MoneyText value={summary?.balance ?? 0} currency={currency} bold />}
             hint={sessionOpen ? 'Dernier solde de la session ouverte' : 'Dernier solde connu'}
           />
           <StatCardDelta
             label={scopeLabels.income}
+            tooltip="Total de l’argent entré en caisse sur la période : paiements de clients, apports, remboursements reçus."
             tone="success"
             value={<MoneyText value={summary?.incomeTotal ?? 0} currency={currency} />}
             hint={`${formatNumber(summary?.movementsCount ?? 0)} mouvement(s) · ${scopeReference}`}
           />
           <StatCardDelta
             label={scopeLabels.expense}
+            tooltip="Total de l’argent sorti de la caisse sur la période : dépenses payées, achats réglés en espèces, retraits."
             tone="error"
             value={<MoneyText value={summary?.expenseTotal ?? 0} currency={currency} />}
             hint="Dépenses, achats et retraits"
           />
           <StatCardDelta
             label={scopeLabels.result}
+            tooltip="Différence entre l’argent entré et l’argent sorti sur la période. Ce n’est pas le bénéfice : un achat de stock est une sortie de caisse mais pas une perte."
             tone={(summary?.incomeTotal ?? 0) - (summary?.expenseTotal ?? 0) >= 0 ? 'success' : 'error'}
             value={
               <MoneyText
@@ -662,6 +670,22 @@ export default function CaissePage() {
             }
             hint="Entrées − sorties"
           />
+        </div>
+      )}
+
+      {/*
+        Une caisse ne peut pas contenir moins que rien : un solde négatif signale
+        toujours une erreur (apport initial non saisi, sortie en double, montant
+        mal tapé). Constaté en recette sur la démonstration ; le signal manquait.
+      */}
+      {!showStore && (summary?.balance ?? 0) < -0.001 && (
+        <div role="alert" className="alert border border-error/40 bg-error/10 text-sm">
+          <span>
+            <strong>Solde de caisse négatif ({formatCurrency(summary?.balance ?? 0, currency)}).</strong> Il
+            est sorti plus d’argent qu’il n’en est entré : un apport (fonds de caisse, versement du
+            gérant) n’a sans doute pas été saisi, ou une sortie est en trop. Vérifiez les derniers
+            mouvements, puis enregistrez l’apport manquant avec « Mouvement manuel ».
+          </span>
         </div>
       )}
 
@@ -724,6 +748,14 @@ export default function CaissePage() {
           searchPlaceholder="Rechercher un motif…"
           filters={
             <>
+              <StoreScopeSelect
+                value={scope}
+                onChange={(value) => {
+                  setScope(value);
+                  setPage(1);
+                }}
+                className="min-h-11 w-full sm:w-52"
+              />
               <div className="w-full sm:w-44">
                 <FilterSelect
                   value={type}

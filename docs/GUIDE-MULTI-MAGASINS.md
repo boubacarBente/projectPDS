@@ -352,14 +352,14 @@ Fichiers : `components/app-shell.tsx`, `store-switcher.tsx`, `sync-indicator.tsx
 | **Imprimer / Exporter** la facture | ✅ L'en-tête affiche le magasin de la facture : `GET /api/ventes/[id]` renvoie `store` (`getStoreLetterhead`), appliqué par `applyStoreLetterhead(settings, store)` avant `companyFromSettings` et `exportCompanyFromSettings` (même chose pour reçus, bons d'achat, devis). |
 | Numéro de facture | Généré par le serveur : `{PREFIX}-{STORE}{POSTE}-{AAAA}-{NNNNNN}` (format modifiable dans Paramètres). |
 
-### 6.5 `/achats` ⏳ (adaptations légères)
+### 6.5 `/achats` ✅
 
 - **Permissions :** `purchases.*`.
 - **API :** `GET /api/achats?store=…`, `POST /api/achats`, `GET/PUT /api/achats/[id]`, `GET /api/achats/stats?store=`.
 
 L'entrée en stock se fait dans le magasin actif. À ajouter : StoreScopeSelect + colonne Magasin.
 
-### 6.6 `/caisse` ⏳
+### 6.6 `/caisse` ✅
 
 - **But :** une caisse par magasin.
 - **Permissions :** `cash.view`, `cash.open`, `cash.close`, `cash.manual`.

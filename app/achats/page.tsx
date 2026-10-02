@@ -51,6 +51,7 @@ import {
 import { clampPage, useViewStateRehydration, writeViewState } from '@/lib/view-state';
 import { formatDateShort } from '@/lib/date-format';
 import { formatCurrency, formatNumber } from '@/lib/format';
+import { StoreScopeSelect, scopeShowsStore, useStoreScope } from '@/components/store-scope';
 
 const PAGE_LIMIT = 10;
 const VIEW_NAME = 'achats';
@@ -118,6 +119,8 @@ function isStatsPeriod(value: unknown): value is StatsPeriod {
 export default function AchatsPage() {
   const router = useRouter();
   const canCreate = usePermission('purchases.create');
+  // Portée magasin (`?store=`) : magasin actif, tous les magasins ou un magasin précis.
+  const { scope, setScope, apply } = useStoreScope('achats');
   const canUpdate = usePermission('purchases.update');
   const canCancel = usePermission('purchases.delete');
   const canPay = usePermission('payments.create');
@@ -190,10 +193,10 @@ export default function AchatsPage() {
       setError(null);
 
       try {
-        const params = new URLSearchParams({
+        const params = apply(new URLSearchParams({
           page: String(page),
           limit: String(PAGE_LIMIT),
-        });
+        }));
         if (debouncedSearch) params.set('search', debouncedSearch);
         if (paymentStatus === 'cancelled') {
           params.set('status', 'cancelled');
@@ -248,7 +251,7 @@ export default function AchatsPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, debouncedSearch, paymentStatus, supplierId, from, to, page, refreshToken]);
+  }, [rehydrated, debouncedSearch, paymentStatus, supplierId, from, to, page, refreshToken, apply]);
 
   /* Cartes de synthèse : un agrégat indisponible ne casse pas la liste. */
   useEffect(() => {
@@ -260,7 +263,7 @@ export default function AchatsPage() {
     void (async () => {
       setIsStatsLoading(true);
       try {
-        const response = await fetch(`/api/achats/stats?period=${period}`, {
+        const response = await fetch(`/api/achats/stats?${apply(new URLSearchParams({ period }))}`, {
           cache: 'no-store',
           credentials: 'same-origin',
           signal: controller.signal,
@@ -300,7 +303,7 @@ export default function AchatsPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, period, refreshToken]);
+  }, [rehydrated, period, refreshToken, apply]);
 
   /* Liste des fournisseurs pour le filtre (et pour l'en-tête). */
   useEffect(() => {
@@ -493,20 +496,24 @@ export default function AchatsPage() {
               <MiniStat
                 label={`Achats — ${periodLabel.toLowerCase()}`}
                 tone="primary"
+                tooltip="Total des factures d’achat enregistrées sur la période (marchandise achetée aux fournisseurs), payées ou non. Les achats annulés ne comptent pas."
                 value={<MoneyText value={stats.totalAmount} className="text-base" />}
               />
               <MiniStat
                 label="Réglé aux fournisseurs"
                 tone="success"
+                tooltip="Argent réellement versé aux fournisseurs pour ces achats."
                 value={<MoneyText value={stats.paid} className="text-base" />}
               />
               <MiniStat
                 label="Dette fournisseur"
                 tone={stats.outstanding > 0.001 ? 'error' : 'success'}
+                tooltip="Ce que vous devez encore aux fournisseurs sur ces achats : total moins ce qui a été réglé."
                 value={<MoneyText value={stats.outstanding} className="text-base" />}
               />
               <MiniStat
                 label="Panier moyen"
+                tooltip="Montant moyen d’une facture d’achat sur la période."
                 value={<MoneyText value={stats.averageBasket} className="text-base" />}
               />
             </div>
@@ -560,6 +567,15 @@ export default function AchatsPage() {
         }}
         searchPlaceholder="Rechercher une référence d’achat, une réf. fournisseur ou un fournisseur…"
         filters={
+          <>
+          <StoreScopeSelect
+            value={scope}
+            onChange={(value) => {
+              setScope(value);
+              setPage(1);
+            }}
+            className="min-h-11 w-full sm:w-52"
+          />
           <div className="w-full sm:w-52">
             <FilterSelect
               value={paymentStatus}
@@ -571,6 +587,7 @@ export default function AchatsPage() {
               placeholder="Tous les achats"
             />
           </div>
+          </>
         }
         secondaryFilters={
           <>
@@ -664,6 +681,7 @@ export default function AchatsPage() {
         </div>
       ) : (
         <AchatsTable
+          showStore={scopeShowsStore(scope)}
           data={invoices}
           isLoading={isLoading}
           canPay={canPay}
