@@ -43,11 +43,48 @@ ChartJS.register(
   Filler,
 );
 
-/** Lit une variable CSS du thème, avec repli sûr côté serveur. */
+/**
+ * Convertit `oklch(L C H)` en hexadécimal.
+ *
+ * Le thème écrit la couleur principale en `oklch(…)` (lib/colors.ts) ; le
+ * canevas de Chart.js l'**ignore** et retombe sur le noir — constaté sur le
+ * pilotage des chantiers : l'aire sous la courbe était entièrement noire.
+ * Formules OKLab → sRGB de Björn Ottosson.
+ */
+function oklchToHex(value: string): string | null {
+  const match = value.match(/^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)/i);
+  if (!match) return null;
+  const L = Number(match[1]) / (match[2] ? 100 : 1);
+  const C = Number(match[3]);
+  const h = (Number(match[4]) * Math.PI) / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  const hex = linear
+    .map((x) => {
+      const v = x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(Math.max(x, 0), 1 / 2.4) - 0.055;
+      return Math.round(Math.min(1, Math.max(0, v)) * 255)
+        .toString(16)
+        .padStart(2, '0');
+    })
+    .join('');
+  return `#${hex}`;
+}
+
+/** Lit une variable CSS du thème (convertie en hexadécimal), avec repli sûr côté serveur. */
 function cssVar(name: string, fallback: string): string {
   if (typeof window === 'undefined') return fallback;
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value || fallback;
+  if (!value) return fallback;
+  if (value.startsWith('#')) return value;
+  return oklchToHex(value) ?? fallback;
 }
 
 const PALETTE_FALLBACKS = [
@@ -70,6 +107,22 @@ function palette(): string[] {
     cssVar('--color-error', PALETTE_FALLBACKS[4]),
     ...PALETTE_FALLBACKS.slice(5),
   ];
+}
+
+/**
+ * Couleur adoucie pour le remplissage sous une courbe.
+ *
+ * Ajouter `22` au bout de la couleur ne marche que pour un hexadécimal : le
+ * thème fournit des couleurs `oklch(…)`, et `oklch(…)22` est invalide — le
+ * canevas remplissait alors toute l’aire en **noir** (constaté sur le pilotage
+ * des chantiers). On insère donc l’opacité selon la forme de la couleur.
+ */
+function translucent(color: string, alpha: number): string {
+  const value = color.trim();
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value + Math.round(alpha * 255).toString(16).padStart(2, '0');
+  const fn = value.match(/^(oklch|oklab|rgb|hsl|lab|lch)((.*))$/i);
+  if (fn && !fn[2].includes('/')) return `${fn[1]}(${fn[2]} / ${alpha})`;
+  return 'transparent';
 }
 
 const BASE_OPTIONS: ChartOptions<any> = {
@@ -318,7 +371,7 @@ export function RevenueTrendChart({
         label: s.label,
         data: s.values,
         borderColor: colors[s.tone ?? index] ?? colors[0],
-        backgroundColor: `${colors[s.tone ?? index] ?? colors[0]}22`,
+        backgroundColor: translucent(colors[s.tone ?? index] ?? colors[0], 0.13),
         fill: true,
         tension: 0.35,
         pointRadius: 2,
