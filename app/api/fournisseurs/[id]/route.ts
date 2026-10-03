@@ -56,6 +56,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.address !== undefined) patch.address = body.address;
     if (body.notes !== undefined) patch.notes = body.notes;
     if (body.isActive !== undefined) patch.isActive = toBool(body.isActive, true);
+    if (body.isSubcontractor !== undefined) patch.isSubcontractor = toBool(body.isSubcontractor, false);
+    if (body.specialty !== undefined) patch.specialty = body.specialty;
 
     const supplier = await updateSupplier(supplierId, patch as any);
 

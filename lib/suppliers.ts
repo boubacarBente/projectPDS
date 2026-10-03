@@ -26,6 +26,9 @@ export type SupplierRow = {
   address: string | null;
   notes: string | null;
   isActive: boolean;
+  /** Sous-traitant de chantier (cahier prestations §12). */
+  isSubcontractor: boolean;
+  specialty: string | null;
   purchaseCount: number;
   totalPurchased: number;
   totalPaid: number;
@@ -41,6 +44,8 @@ export type SupplierInput = {
   address?: string | null;
   notes?: string | null;
   isActive?: boolean;
+  isSubcontractor?: boolean;
+  specialty?: string | null;
 };
 
 export type SupplierStats = {
@@ -103,6 +108,8 @@ export async function listSuppliers(
     includeInactive?: boolean;
     /** Restreint aux fiches désactivées — contrepartie stricte de `includeInactive`. */
     inactiveOnly?: boolean;
+    /** Seulement les sous-traitants de chantier. */
+    subcontractorsOnly?: boolean;
     /** `recent` (défaut) = dernière insertion ; `name` ; `balance` = dette décroissante. */
     sort?: ListSort;
   } = {},
@@ -116,11 +123,12 @@ export async function listSuppliers(
 
   if (options.inactiveOnly) where.push('s.is_active = 0');
   else if (!options.includeInactive) where.push('s.is_active = 1');
+  if (options.subcontractorsOnly) where.push('s.is_subcontractor = 1');
 
   if (options.search) {
-    where.push('(s.name LIKE ? OR s.phone LIKE ? OR s.address LIKE ?)');
+    where.push('(s.name LIKE ? OR s.phone LIKE ? OR s.address LIKE ? OR s.specialty LIKE ?)');
     const like = `%${options.search}%`;
-    args.push(like, like, like);
+    args.push(like, like, like, like);
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -137,7 +145,7 @@ export async function listSuppliers(
   const debtorFilter = options.debtorsOnly ? 'WHERE balance > 0.001' : '';
 
   const innerSql = `
-    SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active,
+    SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active, s.is_subcontractor, s.specialty,
            COALESCE(inv.purchase_count, 0)   AS purchase_count,
            COALESCE(inv.total_purchased, 0)  AS total_purchased,
            COALESCE(inv.total_paid, 0)       AS total_paid,
@@ -203,6 +211,8 @@ function mapSupplierRow(row: any): SupplierRow {
     address: row.address,
     notes: row.notes,
     isActive: Boolean(row.is_active),
+    isSubcontractor: Boolean(row.is_subcontractor),
+    specialty: row.specialty ?? null,
     purchaseCount: Number(row.purchase_count ?? 0),
     totalPurchased: Number(row.total_purchased ?? 0),
     totalPaid: Number(row.total_paid ?? 0),
@@ -218,7 +228,7 @@ function storeFilter(scope: StoreScope | undefined, column = 'store_id'): string
 
 export async function getSupplier(id: number, scope?: StoreScope): Promise<SupplierRow | null> {
   const row = await rawGet<any>(
-    `SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active, s.created_at,
+    `SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active, s.is_subcontractor, s.specialty, s.created_at,
             COALESCE(inv.purchase_count, 0)   AS purchase_count,
             COALESCE(inv.total_purchased, 0)  AS total_purchased,
             COALESCE(inv.total_paid, 0)       AS total_paid,
@@ -248,6 +258,8 @@ export async function createSupplier(input: SupplierInput): Promise<SupplierRow>
       address: input.address?.trim() || null,
       notes: input.notes?.trim() || null,
       isActive: input.isActive ?? true,
+      isSubcontractor: input.isSubcontractor ?? false,
+      specialty: input.specialty?.trim() || null,
     })
     .returning({ id: suppliers.id, syncId: suppliers.syncId });
 
@@ -264,6 +276,8 @@ export async function updateSupplier(id: number, input: Partial<SupplierInput>):
   if (input.address !== undefined) patch.address = input.address?.trim() || null;
   if (input.notes !== undefined) patch.notes = input.notes?.trim() || null;
   if (input.isActive !== undefined) patch.isActive = input.isActive;
+  if (input.isSubcontractor !== undefined) patch.isSubcontractor = input.isSubcontractor;
+  if (input.specialty !== undefined) patch.specialty = input.specialty?.trim() || null;
 
   const updated = await db
     .update(suppliers)

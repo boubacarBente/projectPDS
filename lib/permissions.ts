@@ -81,6 +81,7 @@ export type Action =
   | 'jobs.create'
   | 'jobs.update'
   | 'jobs.delete'
+  | 'services.manage'
   /* Multi-magasins */
   | 'stores.view'
   | 'stores.manage'
@@ -151,6 +152,7 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'jobs.create',
     'jobs.update',
     'jobs.delete',
+    'services.manage',
     'users.manage',
     'audit.view',
     'settings.view',
@@ -208,6 +210,7 @@ const PERMISSIONS: Record<Role, Action[]> = {
     'jobs.view',
     'jobs.create',
     'jobs.update',
+    'services.manage',
     'audit.view',
     'settings.view',
     'settings.update',
@@ -324,6 +327,7 @@ export const ALL_ACTIONS: Action[] = [
   'jobs.create',
   'jobs.update',
   'jobs.delete',
+  'services.manage',
   'stores.view',
   'stores.manage',
   'stores.viewAll',
@@ -420,10 +424,11 @@ export const ACTION_META: Record<Action, ActionMeta> = {
   'payments.create': { label: 'Encaisser un paiement', group: 'Paiements', description: 'Enregistrer un acompte ou un solde, générer le reçu.' },
 
   'workers.manage': { label: 'Gérer les ouvriers', group: 'Production', description: 'Chefs d’équipe, ouvriers et apprentis, avec leur tarif journalier.' },
-  'jobs.view': { label: 'Consulter les chantiers', group: 'Production', description: 'Devis, avancement, matériaux et paiements.' },
-  'jobs.create': { label: 'Créer un chantier ou un devis', group: 'Production', description: 'Nouvelle prestation, avec ses matériaux et sa main-d’œuvre.' },
-  'jobs.update': { label: 'Modifier un chantier', group: 'Production', description: 'Avancement, devis, matériaux et équipe.' },
-  'jobs.delete': { label: 'Annuler un chantier', group: 'Production', description: 'Annulation avec motif (aucune suppression).', dangerous: true },
+  'jobs.view': { label: 'Consulter les chantiers', group: 'Production', description: 'Demandes, devis, chantiers, catalogue des prestations, avancement et paiements.' },
+  'jobs.create': { label: 'Créer une demande, un devis ou un chantier', group: 'Production', description: 'Enregistrer la demande d’un client, établir un devis, ouvrir un chantier.' },
+  'jobs.update': { label: 'Modifier un chantier', group: 'Production', description: 'Prestations, étapes, équipe, sous-traitance, matériaux ; statut des demandes et des devis.' },
+  'services.manage': { label: 'Gérer les prestations', group: 'Production', description: 'Catalogue des prestations du magasin : créer, tarifer, désactiver, archiver.' },
+  'jobs.delete': { label: 'Annuler un chantier ou un devis', group: 'Production', description: 'Annulation avec motif (aucune suppression).', dangerous: true },
 
   'stores.view': { label: 'Voir ses magasins', group: 'Magasins', description: 'Fiche et indicateurs des magasins auxquels on est affecté.' },
   'stores.manage': { label: 'Gérer les magasins', group: 'Magasins', description: 'Créer, modifier, suspendre ou archiver un magasin, désigner son gérant.', dangerous: true },

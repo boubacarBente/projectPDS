@@ -28,6 +28,14 @@ export type Settings = {
   purchasePrefix: string;
   receiptPrefix: string;
   jobPrefix: string;
+  /** Devis de prestation (document distinct du chantier). */
+  quotePrefix: string;
+  /** Demandes de prestation des clients. */
+  requestPrefix: string;
+  /** Code automatique des prestations du catalogue d'un magasin. */
+  servicePrefix: string;
+  /** Durée de validité proposée pour un nouveau devis (jours). */
+  quoteValidityDays: number;
   transferPrefix: string;
   inventoryPrefix: string;
   defaultTaxRate: number;
@@ -98,6 +106,10 @@ export const DEFAULT_SETTINGS: Settings = {
   purchasePrefix: 'ACH',
   receiptPrefix: 'REC',
   jobPrefix: 'CHA',
+  quotePrefix: 'DEV',
+  requestPrefix: 'DEM',
+  servicePrefix: 'PRE',
+  quoteValidityDays: 30,
   transferPrefix: 'TRF',
   inventoryPrefix: 'INV',
   // Q2 : taux par défaut 0 % (facturation sans TVA), champ présent et configurable.
@@ -151,6 +163,7 @@ export const LOCAL_ONLY_SETTINGS_KEYS: (keyof Settings)[] = [
   'autoBackupEnabled',
   'backupExternalDir',
   'backupRetentionDays',
+  'quoteValidityDays',
 ];
 
 export const SETTINGS_KEY_LABELS: Partial<Record<keyof Settings, string>> = {

@@ -5,6 +5,7 @@ import {
   parseId,
   readJson,
   requireAction,
+  assertStoreVisible,
   requireUser,
   toBool,
   toNumber,
@@ -36,6 +37,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const user = await requireAction('workers.manage');
     const { id } = await params;
     const workerId = parseId(id);
+    // Un ouvrier rattaché à un autre magasin ne se modifie pas d'ici ; un ouvrier commun, si.
+    const existing = await getWorker(workerId);
+    if (existing?.storeId) assertStoreVisible(user, existing.storeId);
     const body = await readJson<any>(request);
 
     const patch: Record<string, unknown> = {};
@@ -45,6 +49,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.specialty !== undefined) patch.specialty = body.specialty;
     if (body.dailyRate !== undefined) patch.dailyRate = toNumber(body.dailyRate, 0);
     if (body.isActive !== undefined) patch.isActive = toBool(body.isActive, true);
+    if (body.team !== undefined) patch.team = body.team;
+    if (body.shared !== undefined && user.allStores) patch.storeId = body.shared === true ? null : user.storeId;
 
     const worker = await updateWorker(workerId, patch as any);
 
@@ -71,6 +77,9 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const user = await requireAction('workers.manage');
     const { id } = await params;
     const workerId = parseId(id);
+    // Un ouvrier rattaché à un autre magasin ne se modifie pas d'ici ; un ouvrier commun, si.
+    const existing = await getWorker(workerId);
+    if (existing?.storeId) assertStoreVisible(user, existing.storeId);
 
     const reactivate = request.nextUrl.searchParams.get('reactivate') === 'true';
 

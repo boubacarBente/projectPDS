@@ -159,6 +159,53 @@ export async function validateExpenseCategory(value: unknown): Promise<string> {
   return canonical;
 }
 
+/**
+ * Rattachement d'une dépense à un document : **vérifié côté serveur**.
+ *
+ * Avant les prestations de chantier, `reference_type` / `reference_id` étaient
+ * recopiés tels quels depuis le navigateur : rien n'empêchait de rattacher une
+ * dépense de Kaloum à un chantier de Matoto (cahier prestations §19). Seuls
+ * trois rattachements existent : aucun (`expense`), un chantier
+ * (`service_job`) ou des travaux sous-traités (`job_subcontract`) — du même
+ * magasin, et non annulés.
+ */
+async function validateExpenseReference(
+  type: string | null | undefined,
+  id: number | null | undefined,
+  storeId: number,
+): Promise<{ referenceType: string; referenceId: number | null }> {
+  const kind = type || 'expense';
+  if (kind === 'expense') return { referenceType: 'expense', referenceId: null };
+  const refId = Number(id);
+  if (!Number.isInteger(refId) || refId <= 0) throw new ValidationError('Document rattaché invalide.');
+
+  if (kind === 'service_job') {
+    const job = await rawGet<{ store_id: number; status: string }>('SELECT store_id, status FROM service_jobs WHERE id = ?', [refId]);
+    if (!job) throw new NotFoundError('Chantier introuvable');
+    if (Number(job.store_id) !== Number(storeId)) {
+      throw new ValidationError('Ce chantier appartient à un autre magasin : sa dépense se saisit depuis ce magasin.');
+    }
+    if (job.status === 'cancelled') throw new ValidationError('Ce chantier est annulé : il n’accepte plus de dépense.');
+    return { referenceType: kind, referenceId: refId };
+  }
+  if (kind === 'job_subcontract') {
+    const sub = await rawGet<{ store_id: number; status: string; job_status: string }>(
+      `SELECT j.store_id, s.status, j.status AS job_status FROM job_subcontracts s
+       JOIN service_jobs j ON j.id = s.job_id WHERE s.id = ?`,
+      [refId],
+    );
+    if (!sub) throw new NotFoundError('Sous-traitance introuvable');
+    if (Number(sub.store_id) !== Number(storeId)) {
+      throw new ValidationError('Ces travaux appartiennent à un chantier d’un autre magasin.');
+    }
+    if (sub.status === 'cancelled' || sub.job_status === 'cancelled') {
+      throw new ValidationError('Ces travaux sous-traités sont annulés : aucun paiement ne peut plus y être rattaché.');
+    }
+    return { referenceType: kind, referenceId: refId };
+  }
+  throw new ValidationError('Type de rattachement inconnu.');
+}
+
 function validateAmount(value: unknown): number {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -309,6 +356,8 @@ export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
   const threshold = Number(settings.expenseApprovalThreshold ?? 0) || 0;
   const needsApproval = threshold > 0 && amount > threshold && !input.canSkipApproval;
 
+  const reference = await validateExpenseReference(input.referenceType, input.referenceId, input.storeId);
+
   return withTransaction(async () => {
     const inserted = await db
       .insert(expenses)
@@ -318,8 +367,8 @@ export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
         amount,
         description,
         paymentMethod,
-        referenceType: input.referenceType ?? 'expense',
-        referenceId: input.referenceId ?? null,
+        referenceType: reference.referenceType,
+        referenceId: reference.referenceId,
         beneficiary,
         date,
         userId: input.userId ?? null,
@@ -480,6 +529,11 @@ export async function updateExpense(
       referenceType: patch.referenceType !== undefined ? patch.referenceType : previous.referenceType,
       referenceId: patch.referenceId !== undefined ? patch.referenceId : previous.referenceId,
     };
+    if (patch.referenceType !== undefined || patch.referenceId !== undefined) {
+      const reference = await validateExpenseReference(next.referenceType, next.referenceId, Number(previous.storeId));
+      next.referenceType = reference.referenceType;
+      next.referenceId = reference.referenceId;
+    }
 
     /*
      * Une hausse de montant au-delà du seuil d'approbation ne doit pas

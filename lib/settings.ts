@@ -130,7 +130,7 @@ export async function nextSequence(name: string, year = new Date().getFullYear()
   return Number(row[0]?.value ?? 1);
 }
 
-export type DocumentKind = 'invoice' | 'purchase' | 'receipt' | 'job' | 'transfer' | 'inventory';
+export type DocumentKind = 'invoice' | 'purchase' | 'receipt' | 'job' | 'quote' | 'request' | 'transfer' | 'inventory';
 
 /** Table et colonne portant le numéro, pour vérifier qu'il est libre. */
 const DOCUMENT_TARGETS: Record<DocumentKind, { table: string; column: string }> = {
@@ -138,6 +138,8 @@ const DOCUMENT_TARGETS: Record<DocumentKind, { table: string; column: string }> 
   purchase: { table: 'purchase_invoices', column: 'reference' },
   receipt: { table: 'payments', column: 'receipt_number' },
   job: { table: 'service_jobs', column: 'reference' },
+  quote: { table: 'quotes', column: 'reference' },
+  request: { table: 'service_requests', column: 'reference' },
   transfer: { table: 'stock_transfers', column: 'reference' },
   inventory: { table: 'inventories', column: 'reference' },
 };
@@ -170,6 +172,8 @@ export async function nextDocumentNumber(kind: DocumentKind, storeId?: number | 
     purchase: settings.purchasePrefix,
     receipt: settings.receiptPrefix,
     job: settings.jobPrefix,
+    quote: settings.quotePrefix,
+    request: settings.requestPrefix,
     transfer: settings.transferPrefix,
     inventory: settings.inventoryPrefix,
   }[kind];

@@ -69,6 +69,26 @@ export const SYNCED_TABLES: SyncedTable[] = [
     name: 'purchase_invoice_items',
     scope: { kind: 'child', parentTable: 'purchase_invoices', parentColumn: 'invoice_id' },
   },
+  /*
+   * Prestations de chantier : le catalogue est **local au magasin** (portée
+   * store, pas hqOnly). Demandes et devis passent **avant** les chantiers, qui
+   * les référencent (devis d'origine, demande d'origine).
+   */
+  { name: 'services', scope: { kind: 'store', column: 'store_id' }, naturalKey: ['store_id', 'code'] },
+  {
+    name: 'service_price_history',
+    scope: { kind: 'child', parentTable: 'services', parentColumn: 'service_id' },
+  },
+  { name: 'service_requests', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'service_request_items',
+    scope: { kind: 'child', parentTable: 'service_requests', parentColumn: 'request_id' },
+  },
+  { name: 'quotes', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'quote_items',
+    scope: { kind: 'child', parentTable: 'quotes', parentColumn: 'quote_id' },
+  },
   { name: 'service_jobs', scope: { kind: 'store', column: 'store_id' } },
   {
     name: 'service_job_materials',
@@ -76,6 +96,18 @@ export const SYNCED_TABLES: SyncedTable[] = [
   },
   {
     name: 'service_job_workers',
+    scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
+  },
+  {
+    name: 'service_job_items',
+    scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
+  },
+  {
+    name: 'job_stages',
+    scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
+  },
+  {
+    name: 'job_subcontracts',
     scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
   },
   { name: 'stock_transfers', scope: { kind: 'transfer' } },
@@ -149,7 +181,7 @@ export const SYNCED_TABLES: SyncedTable[] = [
       {
         typeColumn: 'reference_type',
         idColumn: 'reference_id',
-        targets: { service_job: 'service_jobs' },
+        targets: { service_job: 'service_jobs', job_subcontract: 'job_subcontracts' },
       },
     ],
   },

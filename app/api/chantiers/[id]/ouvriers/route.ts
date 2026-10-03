@@ -1,6 +1,17 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction, requireActiveStore, toNumber, ValidationError } from '@/lib/api';
-import { addJobWorker, listJobWorkers, removeJobWorker } from '@/lib/jobs';
+import {
+  assertStoreVisible,
+  fail,
+  NotFoundError,
+  ok,
+  parseId,
+  readJson,
+  requireAction,
+  requireActiveStore,
+  toNumber,
+  ValidationError,
+} from '@/lib/api';
+import { addJobTeam, addJobWorker, getServiceJobRow, listJobWorkers, removeJobWorker } from '@/lib/jobs';
 import { writeAudit } from '@/lib/audit';
 
 type Params = { params: Promise<{ id: string }> };
@@ -8,8 +19,12 @@ type Params = { params: Promise<{ id: string }> };
 /** GET /api/chantiers/[id]/ouvriers — équipe affectée au chantier. */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('jobs.view');
+    const user = await requireAction('jobs.view');
     const { id } = await params;
+    // Cloisonnement : on ne lit pas l'équipe ou les matériaux d'un chantier d'un autre magasin.
+    const job = await getServiceJobRow(parseId(id));
+    if (!job) throw new NotFoundError('Chantier introuvable');
+    assertStoreVisible(user, job.storeId);
 
     return ok({ data: await listJobWorkers(parseId(id)) });
   } catch (error) {
@@ -31,6 +46,20 @@ export async function POST(request: NextRequest, { params }: Params) {
     const body = await readJson<any>(request);
 
     const storeId = await requireActiveStore(user);
+
+    // « Affecter une équipe » : tous les ouvriers actifs de l'équipe d'un coup.
+    if (typeof body.team === 'string' && body.team.trim()) {
+      const count = await addJobTeam(jobId, body.team, toNumber(body.days, 0), storeId);
+      await writeAudit({
+        user,
+        action: 'update',
+        entity: 'service_job',
+        entityId: jobId,
+        details: { addedTeam: body.team, members: count, days: toNumber(body.days, 0) },
+      });
+      return ok({ added: count }, 201);
+    }
+
     const assignment = await addJobWorker(jobId, {
       workerId: toNumber(body.workerId, 0) || null,
       workerName: body.workerName ?? null,

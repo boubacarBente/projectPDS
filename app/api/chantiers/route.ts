@@ -7,26 +7,22 @@ import {
   requireAction,
   requireActiveStore,
   scopeFromRequest,
+  toBool,
   toNumber,
 } from '@/lib/api';
-import {
-  createServiceJob,
-  getJobsSummary,
-  isJobStatus,
-  isQuoteStatus,
-  listServiceJobs,
-} from '@/lib/jobs';
+import { createServiceJob, getJobsSummary, isJobStatus, listServiceJobs } from '@/lib/jobs';
+import { canViewSalesProfit } from '@/lib/sales';
 import { writeAudit } from '@/lib/audit';
 
 /**
- * GET /api/chantiers — liste paginée des prestations (§27.2).
+ * GET /api/chantiers — liste paginée des chantiers (README §19).
  *
- * Filtres : `search`, `category`, `status`, `quoteStatus`, `customerId`,
- * `from`, `to`, `page`, `limit`.
+ * Filtres : `search`, `category`, `status` (`open` = non clos), `late=1`,
+ * `customerId`, `from`, `to`, `page`, `limit`.
  *
- * `?stats=1` renvoie la synthèse (`getJobsSummary`) au lieu de la liste : les
- * cartes de la page `/chantiers` ne peuvent pas se déduire de la page courante,
- * et ce module n'a pas de route `/stats` dédiée.
+ * `?stats=1` renvoie la synthèse (`getJobsSummary`) au lieu de la liste. Les
+ * coûts et la marge n'y figurent que pour qui détient `balances.view`
+ * (invariant n° 13 : masquer une carte ne protège rien).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -40,8 +36,23 @@ export async function GET(request: NextRequest) {
         scope,
         from: params.get('from') ?? undefined,
         to: params.get('to') ?? undefined,
+        category: params.get('category') ?? undefined,
       });
-      return ok({ summary });
+      const canSeeCosts = await canViewSalesProfit(user);
+      return ok({
+        summary: canSeeCosts
+          ? summary
+          : {
+              ...summary,
+              materialsCost: null,
+              laborCost: null,
+              subcontractCost: null,
+              expensesCost: null,
+              totalCost: null,
+              margin: null,
+              marginPercent: null,
+            },
+      });
     }
 
     const { page, limit } = parsePagination(params);
@@ -52,6 +63,7 @@ export async function GET(request: NextRequest) {
       category: params.get('category') ?? undefined,
       status: params.get('status') ?? undefined,
       quoteStatus: params.get('quoteStatus') ?? undefined,
+      late: toBool(params.get('late'), false),
       customerId: toNumber(params.get('customerId'), 0) || undefined,
       from: params.get('from') ?? undefined,
       to: params.get('to') ?? undefined,
@@ -65,7 +77,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** POST /api/chantiers — création d'un chantier (devis ou prestation directe). */
+/**
+ * POST /api/chantiers — ouverture d'un chantier **dans le magasin actif**
+ * (sans devis préalable). `items` = lignes de prestations du catalogue du
+ * magasin ; sans ligne, `amount` est le montant contractuel.
+ */
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('jobs.create');
@@ -81,12 +97,21 @@ export async function POST(request: NextRequest) {
       description: body.description ?? null,
       startDate: body.startDate ?? null,
       endDate: body.endDate ?? null,
+      actualStartDate: body.actualStartDate ?? null,
       status: isJobStatus(body.status) ? body.status : undefined,
-      quoteStatus: isQuoteStatus(body.quoteStatus) ? body.quoteStatus : undefined,
-      quoteMaterials: toNumber(body.quoteMaterials, 0),
-      quoteLabor: toNumber(body.quoteLabor, 0),
+      amount: body.amount === undefined || body.amount === null || body.amount === '' ? null : toNumber(body.amount, 0),
+      progress: body.progress ?? null,
+      responsibleUserId: body.responsibleUserId ? toNumber(body.responsibleUserId, 0) : null,
       notes: body.notes ?? null,
       userId: user.id,
+      items: Array.isArray(body.items)
+        ? body.items.map((item: any) => ({
+            serviceId: toNumber(item.serviceId, 0),
+            quantity: toNumber(item.quantity, 0),
+            unitPrice: item.unitPrice === undefined || item.unitPrice === '' ? null : toNumber(item.unitPrice, 0),
+            discountPercent: toNumber(item.discountPercent, 0),
+          }))
+        : [],
     });
 
     await writeAudit({
@@ -99,7 +124,8 @@ export async function POST(request: NextRequest) {
         customer: job.customerName,
         category: job.category,
         siteAddress: job.siteAddress,
-        quoteTotal: job.quoteTotal,
+        total: job.total,
+        lines: job.itemsCount,
       },
     });
 

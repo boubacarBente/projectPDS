@@ -81,6 +81,7 @@ const ACTION_LABELS: Record<Action, string> = {
   'jobs.create': 'Chantiers — créer',
   'jobs.update': 'Chantiers — modifier',
   'jobs.delete': 'Chantiers — annuler',
+  'services.manage': 'Prestations — gérer le catalogue',
   'stores.view': 'Magasins — consulter',
   'stores.manage': 'Magasins — gérer',
   'stores.viewAll': 'Magasins — vue consolidée',

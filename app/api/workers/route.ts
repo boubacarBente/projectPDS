@@ -7,10 +7,11 @@ import {
   required,
   requireAction,
   requireUser,
+  scopeFromRequest,
   toBool,
   toNumber,
 } from '@/lib/api';
-import { createWorker, isWorkerRole, listWorkers } from '@/lib/workers';
+import { createWorker, isWorkerRole, listWorkerTeams, listWorkers } from '@/lib/workers';
 import { writeAudit } from '@/lib/audit';
 import { parseListSort } from '@/lib/list-sort';
 
@@ -24,12 +25,21 @@ import { parseListSort } from '@/lib/list-sort';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
+    /*
+     * Ouvriers du magasin actif (ou des magasins demandés par `?store=`) **et**
+     * ouvriers communs : un magasin ne voit pas l'équipe d'un autre (cahier §11).
+     */
+    const scope = scopeFromRequest(user, request);
+
+    if (params.get('teams') === '1') return ok({ teams: await listWorkerTeams(scope) });
 
     const result = await listWorkers({
+      scope,
+      team: params.get('team') ?? undefined,
       search: params.get('search')?.trim() || undefined,
       role: params.get('role') ?? undefined,
       includeInactive: toBool(params.get('includeInactive'), false),
@@ -57,6 +67,9 @@ export async function POST(request: NextRequest) {
       specialty: body.specialty ?? null,
       dailyRate: toNumber(body.dailyRate, 0),
       isActive: toBool(body.isActive, true),
+      team: body.team ?? null,
+      // Rattaché au magasin actif ; « commun » réservé à qui voit tous les magasins.
+      storeId: body.shared === true && user.allStores ? null : user.storeId,
     });
 
     await writeAudit({

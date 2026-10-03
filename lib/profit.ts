@@ -201,9 +201,10 @@ export async function getPeriodResult(from: string, to: string, scope: StoreScop
         [from, to],
       ),
       rawGet<{ count: number; total: number | null }>(
+        // Un ancien chantier resté au stade « devis » (v1) n'a jamais été vendu.
         `SELECT COUNT(*) AS count, COALESCE(SUM(total), 0) AS total
          FROM service_jobs
-         WHERE status <> 'cancelled' AND ${v}
+         WHERE status NOT IN ('cancelled', 'quote') AND ${v}
            AND date(start_date) >= date(?) AND date(start_date) <= date(?)`,
         [from, to],
       ),

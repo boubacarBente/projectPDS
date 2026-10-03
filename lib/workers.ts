@@ -1,9 +1,14 @@
 /**
  * Ouvriers — référentiel de main-d'œuvre des chantiers (README §6.3, §19).
  *
- * Le référentiel est saisi une fois (partagé entre magasins) et les
+ * Le référentiel est saisi une fois et les
  * affectations (`service_job_workers`) portent leurs propres `days` /
  * `daily_rate`.
+ *
+ * Depuis les prestations multi-magasins (cahier §11), un ouvrier peut être
+ * **rattaché à un magasin** (`store_id`) ou rester **commun** (`null`, cas de
+ * tous les ouvriers d'avant la v2). Un magasin voit ses ouvriers et les
+ * ouvriers communs. Le champ `team` regroupe des ouvriers en équipe.
  *
  * ⚠️ `worker_name` reste saisissable dans les tables de liaison : un
  * **journalier ponctuel** qui n'est pas enregistré ici doit pouvoir être payé
@@ -42,6 +47,10 @@ export type WorkerRow = {
   specialty: string | null;
   dailyRate: number;
   isActive: boolean;
+  /** Magasin de rattachement ; `null` = ouvrier commun à tous les magasins. */
+  storeId: number | null;
+  storeName: string | null;
+  team: string | null;
   /** Nombre d'affectations (chantiers + fabrications), calculé. */
   assignmentCount: number;
   /** Jours cumulés, calculés — jamais stockés. */
@@ -58,12 +67,17 @@ export type WorkerInput = {
   specialty?: string | null;
   dailyRate?: number;
   isActive?: boolean;
+  storeId?: number | null;
+  team?: string | null;
 };
 
 export type WorkerListOptions = {
   search?: string;
   role?: string;
   includeInactive?: boolean;
+  /** Magasins visibles : leurs ouvriers + les ouvriers communs. Absent = tous. */
+  scope?: number[];
+  team?: string;
   page?: number;
   limit?: number;
   /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
@@ -82,6 +96,9 @@ type WorkerSqlRow = {
   specialty: string | null;
   daily_rate: number | null;
   is_active: number;
+  store_id: number | null;
+  store_name: string | null;
+  team: string | null;
   assignment_count: number | null;
   total_days: number | null;
   total_labor_cost: number | null;
@@ -94,10 +111,12 @@ type WorkerSqlRow = {
  */
 const WORKER_SELECT = `
   SELECT w.id, w.name, w.phone, w.role, w.specialty, w.daily_rate, w.is_active, w.created_at,
+         w.store_id, st.name AS store_name, w.team,
          (SELECT COUNT(*) FROM service_job_workers sjw WHERE sjw.worker_id = w.id) AS assignment_count,
          COALESCE((SELECT SUM(sjw.days) FROM service_job_workers sjw WHERE sjw.worker_id = w.id), 0) AS total_days,
          COALESCE((SELECT SUM(sjw.amount) FROM service_job_workers sjw WHERE sjw.worker_id = w.id), 0) AS total_labor_cost
   FROM workers w
+  LEFT JOIN stores st ON st.id = w.store_id
 `;
 
 function mapWorkerRow(row: WorkerSqlRow): WorkerRow {
@@ -109,6 +128,9 @@ function mapWorkerRow(row: WorkerSqlRow): WorkerRow {
     specialty: row.specialty,
     dailyRate: Number(row.daily_rate ?? 0),
     isActive: Boolean(row.is_active),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
+    team: row.team ?? null,
     assignmentCount: Number(row.assignment_count ?? 0),
     totalDays: Number(row.total_days ?? 0),
     totalLaborCost: Number(row.total_labor_cost ?? 0),
@@ -133,9 +155,17 @@ export async function listWorkers(
     args.push(options.role);
   }
   if (options.search) {
-    where.push('(w.name LIKE ? OR w.phone LIKE ? OR w.specialty LIKE ?)');
+    where.push('(w.name LIKE ? OR w.phone LIKE ? OR w.specialty LIKE ? OR w.team LIKE ?)');
     const like = `%${options.search}%`;
-    args.push(like, like, like);
+    args.push(like, like, like, like);
+  }
+  if (options.scope) {
+    const ids = options.scope.filter((id) => Number.isInteger(id) && id > 0);
+    where.push(ids.length ? `(w.store_id IS NULL OR w.store_id IN (${ids.join(',')}))` : 'w.store_id IS NULL');
+  }
+  if (options.team?.trim()) {
+    where.push('w.team = ?');
+    args.push(options.team.trim());
   }
 
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -146,7 +176,7 @@ export async function listWorkers(
   );
 
   const countRow = await rawGet<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM workers w ${whereSql}`,
+    `SELECT COUNT(*) AS total FROM workers w LEFT JOIN stores st ON st.id = w.store_id ${whereSql}`,
     args,
   );
 
@@ -207,6 +237,8 @@ export async function createWorker(input: WorkerInput): Promise<WorkerRow> {
       specialty: input.specialty?.trim() || null,
       dailyRate: normalizeRate(input.dailyRate),
       isActive: input.isActive ?? true,
+      storeId: input.storeId ?? null,
+      team: input.team?.trim() || null,
     })
     .returning({ id: workers.id, syncId: workers.syncId });
 
@@ -227,6 +259,8 @@ export async function updateWorker(id: number, patch: Partial<WorkerInput>): Pro
   if (patch.specialty !== undefined) values.specialty = patch.specialty?.trim() || null;
   if (patch.dailyRate !== undefined) values.dailyRate = normalizeRate(patch.dailyRate);
   if (patch.isActive !== undefined) values.isActive = Boolean(patch.isActive);
+  if (patch.storeId !== undefined) values.storeId = patch.storeId;
+  if (patch.team !== undefined) values.team = patch.team?.trim() || null;
 
   const updated = await db
     .update(workers)
@@ -265,4 +299,16 @@ export async function reactivateWorker(id: number): Promise<void> {
 
   if (updated.length === 0) throw new NotFoundError('Ouvrier introuvable');
 
+}
+
+/** Noms d'équipe connus (pour le choix « Affecter une équipe »). */
+export async function listWorkerTeams(scope?: number[]): Promise<{ team: string; count: number }[]> {
+  const ids = (scope ?? []).filter((id) => Number.isInteger(id) && id > 0);
+  const storeFilter = scope ? (ids.length ? `AND (store_id IS NULL OR store_id IN (${ids.join(',')}))` : 'AND store_id IS NULL') : '';
+  const rows = await rawAll<{ team: string; count: number }>(
+    `SELECT team, COUNT(*) AS count FROM workers
+     WHERE is_active = 1 AND team IS NOT NULL AND team <> '' ${storeFilter}
+     GROUP BY team ORDER BY team COLLATE NOCASE`,
+  );
+  return rows.map((r) => ({ team: r.team, count: Number(r.count) }));
 }

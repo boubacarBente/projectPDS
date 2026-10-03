@@ -43,6 +43,13 @@
       "when": 1790882326687,
       "tag": "0005_multi_magasins",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791038761152,
+      "tag": "0006_prestations_chantier",
+      "breakpoints": true
     }
   ]
 }

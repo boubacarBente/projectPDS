@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
       debtorsOnly: toBool(params.get('debtors'), false),
       includeInactive: toBool(params.get('includeInactive'), false),
       inactiveOnly: toBool(params.get('inactive'), false),
+      subcontractorsOnly: toBool(params.get('subcontractors'), false),
       // `recent` par défaut : le dernier fournisseur enregistré en premier.
       sort: parseListSort(params.get('sort')),
     });
@@ -51,6 +52,8 @@ export async function POST(request: NextRequest) {
       address: body.address ?? null,
       notes: body.notes ?? null,
       isActive: toBool(body.isActive, true),
+      isSubcontractor: toBool(body.isSubcontractor, false),
+      specialty: body.specialty ?? null,
     });
 
     await writeAudit({

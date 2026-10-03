@@ -42,6 +42,8 @@ const KNOWN_TABLES = new Set([
   'service_job_workers', 'stock_transfers', 'stock_transfer_items', 'stock_transfer_events',
   'inventories', 'inventory_items', 'payments', 'cash_sessions', 'cash_movements', 'stock_movements',
   'expenses', 'report_deliveries', 'audit_logs',
+  'services', 'service_price_history', 'service_requests', 'service_request_items', 'quotes',
+  'quote_items', 'service_job_items', 'job_stages', 'job_subcontracts',
 ]);
 
 export function createPool(url = DATABASE_URL) {

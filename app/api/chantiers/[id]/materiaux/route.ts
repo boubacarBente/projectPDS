@@ -1,6 +1,17 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parseId, readJson, requireAction, requireActiveStore, toNumber, ValidationError } from '@/lib/api';
-import { addJobMaterial, listJobMaterials, removeJobMaterial } from '@/lib/jobs';
+import {
+  assertStoreVisible,
+  fail,
+  NotFoundError,
+  ok,
+  parseId,
+  readJson,
+  requireAction,
+  requireActiveStore,
+  toNumber,
+  ValidationError,
+} from '@/lib/api';
+import { addJobMaterial, getServiceJobRow, listJobMaterials, removeJobMaterial } from '@/lib/jobs';
 import { writeAudit } from '@/lib/audit';
 
 type Params = { params: Promise<{ id: string }> };
@@ -8,8 +19,12 @@ type Params = { params: Promise<{ id: string }> };
 /** GET /api/chantiers/[id]/materiaux — lignes de matériaux du chantier. */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    await requireAction('jobs.view');
+    const user = await requireAction('jobs.view');
     const { id } = await params;
+    // Cloisonnement : pas de lecture des matériaux d'un chantier d'un autre magasin.
+    const job = await getServiceJobRow(parseId(id));
+    if (!job) throw new NotFoundError('Chantier introuvable');
+    assertStoreVisible(user, job.storeId);
 
     return ok({ data: await listJobMaterials(parseId(id)) });
   } catch (error) {

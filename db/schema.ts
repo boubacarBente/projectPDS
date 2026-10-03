@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex, index, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, uniqueIndex, index, primaryKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { relations, sql } from 'drizzle-orm';
 
 /**
@@ -193,6 +193,14 @@ export const suppliers = sqliteTable('suppliers', {
   phone: text('phone'),
   address: text('address'),
   notes: text('notes'),
+  /**
+   * Sous-traitant de chantier (cahier prestations §12) : un fournisseur de
+   * **travaux**. Même fiche et même référentiel commun ; ce drapeau le propose
+   * dans « confier des travaux » d'un chantier.
+   */
+  isSubcontractor: integer('is_subcontractor', { mode: 'boolean' }).notNull().default(false),
+  /** Métier du sous-traitant (électricien, carreleur…). */
+  specialty: text('specialty'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: createdAt(),
   ...syncCols(),
@@ -544,6 +552,13 @@ export const workers = sqliteTable('workers', {
     .default('worker'),
   specialty: text('specialty'),
   dailyRate: real('daily_rate').notNull().default(0),
+  /**
+   * Magasin de rattachement (cahier prestations §11). `null` = ouvrier commun,
+   * proposé à tous les magasins (cas de tous les ouvriers créés avant la v2).
+   */
+  storeId: integer('store_id').references(() => stores.id),
+  /** Nom d'équipe : « Affecter une équipe » ajoute d'un coup ses ouvriers actifs. */
+  team: text('team'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: createdAt(),
   ...syncCols(),
@@ -572,9 +587,9 @@ export const serviceJobs = sqliteTable('service_jobs', {
   description: text('description'),
   startDate: text('start_date'),
   endDate: text('end_date'),
-  /** quote | pending | in_progress | completed | cancelled */
+  /** pending (préparation) | planned | in_progress | suspended | completed | cancelled ; quote = chantier-devis v1 */
   status: text('status', {
-    enum: ['quote', 'pending', 'in_progress', 'completed', 'cancelled'],
+    enum: ['quote', 'pending', 'planned', 'in_progress', 'suspended', 'completed', 'cancelled'],
   })
     .notNull()
     .default('quote'),
@@ -593,6 +608,16 @@ export const serviceJobs = sqliteTable('service_jobs', {
   paymentStatus: text('payment_status').notNull().default('unpaid'),
   userId: integer('user_id').references(() => users.id),
   notes: text('notes'),
+  /** Responsable du chantier (utilisateur). */
+  responsibleUserId: integer('responsible_user_id').references(() => users.id),
+  /** Dates **réelles** ; `start_date` / `end_date` restent les dates **prévues**. */
+  actualStartDate: text('actual_start_date'),
+  actualEndDate: text('actual_end_date'),
+  /** Avancement saisi (0–100) ; remplacé par la moyenne des étapes quand il y en a. */
+  progress: integer('progress'),
+  /** Devis et demande d'origine (traçabilité de la conversion). */
+  quoteId: integer('quote_id').references((): AnySQLiteColumn => quotes.id),
+  requestId: integer('request_id').references((): AnySQLiteColumn => serviceRequests.id),
   createdAt: createdAt(),
   ...syncCols(),
 }, (t) => [
@@ -634,6 +659,215 @@ export const serviceJobWorkers = sqliteTable('service_job_workers', {
 }, (t) => [
   index('service_job_workers_job_idx').on(t.jobId),
 ]);
+
+/* ------------------------------------------------------------------ *
+ * 6 bis. Prestations de chantier par magasin (cahier « Prestations »)
+ *
+ * Principe directeur : le **catalogue de prestations est local au magasin**
+ * (contrairement au catalogue de produits, central). Les catégories restent
+ * la liste commune `settings.jobCategories`, pour que les rapports puissent
+ * comparer les magasins.
+ *
+ * Toute ligne de devis ou de chantier **fige** le nom, l'unité et le prix au
+ * moment de la saisie : modifier le catalogue ne change jamais un document
+ * déjà établi (critère de recette n° 11).
+ * ------------------------------------------------------------------ */
+
+export const SERVICE_STATUSES = ['active', 'inactive', 'archived'] as const;
+
+export const services = sqliteTable('services', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  /** Unique dans le magasin (deux magasins peuvent avoir le même code). */
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  /** Libellé de la liste commune `settings.jobCategories`. */
+  category: text('category').notNull(),
+  description: text('description'),
+  unit: text('unit').notNull().default('forfait'),
+  /** Prix indicatif du magasin. */
+  unitPrice: real('unit_price').notNull().default(0),
+  status: text('status', { enum: SERVICE_STATUSES }).notNull().default('active'),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  uniqueIndex('services_store_code_unique').on(t.storeId, t.code),
+  index('services_store_status_idx').on(t.storeId, t.status),
+]);
+
+/** Historique des prix d'une prestation (une ligne par changement). */
+export const servicePriceHistory = sqliteTable('service_price_history', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  serviceId: integer('service_id').notNull().references(() => services.id),
+  oldPrice: real('old_price').notNull(),
+  newPrice: real('new_price').notNull(),
+  userId: integer('user_id').references(() => users.id),
+  userName: text('user_name'),
+  /** Date métier du changement. */
+  date: text('date').notNull(),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('service_price_history_service_idx').on(t.serviceId),
+]);
+
+export const REQUEST_STATUSES = [
+  'new',
+  'study',
+  'visit',
+  'quote_to_prepare',
+  'quote_sent',
+  'accepted',
+  'refused',
+  'converted',
+] as const;
+
+/** Demande d'un client (besoin exprimé, avant le devis). */
+export const serviceRequests = sqliteTable('service_requests', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  reference: text('reference').notNull().unique(),
+  customerId: integer('customer_id').notNull().references(() => customers.id),
+  /** Date métier de la demande. */
+  date: text('date').notNull(),
+  need: text('need').notNull(),
+  siteAddress: text('site_address'),
+  desiredDate: text('desired_date'),
+  status: text('status', { enum: REQUEST_STATUSES }).notNull().default('new'),
+  userId: integer('user_id').references(() => users.id),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('service_requests_store_idx').on(t.storeId, t.date),
+]);
+
+/** Prestations souhaitées dans une demande. */
+export const serviceRequestItems = sqliteTable('service_request_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  requestId: integer('request_id').notNull().references(() => serviceRequests.id),
+  serviceId: integer('service_id').references(() => services.id),
+  serviceName: text('service_name').notNull(),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('service_request_items_request_idx').on(t.requestId),
+]);
+
+/** `expired` n'est pas stocké : il se calcule (date de validité dépassée). */
+export const QUOTE_DOC_STATUSES = ['draft', 'sent', 'accepted', 'refused', 'cancelled'] as const;
+
+/** Devis — document distinct du chantier, converti en chantier une fois accepté. */
+export const quotes = sqliteTable('quotes', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  reference: text('reference').notNull().unique(),
+  customerId: integer('customer_id').notNull().references(() => customers.id),
+  /*
+   * Liens déclarés en clés étrangères : la synchronisation ne traduit d'un poste
+   * à l'autre que les colonnes déclarées comme telles. Le lien inverse (devis →
+   * chantier, demande → devis) se calcule à la lecture, sans colonne.
+   */
+  requestId: integer('request_id').references(() => serviceRequests.id),
+  /** Date métier d'émission. */
+  date: text('date').notNull(),
+  validUntil: text('valid_until'),
+  category: text('category'),
+  title: text('title'),
+  siteAddress: text('site_address'),
+  description: text('description'),
+  status: text('status', { enum: QUOTE_DOC_STATUSES }).notNull().default('draft'),
+  cancelReason: text('cancel_reason'),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  cancelledBy: integer('cancelled_by').references(() => users.id),
+  userId: integer('user_id').references(() => users.id),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('quotes_store_date_idx').on(t.storeId, t.date),
+  index('quotes_customer_idx').on(t.customerId),
+]);
+
+/** Ligne de devis : prix **figé** (instantané du catalogue). */
+export const quoteItems = sqliteTable('quote_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  quoteId: integer('quote_id').notNull().references(() => quotes.id),
+  serviceId: integer('service_id').references(() => services.id),
+  serviceName: text('service_name').notNull(),
+  unit: text('unit').notNull(),
+  quantity: real('quantity').notNull(),
+  unitPrice: real('unit_price').notNull(),
+  /** Remise en pourcentage (0–100). */
+  discountPercent: real('discount_percent').notNull().default(0),
+  amount: real('amount').notNull(),
+  position: integer('position').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('quote_items_quote_idx').on(t.quoteId),
+]);
+
+/** Prestations facturées d'un chantier : elles font le **montant facturé**. */
+export const serviceJobItems = sqliteTable('service_job_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobId: integer('job_id').notNull().references(() => serviceJobs.id),
+  serviceId: integer('service_id').references(() => services.id),
+  serviceName: text('service_name').notNull(),
+  unit: text('unit').notNull(),
+  quantity: real('quantity').notNull(),
+  unitPrice: real('unit_price').notNull(),
+  discountPercent: real('discount_percent').notNull().default(0),
+  amount: real('amount').notNull(),
+  position: integer('position').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('service_job_items_job_idx').on(t.jobId),
+]);
+
+export const STAGE_STATUSES = ['todo', 'in_progress', 'done', 'blocked'] as const;
+
+/** Étapes d'un chantier (avancement détaillé). */
+export const jobStages = sqliteTable('job_stages', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobId: integer('job_id').notNull().references(() => serviceJobs.id),
+  name: text('name').notNull(),
+  serviceId: integer('service_id').references(() => services.id),
+  responsible: text('responsible'),
+  plannedDate: text('planned_date'),
+  actualDate: text('actual_date'),
+  progress: integer('progress').notNull().default(0),
+  status: text('status', { enum: STAGE_STATUSES }).notNull().default('todo'),
+  comment: text('comment'),
+  position: integer('position').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('job_stages_job_idx').on(t.jobId),
+]);
+
+/**
+ * Travaux confiés à un sous-traitant. Le **payé** n'est pas stocké : ce sont
+ * les dépenses rattachées (`expenses.reference_type = 'job_subcontract'`),
+ * qui passent par la caisse et l'approbation comme toute dépense.
+ */
+export const jobSubcontracts = sqliteTable('job_subcontracts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobId: integer('job_id').notNull().references(() => serviceJobs.id),
+  supplierId: integer('supplier_id').notNull().references(() => suppliers.id),
+  work: text('work').notNull(),
+  agreedAmount: real('agreed_amount').notNull().default(0),
+  status: text('status', { enum: ['active', 'cancelled'] }).notNull().default('active'),
+  notes: text('notes'),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('job_subcontracts_job_idx').on(t.jobId),
+]);
+
 
 
 /* ------------------------------------------------------------------ *
