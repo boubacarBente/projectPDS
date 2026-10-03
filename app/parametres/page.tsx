@@ -170,6 +170,10 @@ type FormState = {
   purchasePrefix: string;
   receiptPrefix: string;
   jobPrefix: string;
+  quotePrefix: string;
+  requestPrefix: string;
+  servicePrefix: string;
+  quoteValidityDays: string;
   transferPrefix: string;
   inventoryPrefix: string;
   defaultTaxRate: string;
@@ -205,6 +209,10 @@ function toForm(settings: Settings): FormState {
     purchasePrefix: settings.purchasePrefix,
     receiptPrefix: settings.receiptPrefix,
     jobPrefix: settings.jobPrefix,
+    quotePrefix: settings.quotePrefix,
+    requestPrefix: settings.requestPrefix,
+    servicePrefix: settings.servicePrefix,
+    quoteValidityDays: String(settings.quoteValidityDays ?? 30),
     transferPrefix: settings.transferPrefix,
     inventoryPrefix: settings.inventoryPrefix,
     defaultTaxRate: String(settings.defaultTaxRate),
@@ -301,6 +309,10 @@ export default function ParametresPage() {
       purchasePrefix: form.purchasePrefix,
       receiptPrefix: form.receiptPrefix,
       jobPrefix: form.jobPrefix,
+      quotePrefix: form.quotePrefix,
+      requestPrefix: form.requestPrefix,
+      servicePrefix: form.servicePrefix,
+      quoteValidityDays: Math.max(1, Math.round(Number(form.quoteValidityDays) || 30)),
       transferPrefix: form.transferPrefix,
       inventoryPrefix: form.inventoryPrefix,
       defaultTaxRate: Number(form.defaultTaxRate) || 0,
@@ -789,6 +801,40 @@ export default function ParametresPage() {
                 value={form.jobPrefix}
                 disabled={!canEditCentral}
                 onChange={(e) => set('jobPrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe devis">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.quotePrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('quotePrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe demande de prestation">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.requestPrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('requestPrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe code de prestation" hint="Code automatique des prestations : PRE-001, PRE-002… propre à chaque magasin.">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.servicePrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('servicePrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Validité d’un devis (jours)" hint="Proposée à la création ; au-delà, le devis apparaît « expiré ».">
+              <input
+                type="number"
+                min={1}
+                className="input input-bordered field-rounded w-full tabular"
+                value={form.quoteValidityDays}
+                disabled={!canEditCentral}
+                onChange={(e) => set('quoteValidityDays', e.target.value)}
               />
             </FormField>
             <FormField label="Préfixe transfert">

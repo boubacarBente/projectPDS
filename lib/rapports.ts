@@ -109,7 +109,8 @@ function jobsScope(
   range: { from: string; to: string },
 ): { conditions: string[]; args: SqlArg[]; sql: string } {
   const conditions = [
-    "j.status <> 'cancelled'",
+    // Un ancien chantier resté au stade « devis » (v1) n'a jamais été vendu (même règle que lib/profit.ts).
+    "j.status NOT IN ('cancelled', 'quote')",
     'date(j.start_date) >= date(?)',
     'date(j.start_date) <= date(?)',
     scopeSql('j.store_id', filters.storeIds),
@@ -206,11 +207,11 @@ async function getJobCosts(from: string, to: string, scope: StoreScope): Promise
   const row = await rawGet<any>(
     `SELECT
        (SELECT COUNT(*) FROM service_jobs j
-         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_count,
+         WHERE j.status NOT IN ('cancelled', 'quote') AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_count,
        (SELECT COALESCE(SUM(j.total), 0) FROM service_jobs j
-         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_revenue,
+         WHERE j.status NOT IN ('cancelled', 'quote') AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_revenue,
        (SELECT COALESCE(SUM(j.remaining_amount), 0) FROM service_jobs j
-         WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_outstanding,
+         WHERE j.status NOT IN ('cancelled', 'quote') AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_outstanding,
        (SELECT COALESCE(SUM(m.amount), 0) FROM service_job_materials m
           JOIN service_jobs j ON j.id = m.job_id
          WHERE j.status <> 'cancelled' AND ${js} AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS jobs_material,
