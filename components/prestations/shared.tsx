@@ -664,6 +664,9 @@ const FIELD_LABELS: Record<string, string> = {
   need: 'Besoin',
   desiredDate: 'Date souhaitée',
   serviceIds: 'Prestations souhaitées',
+  total: 'Total',
+  lines: 'Lignes',
+  customer: 'Client',
 };
 
 const STATUS_WORDS: Record<string, string> = {

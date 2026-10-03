@@ -2,443 +2,545 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
-import { ExportDropdown, shareOnWhatsApp } from '@/components/export-dropdown';
-import { Card, ErrorState, SkeletonCards, SkeletonTable } from '@/components/design-system';
+import { ExportDropdown } from '@/components/export-dropdown';
+import { ConfirmDialog } from '@/components/confirm-dialog';
+import { Modal } from '@/components/modal';
+import { DatePicker } from '@/components/date-picker';
+import { Card, ErrorState, FormField, MoneyText, PageSection, SkeletonCards, StageTracker } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
-import { useSettings } from '@/app/parametres/page';
-import {
-  exportCompanyFromSettings,
-  exportDocumentAsImage,
-  exportDocumentAsPDF,
-  renderExportDocument,
-} from '@/lib/export-document';
+import { useAuth } from '@/components/auth-provider';
+import { renderExportDocument } from '@/lib/export-document';
 import { formatDateShort } from '@/lib/date-format';
-import { formatCurrency, formatQuantity } from '@/lib/format';
+import { formatCurrency, today } from '@/lib/format';
+import type { StoreLetterheadView } from '@/lib/settings-schema';
 import {
-  DevisDocument,
-  companyFromSettings,
-  quoteStatusLabel,
+  HistoryTimeline,
+  QUOTE_LABELS,
+  QUOTE_TONES,
+  QuoteStatusBadge,
   readApiError,
-  type QuoteStatus,
-  type ServiceJobDetail,
-} from '@/components/chantiers/chantiers-modals';
-import { applyStoreLetterhead, type StoreLetterheadView } from '@/lib/settings-schema';
+  useResponsibles,
+  type QuoteItemRow,
+  type QuoteRow,
+} from '@/components/prestations/shared';
+import {
+  DocumentShell,
+  LinesBlock,
+  PartiesBlock,
+  TotalsBlock,
+  exportLinesBlock,
+  useDocumentCompany,
+  useDocumentExports,
+  type DocumentLine,
+} from '@/components/prestations/documents';
 
 /* ==================================================================
- * Devis d'un chantier — document imprimable et exportable (README §19).
+ * Devis — document client et suivi commercial (cahier « Prestations » §9).
  *
- * Le devis n'est **pas** un document séparé : il vit dans `service_jobs`
- * (`quote_*` + `quote_status`). Cette page l'imprime, l'exporte en PDF / image,
- * le partage par WhatsApp et permet de faire évoluer son statut d'acceptation.
- *
- * `DOCUMENT_ID` est l'ancre DOM capturée par `lib/export-document.ts` : écran,
- * papier et fichier exporté ne peuvent pas diverger.
+ * Le document ne montre **que** les prestations au prix de vente : aucun coût
+ * interne (matériaux au prix d'achat, tarif des ouvriers) ne sort d'ici —
+ * c'était le défaut de l'ancien devis, imprimé depuis la fiche chantier.
  * ================================================================== */
 
-const DOCUMENT_ID = 'chantier-devis-document';
+const DOCUMENT_ID = 'devis-document';
 
-/** Statuts proposés depuis le devis, dans l'ordre du cycle commercial. */
-const QUOTE_ACTIONS: { status: QuoteStatus; label: string; variant: string }[] = [
-  { status: 'sent', label: 'Marquer « Envoyé »', variant: 'btn-ghost border border-base-300' },
-  { status: 'accepted', label: 'Marquer « Accepté »', variant: 'btn-success' },
-  { status: 'refused', label: 'Marquer « Refusé »', variant: 'btn-error' },
+type Detail = { quote: QuoteRow; items: QuoteItemRow[]; store?: StoreLetterheadView };
+
+const STAGES = [
+  { key: 'draft', label: 'Brouillon' },
+  { key: 'sent', label: 'Envoyé' },
+  { key: 'accepted', label: 'Accepté' },
+  { key: 'converted', label: 'Chantier ouvert' },
 ];
 
-export default function ChantierDevisPage() {
+export default function DevisDetailPage() {
   const params = useParams<{ id: string }>();
-  const jobId = Number(params?.id);
-
-  const { settings } = useSettings();
+  const router = useRouter();
+  const quoteId = Number(params?.id);
   const canUpdate = usePermission('jobs.update');
+  const canCreate = usePermission('jobs.create');
+  const canCancel = usePermission('jobs.delete');
+  const { activeStoreId } = useAuth();
 
-  const [detail, setDetail] = useState<ServiceJobDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const [httpStatus, setHttpStatus] = useState<number | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
-  const [isExporting, setIsExporting] = useState(false);
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!Number.isInteger(jobId) || jobId <= 0) {
-        setError('Identifiant de devis invalide.');
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setError(null);
-      setNotFound(false);
-
-      try {
-        const response = await fetch(`/api/chantiers/${jobId}`, {
-          cache: 'no-store',
-          credentials: 'same-origin',
-          signal,
-        });
-
-        if (response.status === 404) {
-          setNotFound(true);
-          setDetail(null);
-          return;
-        }
-        if (!response.ok) {
-          throw new Error(await readApiError(response, 'Le devis n’a pas pu être chargé.'));
-        }
-
-        setDetail((await response.json()) as ServiceJobDetail);
-      } catch (caught) {
-        if (caught instanceof Error && caught.name === 'AbortError') return;
-        setDetail(null);
-        setError(caught instanceof Error ? caught.message : 'Le devis n’a pas pu être chargé.');
-      } finally {
-        if (!signal?.aborted) setIsLoading(false);
-      }
-    },
-    [jobId],
-  );
+  const [isWorking, setIsWorking] = useState(false);
+  const [isConvertOpen, setIsConvertOpen] = useState(false);
+  const [isCancelOpen, setIsCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
+    setError(null);
+    fetch(`/api/devis/${quoteId}`, { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
+      .then(async (response) => {
+        setHttpStatus(response.status);
+        if (!response.ok) throw new Error(await readApiError(response, 'Le devis n’a pas pu être chargé.'));
+        return (await response.json()) as Detail;
+      })
+      .then(setDetail)
+      .catch((caught) => {
+        if (caught instanceof Error && caught.name === 'AbortError') return;
+        setError(caught instanceof Error ? caught.message : 'Le devis n’a pas pu être chargé.');
+      });
     return () => controller.abort();
-  }, [load, reloadToken]);
+  }, [quoteId, reloadToken]);
 
-  const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
+  const refresh = useCallback(() => setReloadToken((t) => t + 1), []);
+  const { company, exportCompany } = useDocumentCompany(detail?.store);
 
-  // En-tête au nom du magasin émetteur (cahier §9) — même objet pour l'écran et l'export.
-  const docSettings = useMemo(
-    () => applyStoreLetterhead(settings, (detail as { store?: StoreLetterheadView } | null)?.store),
-    [settings, detail],
+  const quote = detail?.quote ?? null;
+  const lines: DocumentLine[] = useMemo(
+    () =>
+      (detail?.items ?? []).map((item) => ({
+        name: item.serviceName,
+        code: item.serviceCode,
+        unit: item.unit,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        discountPercent: item.discountPercent,
+        amount: item.amount,
+      })),
+    [detail],
   );
-  const company = useMemo(() => companyFromSettings(docSettings), [docSettings]);
+  const gross = (detail?.items ?? []).reduce((sum, item) => sum + item.grossAmount, 0);
+  const discount = quote ? Math.max(0, gross - quote.total) : 0;
 
-  const job = detail?.job ?? null;
-  const fileBase = job ? `devis-${job.reference}` : 'devis';
-
-  /* ------------------------------------------------------------------
-   * Exports, impression, partage
-   * ------------------------------------------------------------------ */
-
-  /**
-   * Document HTML autonome (couleurs hexadécimales uniquement) utilisé par les
-   * trois exports. Capturer la page affichée échouait : ses couleurs Tailwind
-   * (`oklch`, `color-mix`) sont illisibles pour le moteur de capture. Voir
-   * `lib/export-document.ts`.
-   */
   const exportHtml = useMemo(() => {
-    if (!detail || !job) return null;
-
+    if (!quote) return null;
     const money = (value: number) => formatCurrency(value, company.currency);
-    const quoteLabels: Record<string, { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }> = {
-      draft: { label: 'Brouillon', tone: 'neutral' },
-      sent: { label: 'Devis envoyé', tone: 'warning' },
-      accepted: { label: 'Devis accepté', tone: 'success' },
-      refused: { label: 'Devis refusé', tone: 'danger' },
-    };
-
+    const tone = { draft: 'neutral', sent: 'warning', accepted: 'success', refused: 'danger', cancelled: 'danger', expired: 'warning' } as const;
     return renderExportDocument({
       documentTitle: 'Devis',
-      documentNumber: job.reference,
-      documentDate: job.startDate ? `Début prévu : ${formatDateShort(job.startDate)}` : null,
-      badge: quoteLabels[job.quoteStatus] ?? { label: job.quoteStatus, tone: 'neutral' },
-      company: exportCompanyFromSettings(docSettings),
+      documentNumber: quote.reference,
+      documentDate: `Du ${formatDateShort(quote.date)}${quote.validUntil ? ` — valable jusqu’au ${formatDateShort(quote.validUntil)}` : ''}`,
+      badge: { label: QUOTE_LABELS[quote.displayStatus], tone: tone[quote.displayStatus] },
+      company: exportCompany,
       meta: [
-        ['Client', job.customerName],
-        ['Téléphone', job.customerPhone ?? '—'],
-        ['Chantier', job.siteAddress ?? '—'],
-        ['Prestation', job.title ?? job.category],
+        ['Client', quote.customerName],
+        ['Téléphone', quote.customerPhone ?? '—'],
+        ['Chantier', quote.siteAddress ?? '—'],
+        ['Objet', quote.title ?? quote.category ?? '—'],
       ],
       blocks: [
-        ...(job.description
-          ? [{ kind: 'paragraph' as const, title: 'Description des travaux', text: job.description }]
-          : []),
-        {
-          kind: 'table',
-          title: 'Matériaux',
-          columns: [
-            { label: 'Désignation' },
-            { label: 'Qté', align: 'right' as const },
-            { label: 'Unité' },
-            { label: 'Prix unit.', align: 'right' as const },
-            { label: 'Montant', align: 'right' as const },
-          ],
-          numeric: [1, 3, 4],
-          rows: detail.materials.map((material) => [
-            material.productName,
-            formatQuantity(material.quantity, ''),
-            material.unit,
-            money(material.unitCost),
-            money(material.amount),
-          ]),
-        },
-        {
-          kind: 'table',
-          title: 'Main-d’œuvre',
-          columns: [
-            { label: 'Ouvrier' },
-            { label: 'Rôle' },
-            { label: 'Jours', align: 'right' as const },
-            { label: 'Tarif/jour', align: 'right' as const },
-            { label: 'Montant', align: 'right' as const },
-          ],
-          numeric: [2, 3, 4],
-          rows: detail.workers.map((worker) => [
-            worker.workerName,
-            worker.role ?? '—',
-            formatQuantity(worker.days, ''),
-            money(worker.dailyRate),
-            money(worker.amount),
-          ]),
-        },
+        ...(quote.description ? [{ kind: 'paragraph' as const, title: 'Description des travaux', text: quote.description }] : []),
+        exportLinesBlock(lines, company.currency),
         {
           kind: 'totals',
           rows: [
-            { label: 'Total matériaux', value: money(job.quoteMaterials) },
-            { label: 'Total main-d’œuvre', value: money(job.quoteLabor) },
-            { label: 'TOTAL DU DEVIS', value: money(job.quoteTotal || job.total), tone: 'strong' },
-            ...(job.amountPaid
-              ? [{ label: 'Déjà réglé', value: money(job.amountPaid), tone: 'success' as const }]
-              : []),
-            /*
-             * Un devis n'est une dette qu'une fois **accepté** (et le chantier non
-             * annulé) : avant, un devis simplement envoyé affichait tout son
-             * montant en « Reste à payer », en orange (recette).
-             */
-            ...(job.remainingAmount && job.quoteStatus === 'accepted' && job.status !== 'cancelled'
-              ? [{ label: 'Reste à payer', value: money(job.remainingAmount), tone: 'warning' as const }]
-              : []),
+            ...(discount > 0.5 ? [{ label: 'Total avant remise', value: money(gross) }, { label: 'Remises', value: `− ${money(discount)}` }] : []),
+            { label: 'TOTAL DU DEVIS', value: money(quote.total), tone: 'strong' as const },
           ],
         },
       ],
-      notes: job.notes,
-      footer: `Devis valable sous réserve d’acceptation — ${company.name}`,
+      notes: quote.notes,
+      footer: `Devis valable${quote.validUntil ? ` jusqu’au ${formatDateShort(quote.validUntil)}` : ''} — ${company.name}`,
     });
-  }, [detail, job, settings, company.currency, company.name]);
+  }, [quote, lines, gross, discount, company, exportCompany]);
 
-  const handleExportPDF = async () => {
-    if (!exportHtml) return;
-    setIsExporting(true);
+  const exports = useDocumentExports(
+    exportHtml,
+    quote ? `devis-${quote.reference}` : 'devis',
+    quote
+      ? [`*${company.name}*`, `Devis ${quote.reference} du ${formatDateShort(quote.date)}`, `Client : ${quote.customerName}`, `Montant : ${formatCurrency(quote.total, company.currency)}`].join('\n')
+      : '',
+    'Devis',
+  );
+
+  async function post(path: string, body: unknown, success: string) {
+    setIsWorking(true);
     try {
-      await exportDocumentAsPDF(exportHtml, fileBase);
-      toast.success('PDF généré.');
-    } catch (error: any) {
-      toast.error(error?.message ?? 'Le PDF n’a pas pu être généré.', { autoClose: 10000 });
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleExportImage = async () => {
-    if (!exportHtml) return;
-    setIsExporting(true);
-    try {
-      await exportDocumentAsImage(exportHtml, fileBase);
-      toast.success('Image générée.');
-    } catch (error: any) {
-      toast.error(error?.message ?? 'L’image n’a pas pu être générée.', { autoClose: 10000 });
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleShareWhatsApp = async () => {
-    if (!detail || !job || !exportHtml) return;
-
-    const message = [
-      `*${company.name}*`,
-      `Devis ${job.reference} du ${formatDateShort(job.createdAt ?? job.startDate)}`,
-      `Client : ${job.customerName}`,
-      `Chantier : ${job.siteAddress || '—'}`,
-      `Total du devis : ${formatCurrency(job.total, company.currency)}`,
-    ].join('\n');
-
-    setIsExporting(true);
-    try {
-      // Même document que le PDF et l'image : partager `element.outerHTML`
-      // enverrait des classes Tailwind sans leur feuille de styles.
-      await shareOnWhatsApp(exportHtml, message, `${fileBase}.png`, 'Devis');
-    } catch (error: any) {
-      toast.error(error?.message ?? 'Le partage WhatsApp n’a pas pu être effectué.', {
-        autoClose: 10000,
-      });
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handlePrint = () => {
-    if (!document.getElementById(DOCUMENT_ID)) {
-      toast.error('Document introuvable à l’impression.');
-      return;
-    }
-    window.print();
-  };
-
-  /* ------------------------------------------------------------------
-   * Statut du devis
-   * ------------------------------------------------------------------ */
-
-  const updateQuoteStatus = async (quoteStatus: QuoteStatus) => {
-    if (!job) return;
-    setIsUpdatingStatus(true);
-    try {
-      const response = await fetch(`/api/chantiers/${job.id}/devis`, {
-        method: 'PUT',
+      const response = await fetch(path, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ quoteStatus }),
+        body: JSON.stringify(body ?? {}),
       });
-      if (!response.ok) {
-        throw new Error(await readApiError(response, 'Le statut du devis n’a pas pu être modifié.'));
-      }
-      toast.success(`Devis ${job.reference} : ${quoteStatusLabel(quoteStatus).toLowerCase()}.`);
-      refresh();
+      if (!response.ok) throw new Error(await readApiError(response, 'L’action n’a pas pu être effectuée.'));
+      toast.success(success);
+      return await response.json();
     } catch (caught) {
-      toast.error(
-        caught instanceof Error ? caught.message : 'Le statut du devis n’a pas pu être modifié.',
-      );
+      toast.error(caught instanceof Error ? caught.message : 'L’action n’a pas pu être effectuée.', { autoClose: 8000 });
+      return null;
     } finally {
-      setIsUpdatingStatus(false);
+      setIsWorking(false);
     }
-  };
-
-  /* ------------------------------------------------------------------
-   * Les 5 états
-   * ------------------------------------------------------------------ */
-
-  if (isLoading) {
-    return (
-      <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
-        <PageHeader
-          eyebrow="Production"
-          title="Devis"
-          description="Chargement du devis, de ses matériaux et de sa main-d’œuvre…"
-        />
-        <SkeletonCards count={3} />
-        <SkeletonTable rows={6} cols={5} />
-      </div>
-    );
   }
 
-  if (error || notFound || !detail || !job) {
+  if (error) {
     return (
       <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
-        <PageHeader
-          eyebrow="Production"
-          title="Devis"
-          description="Devis imprimable d’une prestation : matériaux, main-d’œuvre et total."
-        />
+        <PageHeader eyebrow="Devis" title="Devis" description="Devis de prestation." />
         <Card>
           <ErrorState
-            title={notFound ? 'Devis introuvable' : 'Impossible de charger le devis'}
-            description={
-              notFound
-                ? 'Ce devis n’existe pas ou a été retiré de ce poste.'
-                : (error ?? 'Le devis n’a pas pu être chargé.')
-            }
-            onRetry={notFound ? undefined : refresh}
+            title={httpStatus === 404 ? 'Devis introuvable' : httpStatus === 403 ? 'Devis d’un autre magasin' : 'Chargement impossible'}
+            description={error}
+            onRetry={httpStatus === 404 || httpStatus === 403 ? undefined : refresh}
           />
         </Card>
         <div className="flex justify-center">
-          <Link href="/chantiers" className="btn btn-ghost min-h-11">
-            Retour à la liste des chantiers
+          <Link href="/chantiers/devis" className="btn btn-ghost min-h-11">
+            Retour aux devis
           </Link>
         </div>
       </div>
     );
   }
+  if (!quote || !detail) {
+    return (
+      <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+        <PageHeader eyebrow="Devis" title="Devis" description="Chargement du devis…" />
+        <SkeletonCards count={3} />
+      </div>
+    );
+  }
 
-  const isCancelled = job.status === 'cancelled';
+  const own = quote.storeId === activeStoreId;
+  const pending = quote.status === 'draft' || quote.status === 'sent';
+  const expired = quote.displayStatus === 'expired';
+  const stage = quote.jobId ? 'converted' : quote.status;
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
       <div className="no-print space-y-4">
         <PageHeader
-          eyebrow="Production"
-          title={`Devis ${job.reference}`}
-          description="Devis imprimable et exportable — matériaux, main-d’œuvre et total."
+          eyebrow="Devis"
+          title={`Devis ${quote.reference}`}
+          description={`${quote.customerName}${quote.title ? ` · ${quote.title}` : ''}`}
           actions={
             <>
               <ExportDropdown
-                onExportPDF={() => void handleExportPDF()}
-                onExportImage={() => void handleExportImage()}
-                onShareWhatsApp={() => void handleShareWhatsApp()}
+                onExportPDF={() => void exports.exportPDF()}
+                onExportImage={() => void exports.exportImage()}
+                onShareWhatsApp={() => void exports.shareWhatsApp()}
                 label="Exporter"
               />
-              <button
-                type="button"
-                className="btn btn-ghost min-h-11 border border-base-300"
-                onClick={handlePrint}
-                disabled={isExporting}
-              >
+              <button type="button" className="btn btn-ghost min-h-11 border border-base-300" onClick={() => window.print()} disabled={exports.isExporting}>
                 Imprimer
               </button>
-              <Link href={`/chantiers/${job.id}`} className="btn btn-outline min-h-11">
-                Fiche du chantier
-              </Link>
+              {own && canUpdate && pending && (
+                <Link href={`/chantiers/devis/nouveau?modifier=${quote.id}`} className="btn btn-outline min-h-11">
+                  Modifier
+                </Link>
+              )}
+              {own && canCreate && (
+                <button
+                  type="button"
+                  className="btn btn-ghost min-h-11 border border-base-300"
+                  disabled={isWorking}
+                  onClick={async () => {
+                    const copy = await post(`/api/devis/${quote.id}/dupliquer`, {}, 'Nouvelle version créée au prix du jour.');
+                    if (copy?.id) router.push(`/chantiers/devis/${copy.id}`);
+                  }}
+                >
+                  Nouvelle version
+                </button>
+              )}
+              {own && canCancel && quote.status !== 'cancelled' && !quote.jobId && (
+                <button type="button" className="btn btn-ghost min-h-11 text-error" onClick={() => setIsCancelOpen(true)}>
+                  Annuler
+                </button>
+              )}
             </>
           }
         />
 
-        {isCancelled && (
-          <div className="rounded-2xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
-            Ce chantier a été <strong>annulé</strong> : son devis reste consultable et réimprimable,
-            mais il ne peut plus évoluer.
-          </div>
-        )}
-
-        {canUpdate && !isCancelled && (
-          <Card className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold">Statut du devis</h2>
-                <p className="text-xs text-base-content/55">
-                  Actuellement : <strong>{quoteStatusLabel(job.quoteStatus)}</strong>. Un devis
-                  accepté fait passer un chantier encore au stade « devis » en « en attente ».
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {QUOTE_ACTIONS.filter((action) => action.status !== job.quoteStatus).map((action) => (
-                  <button
-                    key={action.status}
-                    type="button"
-                    className={`btn min-h-11 ${action.variant}`}
-                    disabled={isUpdatingStatus}
-                    onClick={() => void updateQuoteStatus(action.status)}
-                  >
-                    {isUpdatingStatus ? (
-                      <span className="loading loading-spinner loading-sm" aria-hidden />
-                    ) : (
-                      action.label
-                    )}
-                  </button>
-                ))}
-              </div>
+        <Card className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Suivi du devis</h2>
+              <p className="text-xs text-base-content/55">
+                {quote.requestReference ? (
+                  <>
+                    Issu de la demande{' '}
+                    <Link href={`/chantiers/demandes/${quote.requestId}`} className="link">
+                      {quote.requestReference}
+                    </Link>
+                    .{' '}
+                  </>
+                ) : null}
+                {quote.validUntil ? `Valable jusqu’au ${formatDateShort(quote.validUntil)}.` : ''}
+              </p>
             </div>
-          </Card>
-        )}
+            <QuoteStatusBadge status={quote.displayStatus} />
+          </div>
+
+          {quote.status === 'cancelled' || quote.status === 'refused' ? (
+            <div className={`rounded-xl border px-4 py-3 text-sm ${quote.status === 'cancelled' ? 'border-error/30 bg-error/10 text-error' : 'border-warning/30 bg-warning/10'}`}>
+              {quote.status === 'cancelled'
+                ? `Devis annulé — motif : ${quote.cancelReason ?? 'non précisé'}. Il reste consultable.`
+                : 'Le client a refusé ce devis. Vous pouvez en faire une nouvelle version au prix du jour.'}
+            </div>
+          ) : (
+            <StageTracker stages={STAGES} current={stage} />
+          )}
+
+          {expired && (
+            <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm">
+              Ce devis a dépassé sa date de validité. Pour qu’il soit accepté, <strong>modifiez-le</strong> et repoussez la
+              date de validité, ou faites une <strong>nouvelle version</strong> au prix du jour.
+            </p>
+          )}
+
+          {own && canUpdate && quote.status !== 'cancelled' && !quote.jobId && (
+            <div className="flex flex-wrap gap-2">
+              {quote.status === 'draft' && (
+                <button
+                  type="button"
+                  className="btn btn-primary min-h-11"
+                  disabled={isWorking}
+                  onClick={async () => (await post(`/api/devis/${quote.id}/statut`, { status: 'sent' }, 'Devis marqué envoyé.')) && refresh()}
+                >
+                  Marquer « envoyé au client »
+                </button>
+              )}
+              {quote.status !== 'accepted' && !expired && (
+                <button
+                  type="button"
+                  className="btn btn-success min-h-11"
+                  disabled={isWorking}
+                  onClick={async () => (await post(`/api/devis/${quote.id}/statut`, { status: 'accepted' }, 'Devis accepté par le client.')) && refresh()}
+                >
+                  Le client accepte
+                </button>
+              )}
+              {quote.status !== 'refused' && (
+                <button
+                  type="button"
+                  className="btn btn-ghost min-h-11 border border-base-300 text-error"
+                  disabled={isWorking}
+                  onClick={async () => (await post(`/api/devis/${quote.id}/statut`, { status: 'refused' }, 'Devis marqué refusé.')) && refresh()}
+                >
+                  Le client refuse
+                </button>
+              )}
+              {quote.status === 'accepted' && canCreate && (
+                <button type="button" className="btn btn-primary min-h-11" disabled={isWorking} onClick={() => setIsConvertOpen(true)}>
+                  Ouvrir le chantier
+                </button>
+              )}
+            </div>
+          )}
+
+          {quote.jobId && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm">
+              <span>
+                Chantier ouvert : <strong>{quote.jobReference}</strong> — il facture exactement les prestations de ce devis.
+              </span>
+              <Link href={`/chantiers/${quote.jobId}`} className="btn btn-success btn-sm min-h-11">
+                Voir le chantier
+              </Link>
+            </div>
+          )}
+        </Card>
       </div>
 
-      {/* Zone d'impression */}
-      <DevisDocument
+      <DocumentShell
         id={DOCUMENT_ID}
         company={company}
-        job={job}
-        materials={detail.materials}
-        workers={detail.workers}
-        className="print-area"
+        title="Devis"
+        number={quote.reference}
+        dateLines={[`Établi le ${formatDateShort(quote.date)}`, ...(quote.validUntil ? [`Valable jusqu’au ${formatDateShort(quote.validUntil)}`] : [])]}
+        badge={{ label: QUOTE_LABELS[quote.displayStatus], tone: QUOTE_TONES[quote.displayStatus] }}
+        footer={company.footerNote || `Devis valable sous réserve d’acceptation dans le délai indiqué.`}
+      >
+        <PartiesBlock
+          customerName={quote.customerName}
+          customerPhone={quote.customerPhone}
+          rightTitle="Chantier"
+          rightLines={[quote.title ?? quote.category ?? 'Prestations', quote.category && quote.title ? quote.category : null, quote.siteAddress]}
+        />
+        {quote.description ? (
+          <div className="mb-5 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">Description des travaux</p>
+            <p className="mt-1 whitespace-pre-line text-sm">{quote.description}</p>
+          </div>
+        ) : null}
+        <LinesBlock lines={lines} />
+        <TotalsBlock
+          rows={[
+            ...(discount > 0.5
+              ? [
+                  { label: 'Total avant remise', value: <MoneyText value={gross} /> },
+                  { label: 'Remises', value: <span className="text-success">− <MoneyText value={discount} /></span> },
+                ]
+              : []),
+            { label: 'Total du devis', value: <MoneyText value={quote.total} bold className="text-lg" />, strong: true },
+          ]}
+        />
+        {quote.notes ? (
+          <div className="mt-5 rounded-xl border border-base-200 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">Conditions</p>
+            <p className="mt-1 whitespace-pre-line text-sm">{quote.notes}</p>
+          </div>
+        ) : null}
+      </DocumentShell>
+
+      <div className="no-print">
+        <PageSection title="Historique" subtitle="Établissement, envois, réponses du client, conversion.">
+          <Card>
+            <HistoryTimeline entity="quote" id={quote.id} />
+          </Card>
+        </PageSection>
+      </div>
+
+      <ConvertModal
+        isOpen={isConvertOpen}
+        onClose={() => setIsConvertOpen(false)}
+        quote={quote}
+        onConverted={(jobId) => router.push(`/chantiers/${jobId}`)}
       />
 
-      <div className="no-print flex justify-center">
-        <Link href="/chantiers" className="btn btn-ghost min-h-11">
-          Retour à la liste des chantiers
-        </Link>
-      </div>
+      <ConfirmDialog
+        isOpen={isCancelOpen}
+        onClose={() => setIsCancelOpen(false)}
+        title={`Annuler le devis ${quote.reference} ?`}
+        message="Le devis n’est pas supprimé : il reste consultable avec son motif d’annulation, mais ne peut plus évoluer."
+        confirmLabel="Annuler le devis"
+        isSubmitting={isWorking}
+        onConfirm={async () => {
+          if (!cancelReason.trim()) {
+            toast.error('Le motif est obligatoire.');
+            return;
+          }
+          setIsWorking(true);
+          try {
+            const response = await fetch(`/api/devis/${quote.id}`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ reason: cancelReason.trim() }),
+            });
+            if (!response.ok) throw new Error(await readApiError(response, 'Le devis n’a pas pu être annulé.'));
+            toast.success('Devis annulé.');
+            setIsCancelOpen(false);
+            setCancelReason('');
+            refresh();
+          } catch (caught) {
+            toast.error(caught instanceof Error ? caught.message : 'Le devis n’a pas pu être annulé.');
+          } finally {
+            setIsWorking(false);
+          }
+        }}
+      >
+        <FormField label="Motif" htmlFor="quote-cancel-reason" required>
+          <textarea
+            id="quote-cancel-reason"
+            className="textarea textarea-bordered min-h-20 w-full"
+            value={cancelReason}
+            onChange={(event) => setCancelReason(event.target.value)}
+            placeholder="Ex. saisi en double, client injoignable…"
+          />
+        </FormField>
+      </ConfirmDialog>
     </div>
+  );
+}
+
+/** Ouverture du chantier d'un devis accepté : dates prévues et responsable. */
+function ConvertModal({
+  isOpen,
+  onClose,
+  quote,
+  onConverted,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  quote: QuoteRow;
+  onConverted: (jobId: number) => void;
+}) {
+  const people = useResponsibles(isOpen);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [responsible, setResponsible] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setStartDate(today());
+    setEndDate('');
+    setResponsible('');
+    setFormError(null);
+  }, [isOpen]);
+
+  async function submit() {
+    if (endDate && startDate && endDate < startDate) return setFormError('La fin prévue ne peut pas précéder le début.');
+    setIsSubmitting(true);
+    setFormError(null);
+    try {
+      const response = await fetch(`/api/devis/${quote.id}/convertir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ startDate: startDate || null, endDate: endDate || null, responsibleUserId: responsible ? Number(responsible) : null }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'Le chantier n’a pas pu être ouvert.'));
+      const payload = (await response.json()) as { job: { id: number; reference: string } };
+      toast.success(`Chantier ${payload.job.reference} ouvert.`);
+      onConverted(payload.job.id);
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : 'Le chantier n’a pas pu être ouvert.');
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={() => !isSubmitting && onClose()} title="Ouvrir le chantier" size="md" fullScreenMobile>
+      <form
+        className="space-y-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
+          Le chantier reprend les <strong>{quote.itemsCount} prestation(s)</strong> du devis au prix accepté par le client (
+          <MoneyText value={quote.total} bold />
+          ). Vous pourrez ensuite planifier les étapes, affecter l’équipe et suivre les dépenses.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Début prévu">
+            <DatePicker value={startDate} onChange={setStartDate} placeholder="Début" />
+          </FormField>
+          <FormField label="Fin prévue" hint="Sert à repérer un chantier en retard.">
+            <DatePicker value={endDate} onChange={setEndDate} placeholder="Fin" />
+          </FormField>
+        </div>
+        <FormField label="Responsable du chantier" htmlFor="convert-responsible">
+          <select
+            id="convert-responsible"
+            className="select select-bordered min-h-11 w-full"
+            value={responsible}
+            onChange={(event) => setResponsible(event.target.value)}
+          >
+            <option value="">— À désigner plus tard —</option>
+            {people.map((person) => (
+              <option key={person.id} value={person.id}>
+                {person.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+        {formError && (
+          <p className="rounded-lg bg-error/10 px-3 py-2 text-sm text-error" role="alert">
+            {formError}
+          </p>
+        )}
+        <div className="flex flex-wrap justify-end gap-3 border-t border-base-200 pt-4">
+          <button type="button" className="btn btn-ghost min-h-11" onClick={onClose} disabled={isSubmitting}>
+            Annuler
+          </button>
+          <button type="submit" className="btn btn-primary min-h-11" disabled={isSubmitting}>
+            {isSubmitting ? <span className="loading loading-spinner loading-sm" aria-hidden /> : 'Ouvrir le chantier'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
