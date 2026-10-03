@@ -31,6 +31,7 @@ npm run lint           # ⚠️ CASSÉ (pré-existant) : typescript-eslint ne su
 npm run verify:routes  # découvre et appelle toutes les pages et routes d'API : aucun 500 toléré
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
+npm run verify:chantiers  # prestations de chantier : cloisonnement magasins, prix figés, rentabilité
 npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
 npm run verify:export-image # exporte de vrais documents en PNG (OUT=<dossier>) pour les regarder
 npm run verify:ui          # ouvre chaque écran dans Chrome (CDP 9333) : rendu, console, 404, débordement
@@ -131,6 +132,15 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 18. **Recette sur une base isolée.** Les essais qui écrivent (magasins, transferts…) se
     font sur une copie : `PDS_DB_PATH=<copie.db> NEXT_DIST_DIR=.next-recette next dev -p 3100`
     (README §28.4). Un magasin créé ne se supprime jamais : ne pas polluer la base de travail.
+19. **Montant d'un chantier = ses lignes de prestations** (prix figés). Matériaux, équipe,
+    sous-traitance et dépenses sont des **coûts** : ne jamais les réinjecter dans `total`
+    (c'était le cas avant la v2 : la marge valait toujours zéro). Un devis, une demande ou
+    un chantier n'utilise qu'une prestation **active de son magasin** (`assertServiceUsable`).
+    Un document client (devis, facture de chantier) ne montre **aucun** coût interne.
+20. **Liens entre documents synchronisés = clés étrangères déclarées.** La synchronisation
+    ne traduit d'un poste à l'autre que les colonnes déclarées en `references()` ; un
+    identifiant stocké en simple entier pointe vers une mauvaise ligne ailleurs. Le lien
+    inverse se calcule à la lecture (devis → chantier : `service_jobs.quote_id`).
 
 ## Organisation
 
@@ -143,6 +153,7 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 | Design system (présentation pure) | `components/design-system.tsx` |
 | **Bénéfice d'une période** (CA, COGS, marge, dépenses, main-d'œuvre) — source unique du tableau de bord, de `/soldes` et de `/rapports` | `lib/profit.ts` |
 | **Magasins** (contexte, accès, indicateurs) | `lib/stores.ts`, `lib/api.ts` (portée), `lib/user-scope.ts` ; écrans `app/magasins/*`, `components/magasins/store-ui.tsx`, `components/store-scope.tsx` |
+| **Prestations de chantier** (catalogue par magasin, demandes, devis, chantiers, pilotage) — README §19 | `lib/services.ts`, `lib/service-requests.ts`, `lib/quotes.ts`, `lib/jobs.ts`, `lib/jobs-dashboard.ts` ; écrans `app/prestations`, `app/chantiers/*`, `app/ouvriers`, `app/sous-traitants` ; composants `components/prestations/*`, `components/chantiers/*` ; démonstration `lib/seed-jobs.ts` |
 | **Transferts / inventaires** | `lib/transfers.ts`, `lib/transfer-actions.ts`, `lib/inventories.ts` |
 | **Synchronisation** (poste, push/pull, serveur) | `lib/device.ts`, `lib/sync-engine.ts`, `db/sync-registry.ts`, `db/triggers.ts`, `server/` |
 | Listes (tableau desktop / cartes mobile) | `components/responsive-table.tsx` |

@@ -147,6 +147,12 @@
 - **Exports** : voir README §11.1 (troisième piège, règles pour tout futur export).
 - **Chantiers** (§6.11) : types de prestation configurables (`settings.jobCategories`,
   `lib/job-categories.ts`, `validateJobCategory`), portée magasin, colonnes resserrées.
+- **Prestations de chantier** (cahier dédié, README §19) : catalogue **local au magasin**
+  (`services`), demandes, devis distincts convertibles en chantier, lignes facturées
+  (`service_job_items` : le montant ne vient plus des coûts), étapes, équipes,
+  sous-traitance payée par dépenses rattachées, pilotage consolidé, planning. Écrans
+  `/prestations`, `/chantiers/*`, `/ouvriers`, `/sous-traitants`. Recette :
+  `npm run verify:chantiers`. Reste hors périmètre : photos et documents joints.
 - **Clients / Fournisseurs** : portée sur la liste et les cartes ; la **fiche** porte
   sur tous les magasins de l'utilisateur (`?store=all` si plusieurs) avec un détail
   `byStore` (`getCustomerStats`, `getSupplierStats`). Un tiers est commun au réseau :

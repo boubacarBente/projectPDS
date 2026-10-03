@@ -1581,21 +1581,131 @@ pas la donnée — c'est le périmètre retenu, et il couvre le besoin exprimé.
 
 ---
 
-## 19. Prestations de services (chantiers)
+## 19. Prestations de chantier (multi-magasins)
 
-| Exigence (§16) | Mise en œuvre |
+> Cahier des charges « Extension Gestion des Prestations de Chantier — multi-magasins
+> avec prestations propres à chaque magasin » (v2). Parcours :
+> **demande → devis → chantier**, avec un **catalogue de prestations local à chaque
+> magasin**. Recette automatisée : `npm run verify:chantiers` (critères 2 à 11 du
+> cahier §30 ; le critère 12 — migration de l'existant — est vérifié sur une copie
+> de base, voir §19.9).
+
+### 19.1 Décisions (et écarts assumés avec le cahier)
+
+| Sujet | Décision | Pourquoi |
+|---|---|---|
+| **Montant facturé** | La **somme des lignes de prestations** du chantier (`service_job_items`), prix figés. Matériaux, équipe, sous-traitance et dépenses sont des **coûts**. | Avant la v2, le total était recalculé comme « matériaux au prix d'achat + main-d'œuvre » : le client payait le coût et la **marge valait toujours zéro** (démonstration : 7 940 000 facturés pour 7 940 000 de coût). Un chantier sans ligne garde son montant saisi (anciens chantiers compris, rien n'est réécrit). |
+| **Catalogue** | **Local au magasin** (`services.store_id`), code unique dans le magasin. | Cahier §3 : chaque magasin vend ses prestations à ses prix (Kaloum 25 000 GNF le m², Matoto 30 000). |
+| **Catégories** | Liste **commune** `settings.jobCategories` (siège). | Cahier §4 les veut par magasin, mais §18 exige de **comparer les catégories** entre magasins : « Électricité » et « Elec » rendraient la comparaison impossible. |
+| **Devis** | Document **distinct** (`quotes`), converti en chantier une fois accepté. | Un devis refusé encombrait la liste des chantiers ; l'ancien devis imprimait les **prix d'achat** et le tarif des ouvriers (coûts internes) au client. |
+| **Facture** | Le chantier **est** le document facturable (son numéro, ses lignes, ses paiements). Pas de table `invoices` séparée. | Une facture de plus compterait deux fois le chiffre d'affaires (§15). |
+| **« En retard », « expiré »** | **Calculés** (fin prévue dépassée et chantier ouvert ; validité dépassée et devis en attente), jamais stockés. | Un statut stocké deviendrait faux sans que personne ne le change. |
+| **Clients** | Référentiel **commun** (pas de « Clients A / Clients B »). | Un client qui achète à Kaloum et fait faire un chantier par Matoto ne doit pas exister deux fois ; ses dettes restent attribuées par magasin (fiche client, détail par magasin). |
+| **Sous-traitants** | Fiche **fournisseur** marquée `is_subcontractor` ; travaux confiés `job_subcontracts` (montant convenu) ; **paiement = dépense rattachée** (`expenses.reference_type = 'job_subcontract'`). | Le paiement passe par la caisse et l'approbation comme toute dépense ; le « payé » n'est jamais saisi à la main. |
+| **API** | `/api/prestations`, `/api/devis`… — **pas** `/api/stores/{storeId}/…` (cahier §28). | Le magasin d'une écriture vient de la **session** (`requireActiveStore`), jamais de l'URL (invariant n° 15). |
+| **Photos et documents joints** | Hors périmètre de cette version. | Fichiers binaires lourds pour la synchronisation des postes hors ligne : chantier technique à part. L'onglet « Documents » liste les documents générés (facture, devis, demande, reçus). |
+
+### 19.2 Données (migration `0006_prestations_chantier`, purement additive)
+
+| Table | Rôle | Synchronisation |
+|---|---|---|
+| `services` | Catalogue local : code, nom, catégorie, unité, prix indicatif, statut `active` / `inactive` / `archived` | magasin (`store_id`), clé naturelle `(store_id, code)` |
+| `service_price_history` | Un changement de prix = une ligne | enfant de `services` |
+| `service_requests` · `service_request_items` | Demandes et prestations souhaitées | magasin · enfant |
+| `quotes` · `quote_items` | Devis et lignes (prix, remise %, montant figés) | magasin · enfant |
+| `service_job_items` | Prestations facturées du chantier | enfant de `service_jobs` |
+| `job_stages` | Étapes (prestation associée, responsable, dates, avancement, statut) | enfant |
+| `job_subcontracts` | Travaux sous-traités (montant convenu) | enfant |
+| `service_jobs` (+) | `responsible_user_id`, `actual_start_date`, `actual_end_date`, `progress`, `quote_id` → `quotes`, `request_id` → `service_requests` | — |
+| `workers` (+) | `store_id` (`null` = commun), `team` | — |
+| `suppliers` (+) | `is_subcontractor`, `specialty` | — |
+
+⚠️ **Les liens entre documents sont des clés étrangères déclarées** : la
+synchronisation ne traduit d'un poste à l'autre que ces colonnes. Le lien inverse
+(devis → chantier, demande → devis) se **calcule à la lecture** — deux liens
+croisés stockés auraient pointé vers de mauvaises lignes sur un autre poste. Dans
+`db/sync-registry.ts`, demandes et devis passent **avant** `service_jobs`.
+
+### 19.3 Catalogue de prestations — `lib/services.ts`, `/prestations`
+
+- Créer, modifier, **désactiver** (plus proposée), **archiver** (masquée) — jamais
+  supprimer. Code automatique `PRE-001`… (préfixe dans Paramètres) ou saisi.
+- Chaque changement de prix est historisé ; les documents existants **gardent
+  leur prix** (critère n° 11).
+- `assertServiceUsable` : une ligne de devis, de chantier ou de demande n'accepte
+  qu'une prestation **active de son magasin** (critère n° 5), même avec un
+  identifiant forgé.
+- Fiche : prix, CA généré, chantiers qui l'utilisent, quantité réalisée, nombre de
+  devis, historique des prix et des modifications (`/api/historique`).
+- Permission `services.manage` (administrateur, gérant).
+
+### 19.4 Demandes — `lib/service-requests.ts`, `/chantiers/demandes`
+
+Cycle : nouvelle → étude → visite → devis à préparer → devis envoyé → acceptée /
+refusée → convertie. Les trois dernières étapes **découlent du devis** ; les autres
+se posent à la main. « Établir le devis » préremplit client, adresse et prestations
+souhaitées.
+
+### 19.5 Devis — `lib/quotes.ts`, `/chantiers/devis`
+
+- Numéro `DEV-<magasin>-AAAA-NNNNNN`, date, validité (30 jours par défaut,
+  Paramètres), lignes avec remise %.
+- brouillon → envoyé → accepté / refusé ; annulé avec motif ; « expiré » calculé.
+  Un devis expiré ne s'accepte qu'après prolongation ; « Nouvelle version »
+  repart du catalogue du jour.
+- **Ouvrir le chantier** (devis accepté) : lignes recopiées à l'identique, dates
+  prévues et responsable ; la demande passe « convertie ».
+- Document client au nom du magasin : **aucun coût interne** (invariant n° 14).
+
+### 19.6 Chantiers — `lib/jobs.ts`, `/chantiers`, `/chantiers/[id]`
+
+- Statuts : en préparation, planifié, en cours, suspendu, terminé, annulé
+  (`quote` = ancien chantier-devis v1, exclu du chiffre d'affaires partout).
+  « En cours » renseigne le début réel, « Terminé » la fin réelle.
+- Fiche à onglets : vue générale, prestations, avancement (étapes ; avancement =
+  moyenne des étapes), équipe (ouvrier ou **équipe entière**), matériaux (sortie de
+  stock), sous-traitance, dépenses, paiements, documents, notes et historique.
+- En tête : montant, payé, reste, coûts engagés, bénéfice estimatif.
+- Le montant ne peut pas descendre sous ce que le client a déjà payé.
+- Facture : `/chantiers/[id]/document` (prestations, paiements reçus, reste).
+
+### 19.7 Rentabilité (cahier §15) — calculée, jamais stockée
+
+```
+coûts = matériaux (prix d'achat) + main-d'œuvre (jours × tarif)
+      + sous-traitance (montants convenus, travaux non annulés)
+      + dépenses rattachées au chantier (approuvées ou à décaisser)
+bénéfice brut estimatif = montant facturé − coûts
+```
+
+Les paiements aux sous-traitants ne sont **pas** recomptés : c'est le montant
+convenu qui compte. Coûts et marges ne sont renvoyés qu'à qui détient
+`balances.view` (fiche, liste, pilotage — invariant n° 13).
+
+### 19.8 Pilotage, planning, ouvriers, sous-traitants
+
+| Écran | Contenu |
 |---|---|
-| Prestations de **tout type** (v2) : construction complète, électricité, plomberie, plâtre, placo, alucobond, peinture, carrelage, meubles… — chaque magasin ou atelier peut ouvrir n'importe quel type | `service_jobs.category` = libellé de la liste **fermée mais modifiable** `settings.jobCategories` (Paramètres → « Types de prestation »), validé par `validateJobCategory` (`lib/jobs.ts`) ; anciens codes traduits par `lib/job-categories.ts` (pas de migration) ; `/chantiers` filtrable par type et par magasin |
-| **Devis** (matériaux + main-d'œuvre) | `quote_materials` / `quote_labor` / `quote_total` + `quote_status` (brouillon / envoyé / accepté / refusé), générable en PDF |
-| Informations du chantier : client, adresse, date de début | `customer_id`, `site_address`, `start_date`, `end_date` de `service_jobs` |
-| **Suivi de l'avancement** (en attente, en cours, terminé) | `status` (`quote` \| `pending` \| `in_progress` \| `completed` \| `cancelled`) + avancement visuel, filtres |
-| **Affectation d'une équipe / d'un ouvrier** | Table unique `workers` + `service_job_workers` (`days` × `daily_rate` = `amount`) |
-| **Matériaux déduits du stock** | `service_job_materials` → mouvements `exit` (`reference_type = 'service_job'`) |
-| **Facturation** (main-d'œuvre + matériaux) | La prestation est **un document facturable autonome** : son propre `reference`, son PDF, ses propres `payments` (`type = 'service_job'`). Elle ne génère **pas** de facture de vente → aucun double comptage du CA (§15) |
-| Paiement comptant / partiel / crédit | `service_jobs.total` / `amount_paid` / `remaining_amount` / `payment_status` + `payments` (acompte, solde), reçus imprimables |
-| Historique par client | Fiche client → onglet Chantiers |
+| `/chantiers/pilotage` | §17 (magasin) et §18 (consolidé, `?store=all`) : en cours / terminés / en retard, demandes et devis en attente, montant, encaissé, créances, coûts, bénéfice, évolution mensuelle, comparaison des magasins, catégories, prestations les plus vendues, retards, activité récente. Filtres magasin, période, type, statut (`lib/jobs-dashboard.ts`). |
+| `/chantiers/planning` | Ligne de temps du mois ; un chantier ouvert en retard court jusqu'à aujourd'hui ; liste sur téléphone. |
+| `/ouvriers` | Ouvriers du magasin + communs, vue par équipe, tarif, jours travaillés. |
+| `/sous-traitants` | Convenu, payé, reste dû par magasin ; création (fiche fournisseur). |
 
-**Coût de revient d'un chantier** = matériaux (prix d'achat) + main-d'œuvre (jours × tarif) ; **marge** = facturé − coût.
+### 19.9 Cloisonnement et recette
+
+- Toute écriture dans le magasin actif ; un document d'un autre magasin se lit
+  (`assertStoreVisible`) mais ne se modifie pas. Les lectures d'équipe et de
+  matériaux d'un chantier sont bornées au magasin (elles ne l'étaient pas).
+- Une dépense rattachée (`service_job`, `job_subcontract`) est **vérifiée côté
+  serveur** : même magasin, document non annulé (`lib/expenses.ts`) — auparavant
+  le rattachement était recopié tel quel depuis le navigateur.
+- `npm run verify:chantiers` (base de recette, jeu de démonstration) : catalogues
+  isolés, même prestation à deux prix, prestation étrangère refusée dans un devis
+  ou un chantier, URL forgées → 403, prix figés après changement de catalogue,
+  conversion unique, dépense et paiement étrangers refusés, rentabilité, retard,
+  vue consolidée.
+- Critère 12 : migration d'une sauvegarde d'avant la v2 (3 → 7 migrations) —
+  chantiers, montants, ventes, paiements, clients, dépenses **identiques**.
 
 ---
 
@@ -2119,7 +2229,12 @@ npm run sync:build       # Construire l'API de synchronisation
 | `/utilisateurs` · `/utilisateurs/historique` | Utilisateurs, rôles, journal | 2 |
 | `/parametres` | Paramètres, sauvegarde, restauration | 1 → 2 |
 | `/login` | Connexion / premier administrateur | 0 |
-| `/chantiers` · `/chantiers/[id]` · `/chantiers/devis/[id]` | Prestations | 3 |
+| `/chantiers` · `/chantiers/[id]` · `/chantiers/[id]/document` (facture) | Chantiers | 3 |
+| `/chantiers/demandes` · `/chantiers/demandes/[id]` | Demandes de prestation | 3 |
+| `/chantiers/devis` · `/chantiers/devis/nouveau` (`?demande=`, `?modifier=`) · `/chantiers/devis/[id]` | Devis | 3 |
+| `/chantiers/pilotage` · `/chantiers/planning` | Pilotage et planning des chantiers | 3 |
+| `/prestations` · `/prestations/[id]` | Catalogue de prestations du magasin | 3 |
+| `/ouvriers` · `/sous-traitants` | Ouvriers et équipes, sous-traitants | 3 |
 | `/briqueterie` | **Tableau de bord** de la briqueterie (§20.1) | 3 → 5 |
 | `/briqueterie/productions` · `/briqueterie/[id]` | Lots de fabrication : liste, fiche (dépenses rattachées, équipe, coût de revient) | 3 → 5 |
 | `/briqueterie/stock` | Stock des produits finis, seuils, ajustement motivé, mouvements | 5 |
@@ -2157,7 +2272,11 @@ npm run sync:build       # Construire l'API de synchronisation
 | Paiements | `GET|POST /api/paiements` · `GET /api/paiements/[id]` (reçu) · `GET /api/recus` (registre des reçus, document + tiers résolus) |
 | Dépenses | `GET|POST /api/depenses` · `GET|PUT|DELETE /api/depenses/[id]` · `GET /api/depenses/stats` — `?scope=general\|production` sépare les frais de fonctionnement des dépenses rattachées à un lot (§20) |
 | Caisse | `GET|POST /api/caisse` (mouvements + résumé, mouvement manuel) · `GET /api/caisse/sessions` (session ouverte, historique, résumé) · `POST /api/caisse/sessions` (ouverture) · `PUT /api/caisse/sessions` (clôture) |
-| Chantiers | `GET|POST /api/chantiers` · `GET|PUT|DELETE /api/chantiers/[id]` · `PUT /api/chantiers/[id]/devis` · `GET|POST|DELETE /api/chantiers/[id]/materiaux` · `GET|POST|DELETE /api/chantiers/[id]/ouvriers` |
+| Chantiers | `GET|POST /api/chantiers` (`?stats=1`, `?late=1`, `status=open`) · `GET|PUT|DELETE /api/chantiers/[id]` · `POST|PUT|DELETE /api/chantiers/[id]/prestations` · `POST|PUT|DELETE /api/chantiers/[id]/etapes` · `POST|PUT|DELETE /api/chantiers/[id]/sous-traitance` · `GET|POST|DELETE /api/chantiers/[id]/materiaux` · `GET|POST|DELETE /api/chantiers/[id]/ouvriers` (`{ team, days }` = équipe entière) · `PUT /api/chantiers/[id]/devis` (chantiers-devis v1) · `GET /api/chantiers/pilotage` · `GET /api/chantiers/responsables` |
+| Prestations | `GET|POST /api/prestations` (`?stats=1`) · `GET|PUT /api/prestations/[id]` · `POST /api/prestations/[id]/statut` |
+| Demandes | `GET|POST /api/demandes` · `GET|PUT /api/demandes/[id]` · `POST /api/demandes/[id]/statut` |
+| Devis | `GET|POST /api/devis` · `GET|PUT|DELETE /api/devis/[id]` · `POST /api/devis/[id]/statut` · `POST /api/devis/[id]/convertir` · `POST /api/devis/[id]/dupliquer` |
+| Divers chantiers | `GET /api/historique?entity=&id=` · `GET /api/sous-traitants` · `GET /api/workers?teams=1` |
 | Briqueterie | `GET|POST /api/briqueterie/types` · `GET|PUT|DELETE /api/briqueterie/types/[id]` · `GET|POST /api/briqueterie/productions` (`?stats=1`, `?status=`) · `GET|PUT|DELETE /api/briqueterie/productions/[id]` (étape, pertes, **dépenses** `add_expense`/`update_expense`/`remove_expense`) · `GET /api/briqueterie/tableau-de-bord` · `GET /api/briqueterie/stock` · `GET /api/briqueterie/commandes` · `GET|PUT|DELETE /api/briqueterie/commandes/[id]` (`set_status`, `deliver`, `invoice`) · `GET|POST /api/briqueterie/commandes/[id]/paiements` · `GET /api/briqueterie/rapports` · `GET /api/briqueterie/historique` |
 | Atelier | `GET|POST /api/atelier/modeles` · `GET|PUT|DELETE /api/atelier/modeles/[id]` · `GET|POST /api/atelier/commandes` · `GET|PUT|DELETE /api/atelier/commandes/[id]` |
 | Rapports | `GET /api/rapports` (`from`, `to`, `previousFrom`, `previousTo`, `productId`, `customerId`, `supplierId`, `paymentStatus`) · `POST /api/rapports/envoyer` · `GET /api/rapports/envois` |
@@ -2200,6 +2319,7 @@ npm run db:migrate         # Appliquer les migrations sans démarrer Next (avant
 npm run verify:routes      # Découvre et appelle les pages et les routes d'API : aucune erreur 500 tolérée
 npm run verify:purchases   # Parcours d'achat de bout en bout (21 contrôles) : stock, caisse, dette, numérotation
 npm run verify:draft       # Politique du brouillon de vente (23 contrôles) : ni stock, ni caisse, ni sync, puis validation
+npm run verify:chantiers   # Prestations de chantier multi-magasins (critères 2 à 11 du cahier) : isolation, prix figés, rentabilité
 npm run verify:export      # Export PDF / image / WhatsApp dans un navigateur réel (CDP sur le port 9222)
 npm run verify:brick       # Briqueterie, 58 contrôles : dépenses rattachées, coût/unité, stock unique, canal de vente, commande → acompte → facture, seed/reset, refus attendus
 npm run verify:brick:ui    # Rend chaque écran du module (dont /parametres) dans Chrome (CDP port 9333) et vérifie le texte rendu + zéro erreur console
@@ -2295,7 +2415,7 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | **`/stocks`** : portée magasin, produits en 4 colonnes et journal en 5 (tiennent en 1366 px), en vue « tous les magasins » stock de chaque magasin et quantité en transit sous le total, action « Demander un transfert » sur un produit en alerte, ajustement réservé au magasin actif, infobulles | ✅ | guide §6.8 |
 | **`/clients`** et **`/fournisseurs`** : référentiel commun à tous les magasins, la portée (`StoreScopeSelect`) change les soldes, dettes et chiffres d'affaires de la liste et des cartes. **Fiches** : chargées en `?store=all` dès que l'utilisateur a plusieurs magasins (borné à son périmètre par le serveur), avec le **détail par magasin** (`byStore` : solde et facturé / dette et acheté) — sinon un client qui doit de l'argent à Matoto paraissait soldé depuis Kaloum. « Dette restante » du fournisseur en `MoneyText due`, infobulles sur toutes les cartes | ✅ | guide §6.5, §6.13 |
 | **Prestations de chantier multi-magasins — serveur** (cahier « Prestations de chantier ») : catalogue de prestations **local à chaque magasin** (`services`, historique des prix), **demandes** (`service_requests`), **devis distincts** (`quotes`, prix figés, expiration calculée, conversion en chantier), **lignes facturées** du chantier (`service_job_items` : le montant facturé ne vient plus des coûts — la marge valait toujours 0), étapes, sous-traitance (fournisseurs marqués sous-traitants, payés par dépenses rattachées), dépenses rattachées **vérifiées côté serveur**, ouvriers par magasin et par équipe, retard calculé, pilotage consolidé, historique par document. Migration `0006` purement additive. `npm run verify:chantiers` : 39 contrôles (critères 2 à 11 du cahier) | ✅ | `lib/services.ts`, `lib/quotes.ts`, `lib/service-requests.ts`, `lib/jobs.ts`, `lib/jobs-dashboard.ts` |
-| Prestations de chantier — **écrans** (catalogue, demandes, devis, fiche chantier à onglets, pilotage, sous-traitants, ouvriers) | ⏳ | README §19 |
+| Prestations de chantier — **écrans** : `/prestations` (+ fiche), `/chantiers/demandes`, `/chantiers/devis` (saisie, document, conversion), `/chantiers` et fiche à onglets, facture de chantier, `/chantiers/pilotage` (magasin et consolidé), `/chantiers/planning`, `/ouvriers`, `/sous-traitants`, paramètres (préfixes `DEV` `DEM` `PRE`, validité). Vérifiés à 1366 et 400 px. Correctifs au passage : graphiques noirs (couleurs `oklch` du thème ignorées par le canevas), menu à deux entrées actives, rapports qui comptaient les anciens chantiers-devis. `next build` ✓, `verify:routes` 151/151 | ✅ | README §19 |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette
