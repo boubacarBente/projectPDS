@@ -29,6 +29,18 @@ import { useSettings } from '@/app/parametres/page';
 import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
 import { jobCategoryLabel as categoryLabelOf } from '@/lib/job-categories';
 import { StoreTag } from '@/components/store-scope';
+import {
+  CustomerPicker,
+  ProgressBar,
+  ServiceLinesEditor,
+  linesPayload,
+  newLine,
+  resolveLine,
+  useActiveServices,
+  useCustomers,
+  useResponsibles,
+  type LineDraft,
+} from '@/components/prestations/shared';
 import { formatNumber, formatPercent, formatQuantity, today } from '@/lib/format';
 import { formatDateShort } from '@/lib/date-format';
 
@@ -49,11 +61,17 @@ import { formatDateShort } from '@/lib/date-format';
 
 /** Type de prestation : libellé de `settings.jobCategories` (lib/job-categories.ts). */
 export type JobCategory = string;
-export type JobStatus = 'quote' | 'pending' | 'in_progress' | 'completed' | 'cancelled';
+/**
+ * Statuts du chantier. « En retard » n'est pas un statut : `isLate` est
+ * calculé par le serveur. `quote` ne concerne que les chantiers d'avant la v2
+ * (le devis est désormais un document distinct).
+ */
+export type JobStatus = 'quote' | 'pending' | 'planned' | 'in_progress' | 'suspended' | 'completed' | 'cancelled';
 export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'refused';
 
 export type ServiceJobRow = {
   id: number;
+  storeId?: number | null;
   /** Magasin du chantier (vue « tous les magasins »). */
   storeName?: string | null;
   reference: string;
@@ -64,8 +82,12 @@ export type ServiceJobRow = {
   title: string | null;
   siteAddress: string | null;
   description: string | null;
+  /** Début et fin **prévus**. */
   startDate: string | null;
   endDate: string | null;
+  /** Début et fin **réels**. */
+  actualStartDate: string | null;
+  actualEndDate: string | null;
   status: JobStatus;
   quoteStatus: QuoteStatus;
   quoteMaterials: number;
@@ -77,10 +99,35 @@ export type ServiceJobRow = {
   paymentStatus: string;
   userId: number | null;
   userName: string | null;
+  responsibleUserId: number | null;
+  responsibleName: string | null;
   notes: string | null;
+  progress: number;
+  manualProgress: number | null;
+  isLate: boolean;
+  quoteId: number | null;
+  quoteReference: string | null;
+  requestId: number | null;
+  requestReference: string | null;
+  itemsCount: number;
+  stagesCount: number;
   materialsCount: number;
   workersCount: number;
   createdAt: string | null;
+};
+
+export type ServiceJobItemRow = {
+  id: number;
+  jobId: number;
+  serviceId: number | null;
+  serviceCode: string | null;
+  serviceName: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  discountPercent: number;
+  amount: number;
+  position: number;
 };
 
 export type ServiceJobMaterialRow = {
@@ -107,11 +154,62 @@ export type ServiceJobWorkerRow = {
   createdAt: string | null;
 };
 
+export type StageStatus = 'todo' | 'in_progress' | 'done' | 'blocked';
+
+export type JobStageRow = {
+  id: number;
+  jobId: number;
+  name: string;
+  serviceId: number | null;
+  serviceName: string | null;
+  responsible: string | null;
+  plannedDate: string | null;
+  actualDate: string | null;
+  progress: number;
+  status: StageStatus;
+  comment: string | null;
+  position: number;
+  isLate: boolean;
+};
+
+export type JobSubcontractRow = {
+  id: number;
+  jobId: number;
+  supplierId: number;
+  supplierName: string;
+  supplierPhone: string | null;
+  work: string;
+  agreedAmount: number;
+  paid: number;
+  pending: number;
+  remaining: number;
+  status: 'active' | 'cancelled';
+  notes: string | null;
+};
+
+export type JobExpenseRow = {
+  id: number;
+  date: string;
+  category: string;
+  amount: number;
+  description: string | null;
+  beneficiary: string | null;
+  paymentMethod: string;
+  approvalStatus: string;
+  referenceType: string;
+  subcontractId: number | null;
+};
+
+/** Rentabilité d'un chantier — `null` sans la permission `balances.view`. */
 export type JobCosts = {
+  billed: number;
+  collected: number;
+  remaining: number;
   materialsCost: number;
   laborCost: number;
+  subcontractCost: number;
+  expensesCost: number;
   totalCost: number;
-  billed: number;
   margin: number;
   marginPercent: number;
 };
@@ -129,23 +227,30 @@ export type PaymentRow = {
 
 export type ServiceJobDetail = {
   job: ServiceJobRow;
+  items: ServiceJobItemRow[];
   materials: ServiceJobMaterialRow[];
   workers: ServiceJobWorkerRow[];
+  stages: JobStageRow[];
+  subcontracts: JobSubcontractRow[];
+  expenses: JobExpenseRow[];
   payments: PaymentRow[];
-  costs: JobCosts;
+  costs: JobCosts | null;
 };
 
 export type JobsSummary = {
   totalJobs: number;
   byStatus: Record<JobStatus, number>;
+  late: number;
   billed: number;
   collected: number;
   outstanding: number;
-  materialsCost: number;
-  laborCost: number;
-  totalCost: number;
-  margin: number;
-  marginPercent: number;
+  materialsCost: number | null;
+  laborCost: number | null;
+  subcontractCost: number | null;
+  expensesCost: number | null;
+  totalCost: number | null;
+  margin: number | null;
+  marginPercent: number | null;
 };
 
 export type Paginated<T> = {
@@ -177,24 +282,33 @@ export function jobCategoryOptions(list: string[], current?: string | null): { v
 }
 
 export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
-  quote: 'Devis',
-  pending: 'En attente',
+  quote: 'Devis (ancien)',
+  pending: 'En préparation',
+  planned: 'Planifié',
   in_progress: 'En cours',
+  suspended: 'Suspendu',
   completed: 'Terminé',
   cancelled: 'Annulé',
 };
 
 export const JOB_STATUS_TONES: Record<JobStatus, BadgeTone> = {
   quote: 'neutral',
-  pending: 'warning',
-  in_progress: 'info',
+  pending: 'neutral',
+  planned: 'info',
+  in_progress: 'primary',
+  suspended: 'warning',
   completed: 'success',
   cancelled: 'error',
 };
 
-export const JOB_STATUS_OPTIONS: { value: JobStatus; label: string }[] = (
-  ['quote', 'pending', 'in_progress', 'completed', 'cancelled'] as JobStatus[]
-).map((value) => ({ value, label: JOB_STATUS_LABELS[value] }));
+/** Filtre de la liste : « ouverts » et « en retard » s'ajoutent aux statuts. */
+export const JOB_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: 'open', label: 'Chantiers ouverts' },
+  ...(['pending', 'planned', 'in_progress', 'suspended', 'completed', 'cancelled'] as JobStatus[]).map((value) => ({
+    value,
+    label: JOB_STATUS_LABELS[value],
+  })),
+];
 
 export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   draft: 'Brouillon',
@@ -203,16 +317,18 @@ export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
   refused: 'Refusé',
 };
 
-export const QUOTE_STATUS_TONES: Record<QuoteStatus, BadgeTone> = {
-  draft: 'neutral',
-  sent: 'info',
-  accepted: 'success',
-  refused: 'error',
+export const STAGE_STATUS_LABELS: Record<StageStatus, string> = {
+  todo: 'À faire',
+  in_progress: 'En cours',
+  done: 'Terminée',
+  blocked: 'Bloquée',
 };
-
-export const QUOTE_STATUS_OPTIONS: { value: QuoteStatus; label: string }[] = (
-  ['draft', 'sent', 'accepted', 'refused'] as QuoteStatus[]
-).map((value) => ({ value, label: QUOTE_STATUS_LABELS[value] }));
+export const STAGE_STATUS_TONES: Record<StageStatus, BadgeTone> = {
+  todo: 'neutral',
+  in_progress: 'primary',
+  done: 'success',
+  blocked: 'error',
+};
 
 export function jobCategoryLabel(category: string | null | undefined): string {
   return categoryLabelOf(category);
@@ -228,19 +344,30 @@ export function quoteStatusLabel(status: string | null | undefined): string {
   return QUOTE_STATUS_LABELS[status as QuoteStatus] ?? status;
 }
 
-/** Étapes de suivi : `cancelled` est traité **à part** (§19). */
+/** Rail d'avancement : `suspended` et `cancelled` sont traités à part. */
 export const JOB_STAGES = [
-  { key: 'quote', label: 'Devis' },
-  { key: 'pending', label: 'En attente' },
+  { key: 'pending', label: 'Préparation' },
+  { key: 'planned', label: 'Planifié' },
   { key: 'in_progress', label: 'En cours' },
   { key: 'completed', label: 'Terminé' },
 ];
 
 /** Prochaine étape d'avancement, ou `null` si le chantier est terminé/annulé. */
 export function nextJobStage(status: JobStatus): { key: JobStatus; label: string } | null {
-  const index = JOB_STAGES.findIndex((stage) => stage.key === status);
+  const from = status === 'quote' ? 'pending' : status === 'suspended' ? 'planned' : status;
+  const index = JOB_STAGES.findIndex((stage) => stage.key === from);
   if (index < 0 || index >= JOB_STAGES.length - 1) return null;
   return JOB_STAGES[index + 1] as { key: JobStatus; label: string };
+}
+
+/** Badge de statut d'un chantier, avec « En retard » en plus quand il l'est. */
+export function JobStatusBadges({ job }: { job: Pick<ServiceJobRow, 'status' | 'isLate'> }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      <Badge tone={JOB_STATUS_TONES[job.status]}>{jobStatusLabel(job.status)}</Badge>
+      {job.isLate && <Badge tone="error">En retard</Badge>}
+    </span>
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -259,9 +386,9 @@ export type ProductOption = {
 };
 
 /**
- * Charge une seule fois les listes d'appoint (clients, produits, ouvriers) et
- * les expose aux modales. Aucune de ces listes n'est critique : un échec laisse
- * simplement la sélection vide, sans masquer la page.
+ * Charge une seule fois les listes d'appoint (clients, produits, ouvriers du
+ * magasin et communs) et les expose aux modales. Aucune n'est critique : un
+ * échec laisse simplement la sélection vide, sans masquer la page.
  */
 export function useJobSelectOptions(enabled: boolean) {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
@@ -276,22 +403,11 @@ export function useJobSelectOptions(enabled: boolean) {
     async function load() {
       setIsLoading(true);
       try {
+        const init = { signal: controller.signal, cache: 'no-store' as const, credentials: 'same-origin' as const };
         const [customersResponse, productsResponse, workersResponse] = await Promise.all([
-          fetch('/api/clients?limit=500&page=1', {
-            signal: controller.signal,
-            cache: 'no-store',
-            credentials: 'same-origin',
-          }),
-          fetch('/api/produits?limit=500&page=1', {
-            signal: controller.signal,
-            cache: 'no-store',
-            credentials: 'same-origin',
-          }),
-          fetch('/api/workers?limit=200&page=1', {
-            signal: controller.signal,
-            cache: 'no-store',
-            credentials: 'same-origin',
-          }),
+          fetch('/api/clients?limit=500&page=1', init),
+          fetch('/api/produits?limit=500&page=1', init),
+          fetch('/api/workers?limit=200&page=1&sort=name', init),
         ]);
 
         if (controller.signal.aborted) return;
@@ -338,10 +454,9 @@ export function useJobSelectOptions(enabled: boolean) {
 /**
  * Colonnes de la liste des chantiers.
  *
- * Six colonnes au lieu de dix (le tableau débordait de 388 px en 1366 px,
- * cachant le reste à payer) : le type passe sous la référence, le site sous le client, l'état du devis
- * sous le statut, le payé sous le total, la date sur deux lignes. Le magasin
- * s'affiche sous la référence quand plusieurs magasins sont affichés.
+ * Six colonnes (le tableau doit tenir en 1366 px) : le type et le magasin
+ * sous la référence, le site sous le client, l'avancement sous le statut, le
+ * payé sous le total.
  */
 export function buildJobColumns(options: { showStore?: boolean } = {}): Column<ServiceJobRow>[] {
   return [
@@ -364,7 +479,7 @@ export function buildJobColumns(options: { showStore?: boolean } = {}): Column<S
       label: 'Chantier',
       primary: true,
       render: (job) => (
-        <div className="min-w-0 max-w-[16rem]">
+        <div className="min-w-0 max-w-[13rem]">
           <Link
             href={`/chantiers/${job.id}`}
             className="font-semibold text-primary hover:underline"
@@ -373,7 +488,6 @@ export function buildJobColumns(options: { showStore?: boolean } = {}): Column<S
             {job.reference}
           </Link>
           {job.title && <div className="truncate text-xs text-base-content/60">{job.title}</div>}
-          {/* Le type sous la référence : une colonne de moins (tableau en 1366 px). */}
           <div className="mt-1">
             <Badge tone="primary">{jobCategoryLabel(job.category)}</Badge>
           </div>
@@ -385,7 +499,7 @@ export function buildJobColumns(options: { showStore?: boolean } = {}): Column<S
       key: 'customer',
       label: 'Client',
       render: (job) => (
-        <div className="min-w-0 max-w-[12rem]">
+        <div className="min-w-0 max-w-[11rem]">
           <span className="block truncate text-sm">{job.customerName}</span>
           {job.siteAddress && (
             <span className="block truncate text-xs text-base-content/55" title={job.siteAddress}>
@@ -397,11 +511,11 @@ export function buildJobColumns(options: { showStore?: boolean } = {}): Column<S
     },
     {
       key: 'status',
-      label: 'Statut',
+      label: 'Avancement',
       render: (job) => (
-        <div className="flex flex-col items-start gap-1">
-          <Badge tone={JOB_STATUS_TONES[job.status]}>{jobStatusLabel(job.status)}</Badge>
-          <span className="text-xs text-base-content/55">Devis : {quoteStatusLabel(job.quoteStatus).toLowerCase()}</span>
+        <div className="flex w-28 flex-col items-start gap-1.5">
+          <JobStatusBadges job={job} />
+          {job.status !== 'cancelled' && job.status !== 'quote' && <ProgressBar value={job.progress} late={job.isLate} className="w-full" />}
         </div>
       ),
     },
@@ -422,11 +536,8 @@ export function buildJobColumns(options: { showStore?: boolean } = {}): Column<S
       key: 'remaining',
       label: 'Reste',
       className: 'text-right whitespace-nowrap',
-      // Rouge dès qu'il reste à encaisser, neutre sinon (et neutre pour un
-      // chantier annulé : son reste n'est pas encaissable).
-      render: (job) => (
-        <MoneyText value={job.remainingAmount} remaining={job.status !== 'cancelled'} bold />
-      ),
+      // Rouge dès qu'il reste à encaisser, neutre sinon (et pour un chantier annulé).
+      render: (job) => <MoneyText value={job.remainingAmount} remaining={job.status !== 'cancelled'} bold />,
     },
   ];
 }
@@ -459,7 +570,7 @@ export const jobMaterialColumns: Column<ServiceJobMaterialRow>[] = [
   },
   {
     key: 'amount',
-    label: 'Montant',
+    label: 'Coût',
     className: 'text-right whitespace-nowrap',
     render: (material) => <MoneyText value={material.amount} bold />,
   },
@@ -474,7 +585,7 @@ export const jobWorkerColumns: Column<ServiceJobWorkerRow>[] = [
       <div className="min-w-0">
         <div className="truncate font-medium">{assignment.workerName}</div>
         <div className="text-xs text-base-content/50">
-          {assignment.role || 'Rôle non précisé'}
+          {assignment.role ? (WORKER_ROLE_OPTIONS.find((o) => o.value === assignment.role)?.label ?? assignment.role) : 'Rôle non précisé'}
           {assignment.workerId === null && ' · journalier ponctuel'}
         </div>
       </div>
@@ -494,7 +605,7 @@ export const jobWorkerColumns: Column<ServiceJobWorkerRow>[] = [
   },
   {
     key: 'amount',
-    label: 'Montant',
+    label: 'Coût',
     className: 'text-right whitespace-nowrap',
     render: (assignment) => <MoneyText value={assignment.amount} bold />,
   },
@@ -505,9 +616,7 @@ export const jobPaymentColumns: Column<PaymentRow>[] = [
     key: 'date',
     label: 'Date',
     className: 'whitespace-nowrap',
-    render: (payment) => (
-      <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>
-    ),
+    render: (payment) => <span className="tabular text-base-content/70">{formatDateShort(payment.date)}</span>,
   },
   {
     key: 'receiptNumber',
@@ -539,42 +648,51 @@ export const jobPaymentColumns: Column<PaymentRow>[] = [
 ];
 
 /* ------------------------------------------------------------------ *
- * Modale — nouveau devis / nouvelle prestation / modification
+ * Modale — ouverture ou modification d'un chantier
  * ------------------------------------------------------------------ */
 
+/**
+ * Ouverture d'un chantier **sans devis préalable** (travaux urgents, client
+ * habituel) ou modification de ses informations.
+ *
+ * À la création, le montant vient des **prestations du catalogue** du magasin
+ * (ou d'un montant forfaitaire si aucune n'est saisie). En modification, les
+ * prestations se gèrent dans l'onglet « Prestations » de la fiche ; le montant
+ * forfaitaire ne reste modifiable que pour un chantier sans ligne.
+ */
 export function JobFormModal({
   isOpen,
   onClose,
   onSaved,
   job,
-  customers,
-  isOptionsLoading,
-  initial,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSaved: (job: ServiceJobRow) => void;
   /** `null` = création. */
   job: ServiceJobRow | null;
-  customers: CustomerOption[];
-  isOptionsLoading: boolean;
-  /** Preset à la création : « Nouveau devis » ou « Nouvelle prestation ». */
-  initial?: { status?: JobStatus; quoteStatus?: QuoteStatus };
 }) {
-  const [customerId, setCustomerId] = useState('');
   const { settings } = useSettings();
   const categoryList = settings.jobCategories ?? [];
-  const [category, setCategory] = useState<JobCategory>('');
+  const { customers, isLoading: customersLoading, add: addCustomer } = useCustomers(isOpen);
+  const { services, isLoading: servicesLoading } = useActiveServices(isOpen && !job);
+  const people = useResponsibles(isOpen);
+
+  const [customerId, setCustomerId] = useState('');
+  const [category, setCategory] = useState('');
   const [title, setTitle] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [status, setStatus] = useState<JobStatus>('quote');
-  const [quoteStatus, setQuoteStatus] = useState<QuoteStatus>('draft');
-  const [quoteMaterials, setQuoteMaterials] = useState('');
-  const [quoteLabor, setQuoteLabor] = useState('');
+  const [actualStartDate, setActualStartDate] = useState('');
+  const [actualEndDate, setActualEndDate] = useState('');
+  const [status, setStatus] = useState<JobStatus>('pending');
+  const [responsible, setResponsible] = useState('');
+  const [progress, setProgress] = useState('');
+  const [amount, setAmount] = useState('');
   const [notes, setNotes] = useState('');
+  const [lines, setLines] = useState<LineDraft[]>([newLine()]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -585,64 +703,74 @@ export function JobFormModal({
     setTitle(job?.title ?? '');
     setSiteAddress(job?.siteAddress ?? '');
     setDescription(job?.description ?? '');
-    setStartDate(job?.startDate ?? '');
+    setStartDate(job?.startDate ?? today());
     setEndDate(job?.endDate ?? '');
-    setStatus(job?.status === 'cancelled' ? 'cancelled' : (job?.status ?? initial?.status ?? 'quote'));
-    setQuoteStatus(job?.quoteStatus ?? initial?.quoteStatus ?? 'draft');
-    setQuoteMaterials(job ? String(job.quoteMaterials) : '');
-    setQuoteLabor(job ? String(job.quoteLabor) : '');
+    setActualStartDate(job?.actualStartDate ?? '');
+    setActualEndDate(job?.actualEndDate ?? '');
+    setStatus(job ? job.status : 'pending');
+    setResponsible(job?.responsibleUserId ? String(job.responsibleUserId) : '');
+    setProgress(job?.manualProgress != null ? String(job.manualProgress) : '');
+    setAmount(job && job.itemsCount === 0 ? String(job.total) : '');
     setNotes(job?.notes ?? '');
+    setLines([newLine()]);
     setFormError(null);
     setIsSubmitting(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, job]);
 
-  const estimate =
-    (Number(String(quoteMaterials).replace(',', '.')) || 0) +
-    (Number(String(quoteLabor).replace(',', '.')) || 0);
+  // Type proposé d'après la première prestation choisie.
+  useEffect(() => {
+    if (job || category) return;
+    const first = lines.map((line) => services.find((s) => String(s.id) === line.serviceId)).find(Boolean);
+    if (first) setCategory(first.category);
+  }, [lines, services, category, job]);
+
+  const items = linesPayload(lines);
+  const linesTotal = lines.reduce((sum, line) => sum + resolveLine(line, services).amount, 0);
 
   async function submit() {
     if (isSubmitting) return;
-
-    if (!customerId) {
-      setFormError('Le client est obligatoire pour un chantier.');
-      return;
-    }
-    if (!category) {
-      setFormError('Choisissez le type de prestation (construction, électricité, plâtre, meubles…).');
-      return;
+    if (!customerId) return setFormError('Le client est obligatoire pour un chantier.');
+    if (!category) return setFormError('Choisissez le type de prestation.');
+    if (endDate && startDate && endDate < startDate) return setFormError('La fin prévue ne peut pas précéder le début prévu.');
+    if (!job && items.length === 0 && !(Number(amount) > 0)) {
+      return setFormError('Ajoutez au moins une prestation, ou indiquez un montant forfaitaire.');
     }
 
     setFormError(null);
     setIsSubmitting(true);
-
     try {
+      const body: Record<string, unknown> = {
+        customerId: Number(customerId),
+        category,
+        title: title.trim() || null,
+        siteAddress: siteAddress.trim() || null,
+        description: description.trim() || null,
+        startDate: startDate || null,
+        endDate: endDate || null,
+        responsibleUserId: responsible ? Number(responsible) : null,
+        notes: notes.trim() || null,
+      };
+      if (job) {
+        body.actualStartDate = actualStartDate || null;
+        body.actualEndDate = actualEndDate || null;
+        if (job.stagesCount === 0) body.progress = progress === '' ? null : Number(progress);
+        if (job.itemsCount === 0 && amount !== '') body.amount = Number(String(amount).replace(',', '.'));
+      } else {
+        body.status = status;
+        body.items = items;
+        if (items.length === 0) body.amount = Number(String(amount).replace(',', '.')) || 0;
+      }
+
       const response = await fetch(job ? `/api/chantiers/${job.id}` : '/api/chantiers', {
         method: job ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({
-          customerId: Number(customerId),
-          category,
-          title: title.trim() || null,
-          siteAddress: siteAddress.trim() || null,
-          description: description.trim() || null,
-          startDate: startDate || null,
-          endDate: endDate || null,
-          status,
-          quoteStatus,
-          quoteMaterials: Number(String(quoteMaterials).replace(',', '.')) || 0,
-          quoteLabor: Number(String(quoteLabor).replace(',', '.')) || 0,
-          notes: notes.trim() || null,
-        }),
+        body: JSON.stringify(body),
       });
-
-      if (!response.ok) {
-        throw new Error(await readApiError(response, 'Le chantier n’a pas pu être enregistré.'));
-      }
-
+      if (!response.ok) throw new Error(await readApiError(response, 'Le chantier n’a pas pu être enregistré.'));
       const saved = (await response.json()) as ServiceJobRow;
-      toast.success(job ? 'Chantier modifié.' : `Chantier ${saved.reference} créé.`);
+      toast.success(job ? 'Chantier modifié.' : `Chantier ${saved.reference} ouvert.`);
       onSaved(saved);
       onClose();
     } catch (caught) {
@@ -660,14 +788,8 @@ export function JobFormModal({
       onClose={() => {
         if (!isSubmitting) onClose();
       }}
-      title={
-        job
-          ? `Modifier ${job.reference}`
-          : initial?.quoteStatus === 'accepted'
-            ? 'Nouvelle prestation'
-            : 'Nouveau devis'
-      }
-      size="lg"
+      title={job ? `Modifier ${job.reference}` : 'Nouveau chantier'}
+      size="xl"
       fullScreenMobile
     >
       <form
@@ -677,60 +799,29 @@ export function JobFormModal({
           void submit();
         }}
       >
-        <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
-          Le <strong>devis</strong> et le <strong>suivi</strong> vivent dans le même document : les
-          montants saisis ici sont l’estimation du devis. Dès qu’un matériau ou un ouvrier est
-          ajouté, les totaux sont recalculés sur le réalisé.
-        </p>
+        {!job && (
+          <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
+            Pour un client qui doit d’abord valider un prix, établissez plutôt un{' '}
+            <Link href="/chantiers/devis/nouveau" className="link font-medium">
+              devis
+            </Link>{' '}
+            : une fois accepté, il ouvre le chantier tout seul.
+          </p>
+        )}
 
         <FormField label="Client" htmlFor="job-customer" required>
-          {isOptionsLoading && customers.length === 0 ? (
-            <div className="h-11 animate-pulse rounded-lg bg-base-300/60" />
-          ) : (
-            <select
-              id="job-customer"
-              className="select select-bordered min-h-11 w-full"
-              value={customerId}
-              onChange={(event) => {
-                setCustomerId(event.target.value);
-                setFormError(null);
-              }}
-              disabled={isSubmitting}
-            >
-              <option value="">— Sélectionner un client —</option>
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.name}
-                  {customer.phone ? ` — ${customer.phone}` : ''}
-                </option>
-              ))}
-            </select>
-          )}
+          <CustomerPicker
+            id="job-customer"
+            value={customerId}
+            onChange={setCustomerId}
+            customers={customers}
+            isLoading={customersLoading}
+            onCreated={addCustomer}
+            disabled={isSubmitting}
+          />
         </FormField>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField
-            label="Type de prestation"
-            htmlFor="job-category"
-            required
-            hint="Construction, électricité, plâtre, meubles… La liste se modifie dans les paramètres."
-          >
-            <select
-              id="job-category"
-              className="select select-bordered min-h-11 w-full"
-              value={category}
-              onChange={(event) => setCategory(event.target.value as JobCategory)}
-              disabled={isSubmitting}
-            >
-              <option value="">Choisir le type de prestation…</option>
-              {jobCategoryOptions(categoryList, job?.category).map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </FormField>
-
           <FormField label="Intitulé du chantier" htmlFor="job-title">
             <input
               id="job-title"
@@ -739,12 +830,28 @@ export function JobFormModal({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               disabled={isSubmitting}
-              placeholder="Ex. Habillage façade villa Kipé"
+              placeholder="Ex. Rénovation villa Kipé"
             />
+          </FormField>
+          <FormField label="Type de prestation" htmlFor="job-category" required>
+            <select
+              id="job-category"
+              className="select select-bordered min-h-11 w-full"
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              disabled={isSubmitting}
+            >
+              <option value="">Choisir le type…</option>
+              {jobCategoryOptions(categoryList, job?.category).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </FormField>
         </div>
 
-        <FormField label="Adresse du site" htmlFor="job-site">
+        <FormField label="Adresse du chantier" htmlFor="job-site">
           <input
             id="job-site"
             type="text"
@@ -759,96 +866,124 @@ export function JobFormModal({
         <FormField label="Description des travaux" htmlFor="job-description">
           <textarea
             id="job-description"
-            className="textarea textarea-bordered min-h-24 w-full"
+            className="textarea textarea-bordered min-h-20 w-full"
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             disabled={isSubmitting}
-            placeholder="Nature des travaux, contraintes, dimensions…"
           />
         </FormField>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Date de début" hint="Utilisée pour filtrer les périodes.">
-            <DatePicker
-              value={startDate}
-              onChange={setStartDate}
-              placeholder="Date de début"
-            />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <FormField label="Début prévu">
+            <DatePicker value={startDate} onChange={setStartDate} placeholder="Début prévu" />
           </FormField>
-          <FormField label="Date de fin prévue">
-            <DatePicker value={endDate} onChange={setEndDate} placeholder="Date de fin" />
+          <FormField label="Fin prévue" hint="Sert à repérer les retards.">
+            <DatePicker value={endDate} onChange={setEndDate} placeholder="Fin prévue" />
           </FormField>
+          {job ? (
+            <>
+              <FormField label="Début réel">
+                <DatePicker value={actualStartDate} onChange={setActualStartDate} placeholder="Début réel" />
+              </FormField>
+              <FormField label="Fin réelle">
+                <DatePicker value={actualEndDate} onChange={setActualEndDate} placeholder="Fin réelle" />
+              </FormField>
+            </>
+          ) : (
+            <FormField label="Statut de départ" htmlFor="job-status" className="lg:col-span-2">
+              <select
+                id="job-status"
+                className="select select-bordered min-h-11 w-full"
+                value={status}
+                onChange={(event) => setStatus(event.target.value as JobStatus)}
+                disabled={isSubmitting}
+              >
+                {(['pending', 'planned', 'in_progress'] as JobStatus[]).map((value) => (
+                  <option key={value} value={value}>
+                    {JOB_STATUS_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Avancement" htmlFor="job-status">
+          <FormField label="Responsable" htmlFor="job-responsible">
             <select
-              id="job-status"
+              id="job-responsible"
               className="select select-bordered min-h-11 w-full"
-              value={status}
-              onChange={(event) => setStatus(event.target.value as JobStatus)}
-              disabled={isSubmitting || job?.status === 'cancelled'}
+              value={responsible}
+              onChange={(event) => setResponsible(event.target.value)}
+              disabled={isSubmitting}
             >
-              {JOB_STATUS_OPTIONS.filter((option) => option.value !== 'cancelled').map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
+              <option value="">— Non désigné —</option>
+              {people.map((person) => (
+                <option key={person.id} value={person.id}>
+                  {person.name}
                 </option>
               ))}
             </select>
           </FormField>
-
-          <FormField label="Statut du devis" htmlFor="job-quote-status">
-            <select
-              id="job-quote-status"
-              className="select select-bordered min-h-11 w-full"
-              value={quoteStatus}
-              onChange={(event) => setQuoteStatus(event.target.value as QuoteStatus)}
-              disabled={isSubmitting}
-            >
-              {QUOTE_STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </FormField>
+          {job && job.stagesCount === 0 && (
+            <FormField label="Avancement (%)" htmlFor="job-progress" hint="Ou découpez le chantier en étapes : l’avancement en sera la moyenne.">
+              <input
+                id="job-progress"
+                type="number"
+                min="0"
+                max="100"
+                className="input input-bordered min-h-11 w-full tabular"
+                value={progress}
+                onChange={(event) => setProgress(event.target.value)}
+                disabled={isSubmitting}
+              />
+            </FormField>
+          )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Devis — matériaux" hint="Estimation. Recalculée dès le premier matériau.">
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              className="input input-bordered min-h-11 w-full tabular"
-              value={quoteMaterials}
-              onChange={(event) => setQuoteMaterials(event.target.value)}
-              disabled={isSubmitting}
-              placeholder="0"
-            />
-          </FormField>
-          <FormField label="Devis — main-d’œuvre" hint="Estimation. Recalculée dès la première affectation.">
-            <input
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              className="input input-bordered min-h-11 w-full tabular"
-              value={quoteLabor}
-              onChange={(event) => setQuoteLabor(event.target.value)}
-              disabled={isSubmitting}
-              placeholder="0"
-            />
-          </FormField>
-        </div>
-
-        <div className="rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>Montant du devis estimé</span>
-            <MoneyText value={estimate} bold className="text-base" />
+        {!job && (
+          <div className="space-y-3 rounded-xl border border-base-200 p-3 sm:p-4">
+            <div>
+              <h3 className="text-sm font-semibold">Prestations facturées</h3>
+              <p className="text-xs text-base-content/60">
+                Elles font le montant du chantier. Les matériaux, l’équipe et les dépenses sont des coûts, suivis à part.
+              </p>
+            </div>
+            <ServiceLinesEditor lines={lines} onChange={setLines} services={services} isLoading={servicesLoading} disabled={isSubmitting} />
+            {items.length === 0 && (
+              <FormField label="Ou montant forfaitaire (GNF)" htmlFor="job-amount" hint="Si le chantier n’utilise aucune prestation du catalogue.">
+                <input
+                  id="job-amount"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  className="input input-bordered min-h-11 w-full tabular sm:w-64"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  disabled={isSubmitting}
+                  placeholder="0"
+                />
+              </FormField>
+            )}
           </div>
-        </div>
+        )}
+
+        {job && job.itemsCount === 0 && (
+          <FormField label="Montant du chantier (GNF)" htmlFor="job-amount-edit" hint="Chantier sans prestation du catalogue : son montant se saisit ici.">
+            <input
+              id="job-amount-edit"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              className="input input-bordered min-h-11 w-full tabular sm:w-64"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              disabled={isSubmitting}
+            />
+          </FormField>
+        )}
 
         <FormField label="Notes internes" htmlFor="job-notes">
           <textarea
@@ -859,6 +994,13 @@ export function JobFormModal({
             disabled={isSubmitting}
           />
         </FormField>
+
+        {!job && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
+            <span>Montant du chantier</span>
+            <MoneyText value={items.length > 0 ? linesTotal : Number(amount) || 0} bold className="text-lg" />
+          </div>
+        )}
 
         {formError && (
           <p className="rounded-lg bg-error/10 px-3 py-2 text-sm text-error" role="alert">
@@ -879,7 +1021,7 @@ export function JobFormModal({
             ) : job ? (
               'Enregistrer les modifications'
             ) : (
-              'Créer le chantier'
+              'Ouvrir le chantier'
             )}
           </button>
         </div>
@@ -1768,32 +1910,44 @@ export function JobPaymentModal({
  * Bloc « coûts et marge » — calculé, jamais stocké
  * ------------------------------------------------------------------ */
 
-export function JobCostCard({ costs, total }: { costs: JobCosts; total: number }) {
+export function JobCostCard({ costs }: { costs: JobCosts }) {
   const positive = costs.margin >= 0;
-
+  const rows: [string, number][] = [
+    ['Matériaux (prix d’achat)', costs.materialsCost],
+    ['Main-d’œuvre (équipe)', costs.laborCost],
+    ['Sous-traitance (montants convenus)', costs.subcontractCost],
+    ['Autres dépenses du chantier', costs.expensesCost],
+  ];
   return (
     <div className="space-y-1">
-      <InfoRow label="Coût des matériaux">
-        <MoneyText value={costs.materialsCost} />
+      <InfoRow label="Montant facturé">
+        <MoneyText value={costs.billed} bold />
       </InfoRow>
-      <InfoRow label="Main-d’œuvre">
-        <MoneyText value={costs.laborCost} />
+      <InfoRow label="Encaissé">
+        <MoneyText value={costs.collected} />
       </InfoRow>
-      <InfoRow label="Coût de revient total">
+      <InfoRow label="Reste à recevoir">
+        <MoneyText value={costs.remaining} remaining bold />
+      </InfoRow>
+      <div className="my-2 border-t border-base-200" />
+      {rows.map(([label, value]) => (
+        <InfoRow key={label} label={label}>
+          <MoneyText value={value} />
+        </InfoRow>
+      ))}
+      <InfoRow label="Coûts engagés">
         <MoneyText value={costs.totalCost} bold />
       </InfoRow>
-      <InfoRow label="Montant facturé">
-        <MoneyText value={total} bold />
-      </InfoRow>
-      <InfoRow label="Marge">
-        <span className={positive ? 'text-success' : 'text-error'}>
+      <div className={`mt-2 flex items-center justify-between rounded-xl px-3 py-2.5 ${positive ? 'bg-success/10' : 'bg-error/10'}`}>
+        <span className="text-sm font-semibold">Bénéfice brut estimatif</span>
+        <span className={`text-right font-semibold ${positive ? 'text-success' : 'text-error'}`}>
           <MoneyText value={costs.margin} />
-          {costs.billed > 0 ? ` (${formatPercent(costs.marginPercent)})` : ''}
+          <span className="block text-xs">{costs.billed > 0 ? `marge ${formatPercent(costs.marginPercent)}` : ''}</span>
         </span>
-      </InfoRow>
+      </div>
       <p className="pt-2 text-xs text-base-content/50">
-        Coût de revient = matériaux au prix d’achat + main-d’œuvre (jours × tarif). Marge =
-        facturé − coût. Ces montants sont <strong>calculés à la lecture</strong>, jamais stockés.
+        Calculé à la lecture : facturé − (matériaux + main-d’œuvre + sous-traitance + dépenses). Les paiements
+        aux sous-traitants ne sont pas comptés deux fois : c’est le montant convenu qui compte.
       </p>
     </div>
   );
@@ -1859,230 +2013,6 @@ export function companyFromSettings(settings: {
     currency: settings.currency || 'GNF',
     footerNote: settings.invoiceFooterNote || '',
   };
-}
-
-/**
- * Le devis est un **document facturable autonome** : son propre numéro, son
- * PDF, ses propres encaissements. Il ne génère jamais de facture de vente
- * (§15, §19) — aucun risque de double comptage du chiffre d'affaires.
- *
- * `id` est l'ancre DOM capturée par `lib/export-document.ts` (PDF / image) : le
- * papier, l'écran et le fichier exporté ne peuvent donc pas diverger.
- */
-export function DevisDocument({
-  id,
-  company,
-  job,
-  materials,
-  workers,
-  className = '',
-}: {
-  id?: string;
-  company: DevisCompany;
-  job: ServiceJobRow;
-  materials: ServiceJobMaterialRow[];
-  workers: ServiceJobWorkerRow[];
-  className?: string;
-}) {
-  const materialsTotal = materials.reduce((sum, material) => sum + material.amount, 0);
-  const laborTotal = workers.reduce((sum, assignment) => sum + assignment.amount, 0);
-  const total = materialsTotal + laborTotal;
-
-  return (
-    <div
-      id={id}
-      className={`mx-auto w-full max-w-4xl rounded-2xl border border-base-200 bg-base-100 p-6 shadow-sm sm:p-8 ${className}`.trim()}
-    >
-      {/* En-tête entreprise (pas de balise <header> : elle est masquée à l'impression) */}
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-base-200 pb-5">
-        <div className="flex items-start gap-3">
-          {company.logo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={company.logo}
-              alt={`Logo ${company.name}`}
-              className="h-14 w-14 rounded-xl border border-base-200 object-contain"
-            />
-          ) : null}
-          <div>
-            <p className="text-lg font-bold">{company.name}</p>
-            {company.branch ? (
-              <p className="text-sm text-base-content/60">{company.branch}</p>
-            ) : null}
-            {company.address ? (
-              <p className="text-sm text-base-content/60">{company.address}</p>
-            ) : null}
-            <p className="text-sm text-base-content/60">
-              {[company.phone, company.email].filter(Boolean).join(' · ')}
-            </p>
-            {company.taxId ? (
-              <p className="text-xs text-base-content/50">NIF : {company.taxId}</p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="text-right">
-          <p className="text-xl font-bold tracking-wide text-primary">DEVIS</p>
-          <p className="tabular text-sm font-semibold">{job.reference}</p>
-          <p className="tabular text-sm text-base-content/60">
-            Établi le {formatDateShort(job.createdAt ?? job.startDate)}
-          </p>
-          <div className="mt-2 flex justify-end">
-            <Badge tone={QUOTE_STATUS_TONES[job.quoteStatus]}>
-              {quoteStatusLabel(job.quoteStatus)}
-            </Badge>
-          </div>
-        </div>
-      </div>
-
-      {/* Client et chantier */}
-      <div className="grid gap-4 py-5 sm:grid-cols-2">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
-            Client
-          </p>
-          <p className="mt-1 font-semibold">{job.customerName}</p>
-          {job.customerPhone ? (
-            <p className="tabular text-sm text-base-content/60">{job.customerPhone}</p>
-          ) : null}
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
-            Chantier
-          </p>
-          <p className="mt-1 font-semibold">{jobCategoryLabel(job.category)}</p>
-          {job.title ? <p className="text-sm text-base-content/70">{job.title}</p> : null}
-          {job.siteAddress ? (
-            <p className="text-sm text-base-content/60">{job.siteAddress}</p>
-          ) : null}
-          {(job.startDate || job.endDate) && (
-            <p className="tabular text-sm text-base-content/60">
-              Du {formatDateShort(job.startDate)} au {formatDateShort(job.endDate)}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {job.description ? (
-        <div className="mb-5 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
-            Description des travaux
-          </p>
-          <p className="mt-1 whitespace-pre-line text-sm">{job.description}</p>
-        </div>
-      ) : null}
-
-      {/* Détail matériaux */}
-      <div className="mb-5">
-        <p className="mb-2 text-sm font-semibold">Matériaux</p>
-        {materials.length === 0 ? (
-          <p className="rounded-xl border border-base-200 bg-base-200/30 px-4 py-3 text-sm text-base-content/60">
-            Aucun matériau enregistré sur ce devis.
-          </p>
-        ) : (
-          <table className="table table-sm w-full">
-            <thead>
-              <tr className="bg-base-200">
-                <th className="font-semibold">Désignation</th>
-                <th className="font-semibold">Unité</th>
-                <th className="text-right font-semibold">Quantité</th>
-                <th className="text-right font-semibold">Prix unitaire</th>
-                <th className="text-right font-semibold">Montant</th>
-              </tr>
-            </thead>
-            <tbody>
-              {materials.map((material) => (
-                <tr key={material.id}>
-                  <td>
-                    <div className="font-medium">{material.productName}</div>
-                              </td>
-                  <td className="text-sm">{material.unit}</td>
-                  <td className="text-right">
-                    <QuantityText value={material.quantity} />
-                  </td>
-                  <td className="text-right">
-                    <MoneyText value={material.unitCost} />
-                  </td>
-                  <td className="text-right">
-                    <MoneyText value={material.amount} bold />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Main-d'œuvre */}
-      <div className="mb-5">
-        <p className="mb-2 text-sm font-semibold">Main-d’œuvre</p>
-        {workers.length === 0 ? (
-          <p className="rounded-xl border border-base-200 bg-base-200/30 px-4 py-3 text-sm text-base-content/60">
-            Aucune affectation d’équipe enregistrée.
-          </p>
-        ) : (
-          <table className="table table-sm w-full">
-            <thead>
-              <tr className="bg-base-200">
-                <th className="font-semibold">Ouvrier</th>
-                <th className="font-semibold">Rôle</th>
-                <th className="text-right font-semibold">Jours</th>
-                <th className="text-right font-semibold">Tarif / jour</th>
-                <th className="text-right font-semibold">Montant</th>
-              </tr>
-            </thead>
-            <tbody>
-              {workers.map((assignment) => (
-                <tr key={assignment.id}>
-                  <td className="font-medium">{assignment.workerName}</td>
-                  <td className="text-sm">{assignment.role || '—'}</td>
-                  <td className="text-right">
-                    <span className="tabular">{formatQuantity(assignment.days)}</span>
-                  </td>
-                  <td className="text-right">
-                    <MoneyText value={assignment.dailyRate} />
-                  </td>
-                  <td className="text-right">
-                    <MoneyText value={assignment.amount} bold />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Totaux */}
-      <div className="flex justify-end border-t border-base-200 pt-4">
-        <div className="w-full space-y-1 sm:w-80">
-          <InfoRow label="Sous-total matériaux">
-            <MoneyText value={materialsTotal} />
-          </InfoRow>
-          <InfoRow label="Sous-total main-d’œuvre">
-            <MoneyText value={laborTotal} />
-          </InfoRow>
-          <div className="flex items-center justify-between border-t border-base-200 pt-2">
-            <span className="text-sm font-semibold">Total du devis</span>
-            <MoneyText value={total} bold className="text-base" />
-          </div>
-          {job.amountPaid > 0 ? (
-            <>
-              <InfoRow label="Déjà encaissé">
-                <MoneyText value={job.amountPaid} />
-              </InfoRow>
-              <InfoRow label="Reste à payer">
-                <MoneyText value={Math.max(total - job.amountPaid, 0)} colored bold />
-              </InfoRow>
-            </>
-          ) : null}
-        </div>
-      </div>
-
-      <p className="mt-6 border-t border-base-200 pt-4 text-center text-xs text-base-content/50">
-        {company.footerNote || 'Devis valable 30 jours. Merci pour votre confiance.'}
-      </p>
-    </div>
-  );
 }
 
 export function JobListSkeleton() {

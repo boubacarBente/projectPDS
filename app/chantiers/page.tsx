@@ -1,52 +1,41 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { toast } from 'react-toastify';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar } from '@/components/data-toolbar';
 import { FilterSelect, Pagination } from '@/components/search-filter';
 import { ResponsiveTable } from '@/components/responsive-table';
 import { DatePicker } from '@/components/date-picker';
-import {
-  Badge,
-  EmptyState,
-  ErrorState,
-  MoneyText,
-  SkeletonCards,
-  SkeletonTable,
-  StatCardDelta,
-} from '@/components/design-system';
+import { Badge, EmptyState, ErrorState, MoneyText, SkeletonCards, SkeletonTable, StatCardDelta } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
 import { useSettings } from '@/app/parametres/page';
 import { StoreScopeSelect, scopeShowsStore, useStoreScope } from '@/components/store-scope';
 import { useViewStateRehydration, writeViewState, clampPage } from '@/lib/view-state';
+import { formatNumber } from '@/lib/format';
 import {
   jobCategoryOptions,
   JOB_STATUS_OPTIONS,
-  QUOTE_STATUS_OPTIONS,
   JobFormModal,
-  JobWorkersManagerButton,
   jobCategoryLabel,
   buildJobColumns,
   jobStatusLabel,
-  quoteStatusLabel,
   readApiError,
-  useJobSelectOptions,
   type JobsSummary,
   type Paginated,
   type ServiceJobRow,
 } from '@/components/chantiers/chantiers-modals';
 
 /* ==================================================================
- * Page « Chantiers » (README §19 — prestations de services).
+ * Page « Chantiers » (README §19, cahier « Prestations » §6).
  *
- * La prestation est un **document facturable autonome** : son total compte
- * dans le chiffre d'affaires, ses encaissements dans la caisse, mais elle ne
- * génère aucune facture de vente (§15). Cette page ne modifie jamais un
- * montant à la main : les totaux sont recalculés par `lib/jobs.ts`.
+ * Les travaux réellement réalisés pour un client : ouverts depuis un devis
+ * accepté (cas normal) ou directement. Le devis vit désormais à part
+ * (/chantiers/devis) ; cette liste ne montre que des chantiers.
  *
- * Les 5 états obligatoires sont présents (chargement, vide, erreur, nominal,
- * feedback) ainsi que la restauration d'état au retour arrière.
+ * Le montant facturé vient des prestations ; coûts et marge sont calculés par
+ * le serveur et ne sont renvoyés qu'à qui détient `balances.view`.
  * ================================================================== */
 
 const LIMIT = 20;
@@ -56,7 +45,7 @@ type ChantiersViewState = {
   search: string;
   category: string;
   status: string;
-  quoteStatus: string;
+  late: boolean;
   from: string;
   to: string;
   page: number;
@@ -72,24 +61,21 @@ function buildQuery(entries: Record<string, string | number | undefined>): strin
 }
 
 export default function ChantiersPage() {
+  const router = useRouter();
   const canCreate = usePermission('jobs.create');
-  // Types de prestation : liste des paramètres (construction, électricité, meubles…).
   const { settings } = useSettings();
   const { scope, setScope, apply } = useStoreScope('chantiers');
-  /** `?store=` des requêtes (vide = magasin actif). */
   const storeParam = apply(new URLSearchParams()).get('store') ?? undefined;
 
-  /* Filtres */
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [category, setCategory] = useState('');
   const [status, setStatus] = useState('');
-  const [quoteStatus, setQuoteStatus] = useState('');
+  const [late, setLate] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
 
-  /* Données */
   const [jobs, setJobs] = useState<ServiceJobRow[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -98,92 +84,80 @@ export default function ChantiersPage() {
   const [reloadToken, setReloadToken] = useState(0);
 
   const [summary, setSummary] = useState<JobsSummary | null>(null);
-  const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summaryToken, setSummaryToken] = useState(0);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  /* Un état booléen par modale (§8.3 règle 1). */
-  const [isDevisOpen, setIsDevisOpen] = useState(false);
-  const [isPrestationOpen, setIsPrestationOpen] = useState(false);
-
-  const { customers, isLoading: isOptionsLoading } = useJobSelectOptions(canCreate);
-
-  /* Débounce de la recherche (§5) */
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
   }, [search]);
 
+  const rehydrated = useViewStateRehydration<ChantiersViewState>(VIEW_NAME, (saved) => {
+    if (saved.search !== undefined) {
+      setSearch(saved.search);
+      setDebouncedSearch(saved.search);
+    }
+    if (saved.category !== undefined) setCategory(saved.category);
+    if (saved.status !== undefined) setStatus(saved.status);
+    if (saved.late !== undefined) setLate(Boolean(saved.late));
+    if (saved.from !== undefined) setFrom(saved.from);
+    if (saved.to !== undefined) setTo(saved.to);
+    if (saved.page) setPage(saved.page);
+  });
+
+  useEffect(() => {
+    if (!rehydrated) return;
+    writeViewState(VIEW_NAME, { search, category, status, late, from, to, page });
+  }, [rehydrated, search, category, status, late, from, to, page]);
+
   /* Synthèse */
   useEffect(() => {
     const controller = new AbortController();
-    setSummaryLoading(true);
     setSummaryError(null);
-
-    const query = buildQuery({ stats: 1, from, to, store: storeParam });
-
-    fetch(`/api/chantiers?${query}`, {
+    fetch(`/api/chantiers?${buildQuery({ stats: 1, from, to, category, store: storeParam })}`, {
       signal: controller.signal,
       cache: 'no-store',
       credentials: 'same-origin',
     })
       .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(await readApiError(response, 'Synthèse indisponible.'));
-        }
+        if (!response.ok) throw new Error(await readApiError(response, 'Synthèse indisponible.'));
         return (await response.json()) as { summary: JobsSummary };
       })
-      .then((payload) => {
-        if (controller.signal.aborted) return;
-        setSummary(payload.summary);
-      })
+      .then((payload) => setSummary(payload.summary))
       .catch((caught: unknown) => {
         if (caught instanceof Error && caught.name === 'AbortError') return;
         setSummaryError(caught instanceof Error ? caught.message : 'Synthèse indisponible.');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSummaryLoading(false);
       });
-
     return () => controller.abort();
-  }, [from, to, summaryToken, storeParam]);
+  }, [from, to, category, storeParam, reloadToken]);
 
   /* Liste */
   useEffect(() => {
+    if (!rehydrated) return;
     const controller = new AbortController();
     setIsLoading(true);
     setError(null);
-
     const query = buildQuery({
       search: debouncedSearch,
       category,
       status,
-      quoteStatus,
+      late: late ? 1 : undefined,
       from,
       to,
       page,
       limit: LIMIT,
       store: storeParam,
     });
-
-    fetch(`/api/chantiers?${query}`, {
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'same-origin',
-    })
+    fetch(`/api/chantiers?${query}`, { signal: controller.signal, cache: 'no-store', credentials: 'same-origin' })
       .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(await readApiError(response, 'Chargement des chantiers impossible.'));
-        }
+        if (!response.ok) throw new Error(await readApiError(response, 'Chargement des chantiers impossible.'));
         return (await response.json()) as Paginated<ServiceJobRow>;
       })
       .then((payload) => {
-        if (controller.signal.aborted) return;
         setJobs(Array.isArray(payload.data) ? payload.data : []);
         setTotal(Number(payload.total ?? 0));
         const pages = Number(payload.totalPages ?? 1) || 1;
         setTotalPages(pages);
-
         const corrected = clampPage(page, pages);
         if (corrected !== null) setPage(corrected);
       })
@@ -194,139 +168,109 @@ export default function ChantiersPage() {
       .finally(() => {
         if (!controller.signal.aborted) setIsLoading(false);
       });
-
     return () => controller.abort();
-  }, [debouncedSearch, category, status, quoteStatus, from, to, page, reloadToken, storeParam]);
+  }, [rehydrated, debouncedSearch, category, status, late, from, to, page, reloadToken, storeParam]);
 
-  /* Restauration d'état au retour arrière (§5) */
-  const rehydrated = useViewStateRehydration<ChantiersViewState>(VIEW_NAME, (saved) => {
-    if (saved.search !== undefined) {
-      setSearch(saved.search);
-      setDebouncedSearch(saved.search);
-    }
-    if (saved.category !== undefined) setCategory(saved.category);
-    if (saved.status !== undefined) setStatus(saved.status);
-    if (saved.quoteStatus !== undefined) setQuoteStatus(saved.quoteStatus);
-    if (saved.from !== undefined) setFrom(saved.from);
-    if (saved.to !== undefined) setTo(saved.to);
-    if (saved.page) setPage(saved.page);
-  });
-
-  useEffect(() => {
-    if (!rehydrated) return;
-    writeViewState(VIEW_NAME, { search, category, status, quoteStatus, from, to, page });
-  }, [rehydrated, search, category, status, quoteStatus, from, to, page]);
-
-  const refresh = useCallback(() => {
-    setReloadToken((token) => token + 1);
-    setSummaryToken((token) => token + 1);
-  }, []);
+  const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
 
   const activeFilters = useMemo(
-    () =>
-      [category, status, quoteStatus, from, to].filter((value) => value !== '').length,
-    [category, status, quoteStatus, from, to],
+    () => [category, status, from, to].filter((value) => value !== '').length + (late ? 1 : 0),
+    [category, status, late, from, to],
   );
 
   function resetFilters() {
     setSearch('');
     setCategory('');
     setStatus('');
-    setQuoteStatus('');
+    setLate(false);
     setFrom('');
     setTo('');
     setPage(1);
   }
 
+  const open = summary ? summary.byStatus.pending + summary.byStatus.planned + summary.byStatus.in_progress + summary.byStatus.suspended : 0;
+
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
       <PageHeader
-        eyebrow="Production"
+        eyebrow="Chantiers"
         title="Chantiers"
-        description="Devis et suivi de tout type de prestation (construction, électricité, plomberie, plâtre, alucobond, meubles…) — matériaux déduits du stock, équipes, coûts de revient et encaissements."
+        description="Les travaux réalisés pour les clients : prestations facturées, avancement, équipe, dépenses et encaissements. Un devis accepté ouvre son chantier."
         actions={
-          <>
-            <JobWorkersManagerButton onChanged={refresh} />
-            {canCreate && (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-11 border border-base-300"
-                  onClick={() => setIsDevisOpen(true)}
-                >
-                  Nouveau devis
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11"
-                  onClick={() => setIsPrestationOpen(true)}
-                >
-                  Nouvelle prestation
-                </button>
-              </>
-            )}
-          </>
+          canCreate ? (
+            <>
+              <Link href="/chantiers/devis/nouveau" className="btn btn-ghost min-h-11 border border-base-300">
+                Nouveau devis
+              </Link>
+              <button type="button" className="btn btn-primary min-h-11" onClick={() => setIsCreateOpen(true)}>
+                Nouveau chantier
+              </button>
+            </>
+          ) : undefined
         }
       />
 
-      {/* 2 · Cartes de synthèse */}
-      {summaryLoading ? (
+      {summaryError ? (
+        <ErrorState title="Synthèse indisponible" description={summaryError} onRetry={refresh} />
+      ) : !summary ? (
         <SkeletonCards count={4} />
-      ) : summaryError ? (
-        <ErrorState
-          title="Synthèse indisponible"
-          description={summaryError}
-          onRetry={() => setSummaryToken((token) => token + 1)}
-        />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
           <StatCardDelta
-            label="Chantiers"
-            tooltip="Nombre de chantiers (devis compris) des magasins affichés, sur la période choisie. Un devis devient un chantier quand le client l’accepte."
+            label="Chantiers ouverts"
+            tooltip="Chantiers en préparation, planifiés, en cours ou suspendus, sur la période et les magasins choisis."
             tone="primary"
-            value={summary?.totalJobs ?? 0}
-            hint={`${summary?.byStatus.in_progress ?? 0} en cours · ${summary?.byStatus.quote ?? 0} devis`}
+            value={formatNumber(open)}
+            hint={`${formatNumber(summary.byStatus.in_progress)} en cours · ${formatNumber(summary.byStatus.completed)} terminé(s)`}
           />
           <StatCardDelta
-            label="CA des prestations"
-            tooltip="Montant total facturé pour les chantiers (matériaux + main-d’œuvre), hors chantiers annulés."
+            label="En retard"
+            tooltip="Chantiers non terminés dont la date de fin prévue est dépassée. Cliquez sur le filtre « En retard » pour les voir."
+            tone={summary.late > 0 ? 'error' : 'success'}
+            value={formatNumber(summary.late)}
+            hint={summary.late > 0 ? 'À relancer ou replanifier' : 'Aucun retard'}
+          />
+          <StatCardDelta
+            label="Montant des chantiers"
+            tooltip="Total facturé aux clients pour les chantiers (prestations), hors chantiers annulés."
             tone="success"
-            value={<MoneyText value={summary?.billed ?? 0} />}
-            hint="Hors chantiers annulés"
-          />
-          <StatCardDelta
-            label="Coût de revient"
-            tooltip="Ce que les chantiers ont réellement coûté : matériaux sortis du stock au prix d’achat, plus la main-d’œuvre des ouvriers."
-            tone="warning"
-            value={<MoneyText value={summary?.totalCost ?? 0} />}
-            hint="Matériaux + main-d’œuvre"
-          />
-          <StatCardDelta
-            label="Marge"
-            tooltip="Ce que rapportent les chantiers : chiffre d’affaires des prestations moins leur coût de revient."
-            tone={(summary?.margin ?? 0) >= 0 ? 'success' : 'error'}
-            value={<MoneyText value={summary?.margin ?? 0} />}
-            hint={summary ? `${summary.marginPercent.toLocaleString('fr-FR')} % du CA` : undefined}
+            value={<MoneyText value={summary.billed} />}
+            hint="Hors annulés"
           />
           <StatCardDelta
             label="Encaissé"
             tooltip="Argent réellement reçu des clients pour ces chantiers (acomptes et paiements)."
             tone="info"
-            value={<MoneyText value={summary?.collected ?? 0} />}
-            hint="Reçus de prestation"
+            value={<MoneyText value={summary.collected} />}
+            hint="Reçus de chantier"
           />
           <StatCardDelta
             label="Reste à encaisser"
-            tooltip="Ce que les clients doivent encore pour leurs chantiers : montant facturé moins ce qui a été encaissé."
-            tone={(summary?.outstanding ?? 0) > 0 ? 'error' : 'success'}
-            /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
-            value={<MoneyText value={summary?.outstanding ?? 0} remaining bold />}
+            tooltip="Ce que les clients doivent encore : montant des chantiers moins ce qui a été encaissé."
+            tone={summary.outstanding > 0 ? 'error' : 'success'}
+            value={<MoneyText value={summary.outstanding} remaining bold />}
             hint="Créances sur chantiers"
           />
+          {summary.margin !== null ? (
+            <StatCardDelta
+              label="Bénéfice estimatif"
+              tooltip="Montant des chantiers moins leurs coûts : matériaux au prix d’achat, main-d’œuvre, sous-traitance convenue et dépenses rattachées."
+              tone={summary.margin >= 0 ? 'success' : 'error'}
+              value={<MoneyText value={summary.margin} colored />}
+              hint={summary.marginPercent !== null ? `${summary.marginPercent.toLocaleString('fr-FR')} % du montant` : undefined}
+            />
+          ) : (
+            <StatCardDelta
+              label="Terminés"
+              tooltip="Chantiers terminés sur la période."
+              tone="success"
+              value={formatNumber(summary.byStatus.completed)}
+              hint={`${formatNumber(summary.byStatus.cancelled)} annulé(s)`}
+            />
+          )}
         </div>
       )}
 
-      {/* 3 · Barre d'outils */}
       <DataToolbar
         search={search}
         onSearchChange={(value) => {
@@ -344,70 +288,68 @@ export default function ChantiersPage() {
               }}
               className="min-h-11 w-full sm:w-52"
             />
-            <div className="w-full sm:w-56">
+            <div className="w-full sm:w-52">
               <FilterSelect
-                value={category}
+                value={status}
                 onChange={(value) => {
-                  setCategory(value);
+                  setStatus(value);
                   setPage(1);
                 }}
-                options={jobCategoryOptions(settings.jobCategories ?? [])}
-                placeholder="Tous les types"
+                options={JOB_STATUS_OPTIONS}
+                placeholder="Tous les statuts"
               />
             </div>
+            <button
+              type="button"
+              aria-pressed={late}
+              className={`btn min-h-11 w-full sm:w-auto ${late ? 'btn-error' : 'btn-ghost border border-base-300'}`}
+              onClick={() => {
+                setLate((value) => !value);
+                setPage(1);
+              }}
+            >
+              En retard{summary && summary.late > 0 ? ` (${summary.late})` : ''}
+            </button>
           </>
         }
         secondaryFilters={
           <>
             <FilterSelect
-              value={status}
+              value={category}
               onChange={(value) => {
-                setStatus(value);
+                setCategory(value);
                 setPage(1);
               }}
-              options={JOB_STATUS_OPTIONS}
-              placeholder="Tous les statuts"
+              options={jobCategoryOptions(settings.jobCategories ?? [])}
+              placeholder="Tous les types"
             />
-            <FilterSelect
-              value={quoteStatus}
+            <DatePicker
+              value={from}
               onChange={(value) => {
-                setQuoteStatus(value);
+                setFrom(value);
                 setPage(1);
               }}
-              options={QUOTE_STATUS_OPTIONS}
-              placeholder="Tous les devis"
+              placeholder="Début à partir du"
             />
-            <div className="space-y-1">
-              <DatePicker
-                value={from}
-                onChange={(value) => {
-                  setFrom(value);
-                  setPage(1);
-                }}
-                placeholder="Du"
-              />
-            </div>
-            <div className="space-y-1">
-              <DatePicker
-                value={to}
-                onChange={(value) => {
-                  setTo(value);
-                  setPage(1);
-                }}
-                placeholder="Au"
-              />
-            </div>
+            <DatePicker
+              value={to}
+              onChange={(value) => {
+                setTo(value);
+                setPage(1);
+              }}
+              placeholder="Jusqu’au"
+            />
           </>
         }
-        secondaryCount={activeFilters}
+        secondaryCount={[category, from, to].filter(Boolean).length}
       />
 
       {activeFilters > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-base-content/60">
           <span>Filtres actifs :</span>
+          {status && <Badge tone="info">{status === 'open' ? 'Ouverts' : jobStatusLabel(status)}</Badge>}
+          {late && <Badge tone="error">En retard</Badge>}
           {category && <Badge tone="primary">{jobCategoryLabel(category)}</Badge>}
-          {status && <Badge tone="info">{jobStatusLabel(status)}</Badge>}
-          {quoteStatus && <Badge tone="info">{quoteStatusLabel(quoteStatus)}</Badge>}
           {(from || to) && (
             <Badge tone="neutral">
               {from || '…'} → {to || '…'}
@@ -419,7 +361,6 @@ export default function ChantiersPage() {
         </div>
       )}
 
-      {/* 4 · Liste */}
       {isLoading ? (
         <SkeletonTable rows={6} cols={6} />
       ) : error ? (
@@ -430,7 +371,7 @@ export default function ChantiersPage() {
           description={
             activeFilters > 0 || search
               ? 'Aucun chantier ne correspond à ces filtres.'
-              : 'Créez un premier devis pour suivre une prestation, ses matériaux et son équipe.'
+              : 'Un chantier s’ouvre depuis un devis accepté, ou directement pour des travaux sans devis.'
           }
           action={
             activeFilters > 0 || search ? (
@@ -438,13 +379,9 @@ export default function ChantiersPage() {
                 Réinitialiser les filtres
               </button>
             ) : canCreate ? (
-              <button
-                type="button"
-                className="btn btn-primary min-h-11"
-                onClick={() => setIsDevisOpen(true)}
-              >
-                Créer le premier devis
-              </button>
+              <Link href="/chantiers/devis/nouveau" className="btn btn-primary min-h-11">
+                Établir un devis
+              </Link>
             ) : undefined
           }
         />
@@ -454,6 +391,7 @@ export default function ChantiersPage() {
             columns={buildJobColumns({ showStore: scopeShowsStore(scope) })}
             data={jobs}
             getRowKey={(job) => job.id}
+            onRowClick={(job) => router.push(`/chantiers/${job.id}`)}
             emptyMessage="Aucun chantier."
           />
           <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
@@ -463,32 +401,7 @@ export default function ChantiersPage() {
         </>
       )}
 
-      {/* 6 · Modales — une par état booléen */}
-      <JobFormModal
-        isOpen={isDevisOpen}
-        onClose={() => setIsDevisOpen(false)}
-        onSaved={() => {
-          toast.success('Devis enregistré.');
-          refresh();
-        }}
-        job={null}
-        customers={customers}
-        isOptionsLoading={isOptionsLoading}
-        initial={{ status: 'quote', quoteStatus: 'draft' }}
-      />
-
-      <JobFormModal
-        isOpen={isPrestationOpen}
-        onClose={() => setIsPrestationOpen(false)}
-        onSaved={() => {
-          toast.success('Prestation enregistrée.');
-          refresh();
-        }}
-        job={null}
-        customers={customers}
-        isOptionsLoading={isOptionsLoading}
-        initial={{ status: 'pending', quoteStatus: 'accepted' }}
-      />
+      <JobFormModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} job={null} onSaved={(job) => router.push(`/chantiers/${job.id}`)} />
     </div>
   );
 }

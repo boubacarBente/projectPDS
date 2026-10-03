@@ -138,7 +138,9 @@ export function LinesBlock({ lines }: { lines: DocumentLine[] }) {
   return (
     <div className="mb-5">
       <p className="mb-2 text-sm font-semibold">Prestations</p>
-      <table className="table table-sm hidden w-full sm:table">
+      {/* Conteneur masqué sur téléphone : la classe `table` de DaisyUI l'emporte sur `hidden` posé sur le tableau lui-même. */}
+      <div className="hidden sm:block">
+      <table className="table table-sm w-full">
         <thead>
           <tr className="bg-base-200">
             <th className="font-semibold">Désignation</th>
@@ -167,6 +169,7 @@ export function LinesBlock({ lines }: { lines: DocumentLine[] }) {
           ))}
         </tbody>
       </table>
+      </div>
       <ul className="space-y-2 sm:hidden">
         {lines.map((line, index) => (
           <li key={index} className="rounded-xl border border-base-200 px-3 py-2.5">

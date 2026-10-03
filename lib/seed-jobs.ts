@@ -35,6 +35,7 @@ import {
   addJobWorker,
   cancelServiceJob,
   createServiceJob,
+  updateServiceJob,
   updateStatus,
   type JobStatus,
 } from '@/lib/jobs';
@@ -314,6 +315,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await setQuoteStatus(qFacade.id, 'accepted', kaloum.id);
   const { job: k1 } = await convertQuoteToJob(qFacade.id, { storeId: kaloum.id, userId: gerantKal.id, startDate: d(-12), endDate: d(10), responsibleUserId: gerantKal.id });
   await updateStatus(k1.id, 'in_progress', kaloum.id);
+  await updateServiceJob(k1.id, { actualStartDate: d(-11) }, kaloum.id);
   await addJobTeam(k1.id, 'Équipe façade', 12, kaloum.id);
   await material(kaloum, gerantKal, k1.id, 'Panneau Alucobond 4 mm rouge', 20);
   await material(kaloum, gerantKal, k1.id, 'Panneau Alucobond 4 mm argent', 15);
