@@ -31,6 +31,7 @@ import {
 import { formatDateShort } from '@/lib/date-format';
 import { formatCurrency, formatNumber } from '@/lib/format';
 import { useViewStateRehydration, writeViewState } from '@/lib/view-state';
+import { useAuth } from '@/components/auth-provider';
 
 /**
  * Fiche fournisseur (README §7.3) : coordonnées, statistiques, dernières
@@ -48,6 +49,8 @@ type ViewState = {
 type TopProduct = { productName: string; quantity: number; amount: number };
 
 export default function FournisseurDetailPage() {
+  // Fournisseur commun à tous les magasins : la fiche porte sur tous ceux de l'utilisateur.
+  const multiStore = useAuth().stores.length > 1;
   const params = useParams<{ id: string }>();
   const rawId = Array.isArray(params?.id) ? params?.id[0] : params?.id;
   const supplierId = Number(rawId);
@@ -91,7 +94,7 @@ export default function FournisseurDetailPage() {
 
     void (async () => {
       try {
-        const response = await fetch(`/api/fournisseurs/${supplierId}`, {
+        const response = await fetch(`/api/fournisseurs/${supplierId}${multiStore ? '?store=all' : ''}`, {
           cache: 'no-store',
           credentials: 'same-origin',
           signal: controller.signal,
@@ -113,7 +116,7 @@ export default function FournisseurDetailPage() {
     })();
 
     return () => controller.abort();
-  }, [rehydrated, isValidId, supplierId, reloadToken]);
+  }, [rehydrated, isValidId, supplierId, reloadToken, multiStore]);
 
   useEffect(() => {
     if (!rehydrated) return;
@@ -345,25 +348,29 @@ export default function FournisseurDetailPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCardDelta
           label="Achats"
+          tooltip="Nombre de factures d’achat passées chez ce fournisseur, et leur montant moyen."
           value={formatNumber(stats.purchaseCount)}
           hint={`Panier moyen : ${formatCurrency(stats.averageBasket)}`}
           tone="info"
         />
         <StatCardDelta
           label="Total acheté"
+          tooltip="Montant total des factures d’achat passées chez ce fournisseur (achats annulés exclus)."
           value={<MoneyText value={stats.totalPurchased} />}
           hint={`Premier achat : ${formatDateShort(stats.firstPurchaseDate)}`}
           tone="primary"
         />
         <StatCardDelta
           label="Total payé"
+          tooltip="Argent déjà versé à ce fournisseur pour ces factures."
           value={<MoneyText value={stats.totalPaid} />}
           hint={`Dernier achat : ${formatDateShort(stats.lastPurchaseDate)}`}
           tone="success"
         />
         <StatCardDelta
           label="Dette restante"
-          value={<MoneyText value={stats.balance} />}
+          tooltip="Ce que l’entreprise doit encore à ce fournisseur : total acheté moins ce qui a été payé, tous magasins confondus."
+          value={<MoneyText value={stats.balance} due />}
           hint="Calculée depuis les factures d'achat"
           tone={stats.balance > 0.001 ? 'error' : 'success'}
         />
@@ -377,6 +384,12 @@ export default function FournisseurDetailPage() {
             <InfoRow label="Adresse">{supplier.address || '—'}</InfoRow>
             <InfoRow label="Premier achat">{formatDateShort(stats.firstPurchaseDate)}</InfoRow>
             <InfoRow label="Dernier achat">{formatDateShort(stats.lastPurchaseDate)}</InfoRow>
+            {(stats.byStore?.length ?? 0) > 1 &&
+              stats.byStore!.map((row) => (
+                <InfoRow key={row.storeId} label={`Dette — ${row.storeName}`}>
+                  <MoneyText value={row.balance} due />
+                </InfoRow>
+              ))}
           </div>
         </Card>
 

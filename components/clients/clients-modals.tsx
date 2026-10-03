@@ -55,6 +55,8 @@ export type CustomerRecord = {
 
 export type CustomerStatsRecord = {
   customer: CustomerRecord;
+  /** Solde et chiffre d'affaires par magasin (portée multi-magasins). */
+  byStore?: { storeId: number; storeName: string; balance: number; invoiced: number }[];
   invoiceCount: number;
   totalInvoiced: number;
   totalPaid: number;

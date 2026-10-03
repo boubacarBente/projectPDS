@@ -147,6 +147,10 @@
 - **Exports** : voir README §11.1 (troisième piège, règles pour tout futur export).
 - **Chantiers** (§6.11) : types de prestation configurables (`settings.jobCategories`,
   `lib/job-categories.ts`, `validateJobCategory`), portée magasin, colonnes resserrées.
+- **Clients / Fournisseurs** : portée sur la liste et les cartes ; la **fiche** porte
+  sur tous les magasins de l'utilisateur (`?store=all` si plusieurs) avec un détail
+  `byStore` (`getCustomerStats`, `getSupplierStats`). Un tiers est commun au réseau :
+  sa dette ne doit jamais paraître soldée parce qu'on regarde depuis un autre magasin.
 - **Outils** : `npm run verify:ui` (rendu réel, console, 404, débordement, `WIDTH=400`),
   base de recette isolée `PDS_DB_PATH` + `NEXT_DIST_DIR` (README §28.4).
 
@@ -155,7 +159,7 @@
 | Page | Travail | Section |
 |---|---|---|
 | `/` tableau de bord | filtre magasin, comparaison, alertes | §6.3 |
-| `/ventes`, `/achats`, `/caisse`, `/depenses`, `/stocks`, `/produits`, `/clients`, `/fournisseurs`, `/chantiers`, `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, colonne « Magasin » en vue consolidée, cas particuliers décrits. Tableaux trop larges en 1366 px à resserrer : ventes, caisse, stocks, produits, chantiers, rapports, reçus | §6.4 → §6.13 |
+| `/soldes`, `/rapports`, `/recus` | ajouter `StoreScopeSelect`, nom du magasin sous l’identifiant (`StoreTag`) en vue consolidée, cas particuliers décrits. Tableaux trop larges en 1366 px à resserrer : rapports, reçus | §6.4 → §6.13 |
 | Factures / reçus imprimés | en-tête avec les coordonnées **du magasin** | §6.4 |
 | README.md / AGENTS.md | §28 du README et AGENTS.md à jour ; réécrire les anciennes sections §20, §21, §23 du README en fin de chantier | — |
 | Vérifications | `tsc`, `next build`, migration d'une ancienne base, test de synchro réel | §9 |

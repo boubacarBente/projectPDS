@@ -69,6 +69,7 @@ import {
 } from '@/lib/export-document';
 import { formatDateShort } from '@/lib/date-format';
 import { formatCurrency, formatNumber, formatQuantity, today } from '@/lib/format';
+import { useAuth } from '@/components/auth-provider';
 
 type InvoiceRow = CustomerStatsRecord['recentInvoices'][number];
 
@@ -349,6 +350,8 @@ function monthKeyOf(date: string | null | undefined): string | null {
  * ------------------------------------------------------------------ */
 
 export default function ClientDetailPage() {
+  // Plusieurs magasins accessibles : la fiche porte sur tous (voir le chargement).
+  const multiStore = useAuth().stores.length > 1;
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const customerId = Number(params?.id);
@@ -386,7 +389,13 @@ export default function ClientDetailPage() {
       setError(null);
 
       try {
-        const response = await fetch(`/api/clients/${customerId}`, {
+        /*
+         * Un client est commun à tous les magasins : sa fiche et son relevé
+         * portent sur **tous** les magasins de l'utilisateur (le serveur borne à
+         * son périmètre), avec le détail par magasin. Sinon, un client qui doit
+         * de l'argent à Matoto paraissait soldé depuis Kaloum.
+         */
+        const response = await fetch(`/api/clients/${customerId}${multiStore ? '?store=all' : ''}`, {
           cache: 'no-store',
           credentials: 'same-origin',
           signal,
@@ -408,7 +417,7 @@ export default function ClientDetailPage() {
         setIsLoading(false);
       }
     },
-    [customerId],
+    [customerId, multiStore],
   );
 
   useEffect(() => {
@@ -1046,6 +1055,24 @@ export default function ClientDetailPage() {
                   <MoneyText value={stats.balance} due bold />
                 </RecapRow>
               </div>
+
+              {(stats.byStore?.length ?? 0) > 1 && (
+                <div className="border-t border-base-200 pt-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-base-content/55">Par magasin</p>
+                  <div className="mt-1 space-y-1">
+                    {stats.byStore!.map((row) => (
+                      <RecapRow key={row.storeId} label={row.storeName}>
+                        <span className="flex flex-col items-end">
+                          <MoneyText value={row.balance} due bold />
+                          <span className="text-xs text-base-content/55">
+                            facturé <MoneyText value={row.invoiced} />
+                          </span>
+                        </span>
+                      </RecapRow>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Message existant du plafond de crédit : teinte + libellé. */}
               {stats.creditLimitExceeded ? (

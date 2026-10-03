@@ -66,6 +66,8 @@ export type SupplierPurchaseEntry = {
 
 export type SupplierStatsRecord = {
   supplier: SupplierRecord;
+  /** Dette et achats par magasin (portée multi-magasins). */
+  byStore?: { storeId: number; storeName: string; balance: number; purchased: number }[];
   purchaseCount: number;
   totalPurchased: number;
   totalPaid: number;

@@ -41,6 +41,7 @@ import {
 } from '@/components/clients/clients-modals';
 import { clampPage, useViewStateRehydration, writeViewState } from '@/lib/view-state';
 import { formatNumber } from '@/lib/format';
+import { StoreScopeSelect, useStoreScope } from '@/components/store-scope';
 
 const PAGE_LIMIT = 10;
 const VIEW_NAME = 'clients';
@@ -106,6 +107,11 @@ function csvField(value: string): string {
 
 export default function ClientsPage() {
   const canCreate = usePermission('customers.create');
+  /*
+   * Le référentiel client est commun à tous les magasins ; la portée change les
+   * soldes et le chiffre d'affaires affichés (ventes du ou des magasins choisis).
+   */
+  const { scope, setScope, apply } = useStoreScope('clients');
   const canUpdate = usePermission('customers.update');
   const canDelete = usePermission('customers.delete');
   const canPay = usePermission('payments.create');
@@ -166,7 +172,7 @@ export default function ClientsPage() {
       setError(null);
 
       try {
-        const params = new URLSearchParams({ limit: String(PAGE_LIMIT) });
+        const params = apply(new URLSearchParams({ limit: String(PAGE_LIMIT) }));
         if (debouncedSearch) params.set('search', debouncedSearch);
         /*
          * Le tri part au serveur : c'est la seule façon de trier *toute* la
@@ -246,7 +252,7 @@ export default function ClientsPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, debouncedSearch, statusFilter, page, sortOrder, refreshToken]);
+  }, [rehydrated, debouncedSearch, statusFilter, page, sortOrder, refreshToken, apply]);
 
   /* Cartes de synthèse. */
   useEffect(() => {
@@ -258,7 +264,7 @@ export default function ClientsPage() {
     async function loadSummary() {
       setIsSummaryLoading(true);
       try {
-        const response = await fetch('/api/clients/stats', {
+        const response = await fetch(`/api/clients/stats?${apply(new URLSearchParams())}`, {
           cache: 'no-store',
           credentials: 'same-origin',
           signal: controller.signal,
@@ -292,7 +298,7 @@ export default function ClientsPage() {
       active = false;
       controller.abort();
     };
-  }, [rehydrated, refreshToken]);
+  }, [rehydrated, refreshToken, apply]);
 
   /* Mémorisation de l'état de vue, sur la même maille que le retour arrière. */
   useEffect(() => {
@@ -456,29 +462,34 @@ export default function ClientsPage() {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
       <StatCardDelta
         label="Clients"
+        tooltip="Nombre de fiches clients enregistrées, et combien sont actives. Les clients sont communs à tous les magasins."
         value={<span className="tabular">{formatNumber(summary.totalCustomers)}</span>}
         hint={`${formatNumber(summary.activeCustomers)} actifs`}
       />
       <StatCardDelta
         label="Débiteurs"
+        tooltip="Clients qui doivent encore de l’argent sur des ventes du ou des magasins choisis."
         tone="warning"
         value={<span className="tabular">{formatNumber(summary.debtorsCount)}</span>}
         hint="Clients avec un solde dû"
       />
       <StatCardDelta
         label="Créances clients"
+        tooltip="Total de ce que les clients doivent encore : montant des ventes moins ce qu’ils ont déjà payé, pour le ou les magasins choisis."
         tone="error"
         value={<span className="tabular">{formatNumber(summary.totalReceivables)}</span>}
         hint="GNF — restes à payer"
       />
       <StatCardDelta
         label="Total facturé"
+        tooltip="Montant total des ventes validées (hors annulées et brouillons) du ou des magasins choisis."
         tone="success"
         value={<span className="tabular">{formatNumber(summary.totalInvoiced)}</span>}
         hint="GNF — ventes actives"
       />
       <StatCardDelta
         label="Clients inactifs"
+        tooltip="Fiches clients désactivées : elles sont conservées avec tout leur historique."
         tone="neutral"
         value={
           <span className="tabular">
@@ -522,6 +533,15 @@ export default function ClientsPage() {
         onSearchChange={setSearch}
         searchPlaceholder="Rechercher un nom, un téléphone, une adresse…"
         filters={
+          <>
+          <StoreScopeSelect
+            value={scope}
+            onChange={(value) => {
+              setScope(value);
+              setPage(1);
+            }}
+            className="min-h-11 w-full sm:w-52"
+          />
           <div className="w-full sm:w-52">
             <FilterSelect
               value={statusFilter}
@@ -533,6 +553,7 @@ export default function ClientsPage() {
               placeholder="Tous les clients"
             />
           </div>
+          </>
         }
         secondaryFilters={
           <div className="w-full sm:w-56">

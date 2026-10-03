@@ -27,6 +27,7 @@ import {
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
 import { clampPage, useViewStateRehydration, writeViewState } from '@/lib/view-state';
+import { StoreScopeSelect, useStoreScope } from '@/components/store-scope';
 
 /**
  * Liste des fournisseurs (README §7.3).
@@ -93,6 +94,8 @@ export default function FournisseursPage() {
   const canUpdate = usePermission('suppliers.update');
   const canDelete = usePermission('suppliers.delete');
   const canPay = usePermission('payments.create');
+  // Référentiel commun ; la portée change les dettes et achats affichés.
+  const { scope, setScope, apply } = useStoreScope('fournisseurs');
 
   const rehydrated = useViewStateRehydration<ViewState>('fournisseurs', (saved) => {
     if (saved.search !== undefined) setSearch(saved.search);
@@ -117,7 +120,7 @@ export default function FournisseursPage() {
       let clampedAway = false;
 
       try {
-        const params = new URLSearchParams({ page: String(page), limit: String(PAGE_LIMIT) });
+        const params = apply(new URLSearchParams({ page: String(page), limit: String(PAGE_LIMIT) }));
         if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
         if (filter === 'debtors') params.set('debtors', 'true');
         if (filter === 'inactive') params.set('inactive', 'true');
@@ -155,7 +158,7 @@ export default function FournisseursPage() {
         if (!clampedAway) setIsLoading(false);
       }
     },
-    [page, filter, debouncedSearch],
+    [page, filter, debouncedSearch, apply],
   );
 
   useEffect(() => {
@@ -173,7 +176,7 @@ export default function FournisseursPage() {
 
     void (async () => {
       try {
-        const response = await fetch('/api/fournisseurs/stats', {
+        const response = await fetch(`/api/fournisseurs/stats?${apply(new URLSearchParams())}`, {
           cache: 'no-store',
           credentials: 'same-origin',
           signal: controller.signal,
@@ -188,7 +191,7 @@ export default function FournisseursPage() {
     })();
 
     return () => controller.abort();
-  }, [rehydrated, reloadToken]);
+  }, [rehydrated, reloadToken, apply]);
 
   /* ── Mémorisation de l'état de vue ──────────────────────────────── */
 
@@ -350,18 +353,21 @@ export default function FournisseursPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <StatCardDelta
             label="Fournisseurs"
+            tooltip="Nombre de fournisseurs actifs. Les fournisseurs sont communs à tous les magasins."
             value={formatNumber(summary.activeSuppliers)}
             hint={`${formatNumber(summary.totalSuppliers)} fiche(s) au total`}
             tone="primary"
           />
           <StatCardDelta
             label="Dettes fournisseurs"
+            tooltip="Ce que l’entreprise doit encore aux fournisseurs : montant des achats moins ce qui a été payé, pour le ou les magasins choisis."
             value={<MoneyText value={summary.totalPayables} />}
             hint={`${formatNumber(summary.debtorsCount)} fournisseur(s) concerné(s)`}
             tone="error"
           />
           <StatCardDelta
             label="Total acheté"
+            tooltip="Montant total des factures d’achat non annulées du ou des magasins choisis."
             value={<MoneyText value={summary.totalPurchased} />}
             hint="Achats non annulés"
             tone="info"
@@ -374,6 +380,15 @@ export default function FournisseursPage() {
         onSearchChange={handleSearchChange}
         searchPlaceholder="Rechercher un fournisseur (nom, téléphone, adresse)…"
         filters={
+          <>
+          <StoreScopeSelect
+            value={scope}
+            onChange={(value) => {
+              setScope(value);
+              setPage(1);
+            }}
+            className="min-h-11 w-full sm:w-52"
+          />
           <div className="w-full sm:w-52">
             <FilterSelect
               value={filter === 'all' ? '' : filter}
@@ -382,6 +397,7 @@ export default function FournisseursPage() {
               placeholder="Tous"
             />
           </div>
+          </>
         }
         actions={
           <span className="text-xs text-base-content/60">
