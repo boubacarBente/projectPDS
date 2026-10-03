@@ -13,7 +13,7 @@ import { SyncIndicator } from '@/components/sync-indicator';
 import { StoreSwitcher } from '@/components/store-switcher';
 import { NavIcon } from '@/components/nav-icons';
 import { Tooltip } from '@/components/tooltip';
-import { NAVIGATION, STORAGE_KEYS, labelForPath } from '@/lib/navigation';
+import { NAVIGATION, STORAGE_KEYS, labelForPath, activeNavHref } from '@/lib/navigation';
 // `ROLE_LABELS` vient de `lib/permissions.ts` (module **client-safe**) ; la
 // décision d'accès vient du contexte d'authentification, donc des permissions
 // **effectives** (matrice du rôle + surcharges par utilisateur).
@@ -86,10 +86,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     });
   }, [updateSettings]);
 
-  const isActive = (href: string) => {
-    if (href === '/') return pathname === '/';
-    return pathname === href || pathname.startsWith(`${href}/`);
-  };
+  /*
+   * Une seule entrée active : la plus **précise**. Sans cela, /chantiers/devis
+   * allumait à la fois « Chantiers » et « Devis » (préfixe commun).
+   */
+  const activeHref = activeNavHref(pathname);
+  const isActive = (href: string) => href === activeHref;
 
   // La page de connexion se rend sans coquille : aucune sidebar, aucun en-tête.
   if (pathname === '/login') {

@@ -31,6 +31,13 @@ export type IconKey =
   | 'products'
   | 'stock'
   | 'jobs'
+  | 'jobsDashboard'
+  | 'requests'
+  | 'quotes'
+  | 'services'
+  | 'workers'
+  | 'subcontractors'
+  | 'planning'
   | 'stores'
   | 'transfers'
   | 'inventory'
@@ -69,9 +76,21 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   {
-    title: 'Production',
+    /*
+     * Prestations de chantier (cahier « Prestations » §22) : le parcours suit
+     * l'ordre du métier — demande, devis, chantier — puis les référentiels
+     * (prestations, ouvriers, sous-traitants).
+     */
+    title: 'Chantiers',
     items: [
+      { href: '/chantiers/pilotage', label: 'Pilotage chantiers', iconKey: 'jobsDashboard', action: 'jobs.view' },
+      { href: '/chantiers/demandes', label: 'Demandes', iconKey: 'requests', action: 'jobs.view' },
+      { href: '/chantiers/devis', label: 'Devis', iconKey: 'quotes', action: 'jobs.view' },
       { href: '/chantiers', label: 'Chantiers', iconKey: 'jobs', action: 'jobs.view' },
+      { href: '/chantiers/planning', label: 'Planning', iconKey: 'planning', action: 'jobs.view' },
+      { href: '/prestations', label: 'Prestations', iconKey: 'services', action: 'jobs.view' },
+      { href: '/ouvriers', label: 'Ouvriers et équipes', iconKey: 'workers', action: 'jobs.view' },
+      { href: '/sous-traitants', label: 'Sous-traitants', iconKey: 'subcontractors', action: 'jobs.view' },
     ],
   },
   {
@@ -96,16 +115,24 @@ export const NAVIGATION: NavGroup[] = [
 /** Tous les chemins connus — utile pour les tests de navigation. */
 export const ALL_NAV_HREFS = NAVIGATION.flatMap((g) => g.items.map((i) => i.href));
 
+/**
+ * Entrée de menu correspondant à un chemin : la **plus précise** (le plus long
+ * préfixe). /chantiers/devis/12 désigne « Devis », pas « Chantiers ».
+ */
+export function activeNavHref(pathname: string): string | null {
+  let best: string | null = null;
+  for (const href of ALL_NAV_HREFS) {
+    const match = href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
+    if (match && (!best || href.length > best.length)) best = href;
+  }
+  return best;
+}
+
 /** Le libellé d'un chemin, pour le fil d'ariane ou le titre d'onglet. */
 export function labelForPath(pathname: string): string {
+  const href = activeNavHref(pathname);
   for (const group of NAVIGATION) {
-    for (const item of group.items) {
-      if (item.href === '/') {
-        if (pathname === '/') return item.label;
-        continue;
-      }
-      if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return item.label;
-    }
+    for (const item of group.items) if (item.href === href) return item.label;
   }
   return 'Planète Déco';
 }

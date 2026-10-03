@@ -22,7 +22,8 @@
  *  - transferts à toutes les étapes (reçu, en transit, en attente, validé,
  *    en litige, refusé, annulé) ;
  *  - un inventaire validé avec écarts et un inventaire en cours ;
- *  - trois chantiers.
+ *  - les prestations de chantier : catalogue par magasin, demandes, devis et
+ *    chantiers à toutes les étapes (voir lib/seed-jobs.ts).
  *
  * Idempotent : ne fait rien si le catalogue contient déjà des produits.
  */
@@ -40,7 +41,7 @@ import { createExpense, decideExpense } from '@/lib/expenses';
 import { createPayment } from '@/lib/payments';
 import { approveTransfer, cancelTransfer, createTransfer, receiveTransfer, shipTransfer } from '@/lib/transfers';
 import { openInventory, recordCounts, validateInventory, getInventory } from '@/lib/inventories';
-import { addJobMaterial, addJobWorker, createServiceJob, updateStatus } from '@/lib/jobs';
+import { seedServiceJobs } from '@/lib/seed-jobs';
 import { addCashMovement, closeSession, getOpenSession, getSessionTheoreticalByMethod } from '@/lib/caisse';
 import { getStoreStock } from '@/lib/stock';
 import { addDays, today } from '@/lib/format';
@@ -60,6 +61,9 @@ export type SeedReport = {
   transfers: number;
   inventories: number;
   serviceJobs: number;
+  services: number;
+  quotes: number;
+  requests: number;
   skipped: boolean;
   message: string;
 };
@@ -165,6 +169,9 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     transfers: 0,
     inventories: 0,
     serviceJobs: 0,
+    services: 0,
+    quotes: 0,
+    requests: 0,
     skipped: false,
     message: '',
   };
@@ -533,77 +540,21 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   report.inventories += 1;
 
   /* ----------------------------- Chantiers ----------------------------- */
-  const workerRows = await rawAll<{ id: number; name: string }>(`SELECT id, name FROM workers`);
-  const workerId = (name: string) => workerRows.find((w) => w.name === name)?.id ?? null;
-  const jobDefs = [
-    {
-      customer: customerIds[1],
-      category: 'Alucobond / façade',
-      title: 'Habillage façade Alucobond — aile nord',
-      status: 'in_progress' as const,
-      startDaysAgo: 12,
-      materials: [['Panneau Alucobond 4 mm rouge', 20], ['Panneau Alucobond 4 mm argent', 15]] as [string, number][],
-      team: [['Sékou Touré', 12], ['Alpha Condé', 12]] as [string, number][],
-      paid: 0.4,
-    },
-    {
-      customer: customerIds[0],
-      category: 'Peinture',
-      title: 'Peinture et finitions — six appartements',
-      status: 'completed' as const,
-      startDaysAgo: 25,
-      materials: [['Peinture acrylique blanche 20 L', 60], ['Enduit de lissage 25 kg', 6]] as [string, number][],
-      team: [['Aïssatou Barry', 14], ['Ousmane Sylla', 10]] as [string, number][],
-      paid: 1,
-    },
-    {
-      customer: customerIds[5],
-      category: 'Placo / faux plafond',
-      title: 'Cloisons et faux plafond — plateau 2',
-      status: 'quote' as const,
-      startDaysAgo: null,
-      materials: [] as [string, number][],
-      team: [] as [string, number][],
-      paid: 0,
-    },
-  ];
-  for (const def of jobDefs) {
-    const job = await createServiceJob({
-      storeId: kaloum.id,
-      customerId: def.customer,
-      category: def.category,
-      title: def.title,
-      siteAddress: 'Conakry',
-      startDate: def.startDaysAgo === null ? null : addDays(today(), -def.startDaysAgo),
-      status: def.status === 'quote' ? 'quote' : 'pending',
-      quoteStatus: def.status === 'quote' ? 'sent' : 'accepted',
-      quoteMaterials: def.status === 'quote' ? 8_500_000 : 0,
-      quoteLabor: def.status === 'quote' ? 3_200_000 : 0,
-      userId: gerantKal,
-    } as any);
-    for (const [name, quantity] of def.materials) {
-      await addJobMaterial(job.id, { productId: productIds.get(name)!, quantity, userId: gerantKal, storeId: kaloum.id });
-    }
-    for (const [name, daysWorked] of def.team) {
-      await addJobWorker(job.id, { workerId: workerId(name), days: daysWorked }, kaloum.id);
-    }
-    if (def.status !== 'quote') await updateStatus(job.id, def.status, kaloum.id);
-    if (def.paid > 0) {
-      const refreshed = await rawGet<{ total: number }>(`SELECT total FROM service_jobs WHERE id = ?`, [job.id]);
-      const amount = Math.round(Number(refreshed?.total ?? 0) * def.paid);
-      if (amount > 0) {
-        await createPayment({
-          storeId: kaloum.id,
-          type: 'service_job',
-          referenceId: job.id,
-          amount,
-          paymentMethod: 'Virement',
-          userId: gerantKal,
-        });
-      }
-    }
-    report.serviceJobs += 1;
-  }
+  // Prestations par magasin, demandes, devis, chantiers à toutes les étapes (lib/seed-jobs.ts).
+  const jobsReport = await seedServiceJobs({
+    hq: { id: hq.id, name: hq.name },
+    kaloum: { id: kaloum.id, name: kaloum.name },
+    matoto: { id: matoto.id, name: matoto.name },
+    admin: adminRef,
+    gerantKal: { id: gerantKal, name: 'Mariama Bangoura' },
+    gerantMat: { id: gerantMat, name: 'Thierno Diallo' },
+    customerIds,
+    productIds,
+  });
+  report.serviceJobs += jobsReport.jobs;
+  report.services = jobsReport.services;
+  report.quotes = jobsReport.quotes;
+  report.requests = jobsReport.requests;
 
   /* ------------- Un document dans chaque statut filtrable -------------- */
 
@@ -742,7 +693,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   report.message =
     `Démonstration créée : ${report.stores} magasin(s), ${report.users} compte(s) (mot de passe « demo1234 »), ` +
     `${report.products} produits, ${report.sales} ventes, ${report.purchases} achats, ${report.expenses} dépenses, ` +
-    `${report.transfers} transferts, ${report.inventories} inventaire, ${report.serviceJobs} chantiers.`;
+    `${report.transfers} transferts, ${report.inventories} inventaire, ${report.serviceJobs} chantiers, ${report.services} prestations, ${report.quotes} devis, ${report.requests} demandes.`;
   return report;
 }
 

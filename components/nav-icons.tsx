@@ -19,6 +19,20 @@ const PATHS: Record<IconKey, ReactNode> = {
   products: <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />,
   stock: <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />,
   jobs: <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />,
+  /* Pilotage des chantiers : jauge. */
+  jobsDashboard: <path strokeLinecap="round" strokeLinejoin="round" d="M4 19a8 8 0 1116 0M12 19l3.5-5.5M5 19h14" />,
+  /* Demande : bulle de message. */
+  requests: <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h8M8 14h5m-9 6l3.2-3H18a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v14z" />,
+  /* Devis : document avec signe de devise. */
+  quotes: <path strokeLinecap="round" strokeLinejoin="round" d="M7 3h7l5 5v12a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1zm7 0v5h5M12 11v7m2-5.5c0-.8-.9-1.5-2-1.5s-2 .7-2 1.5.9 1.2 2 1.5 2 .7 2 1.5-.9 1.5-2 1.5-2-.7-2-1.5" />,
+  /* Prestations : clé et marteau (outils). */
+  services: <path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a4 4 0 00-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 005.2-5.4l-2.4 2.4-2.6-.6-.6-2.6 2.6-2.2zM15 15l4.5 4.5" />,
+  /* Ouvriers : casque de chantier. */
+  workers: <path strokeLinecap="round" strokeLinejoin="round" d="M4 17h16M5 17a7 7 0 0114 0M12 10V6m-3 1.5V10m6-2.5V10M4 17v2h16v-2" />,
+  /* Sous-traitants : poignée de main stylisée (deux flèches qui se rejoignent). */
+  subcontractors: <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h4v-2a3 3 0 00-4-2.8M7 20H3v-2a3 3 0 014-2.8M9 7a3 3 0 106 0 3 3 0 00-6 0zm-2 13v-1a5 5 0 0110 0v1H7z" />,
+  /* Planning : calendrier. */
+  planning: <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1zm3 10h3v3H8v-3z" />,
   stores: <path strokeLinecap="round" strokeLinejoin="round" d="M3 9l1.5-5h15L21 9M3 9h18M3 9v1a3 3 0 006 0 3 3 0 006 0 3 3 0 006 0V9M5 13v8h14v-8M10 21v-5h4v5" />,
   transfers: <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4M16 17H4m0 0l4 4m-4-4l4-4" />,
   inventory: <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />,
