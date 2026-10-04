@@ -14,13 +14,19 @@
  *    l'invariant — ce module ne le fait donc jamais.
  *
  * Aucune suppression physique (§26.13) : désactiver, jamais `DELETE`.
+ *
+ * **Assortiment par magasin** (README §28.5) : le catalogue reste commun (un
+ * nom = un produit, ce qui permet transferts et rapports réseau), mais chaque
+ * magasin ne voit que **ses** produits (`product_stocks.is_listed`). Un
+ * magasin crée ses produits ou reprend un produit du catalogue ; il modifie la
+ * fiche d'un produit qu'il a créé tant qu'aucun autre magasin ne le propose.
  */
 
 import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { categories, products } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
-import { addStockMovement, adjustStock, setLocalProductSettings } from '@/lib/stock';
+import { addStockMovement, adjustStock, ensureProductStockRow, listedSql, setLocalProductSettings } from '@/lib/stock';
 import { scopeSql, type StoreScope } from '@/lib/stores';
 import { getSettings } from '@/lib/settings';
 import { DEFAULT_SETTINGS } from '@/lib/settings-schema';
@@ -64,6 +70,13 @@ export type ProductRow = {
   barcode: string | null;
   description: string | null;
   isActive: boolean;
+  /** Proposé par le magasin consulté (assortiment) ; en consolidé, par l'un des magasins. */
+  listed: boolean;
+  /** Magasin qui a créé le produit (`null` = catalogue commun du siège). */
+  ownerStoreId: number | null;
+  ownerStoreName: string | null;
+  /** Nombre de magasins qui proposent ce produit (tout le réseau). */
+  listedStoreCount: number;
   /** Agrégats **calculés**, jamais stockés. */
   stockValue: number;
   saleValue: number;
@@ -96,6 +109,12 @@ export type ProductInput = {
 export type ProductListOptions = {
   /** Magasins dont on lit le stock (vide = aucun stock affiché). */
   scope?: StoreScope;
+  /**
+   * `true` : tout le catalogue commun, y compris les produits que la portée ne
+   * propose pas (pour « Ajouter un produit du catalogue »). Par défaut, seuls
+   * les produits de l'assortiment de la portée sont listés.
+   */
+  catalog?: boolean;
   search?: string;
   categoryId?: number;
   /** Filtre sur `categories.kind`. */
@@ -112,7 +131,10 @@ export type ProductListOptions = {
 export type ProductsSummary = {
   totalProducts: number;
   activeProducts: number;
+  /** Catégories **utilisées** par la portée (au moins un produit de son assortiment). */
   categoriesCount: number;
+  /** Catégories actives de toute l'entreprise (liste commune). */
+  catalogCategoriesCount: number;
   lowStockCount: number;
   outOfStockCount: number;
   stockPurchaseValue: number;
@@ -127,6 +149,12 @@ export type CategoryRow = {
   isActive: boolean;
   productCount: number;
   activeProductCount: number;
+  /**
+   * Produits actifs de cette catégorie dans l'assortiment de la portée
+   * demandée (`null` sans portée). Sert à ne proposer, dans les filtres d'un
+   * magasin, que **ses** catégories (README §28.5).
+   */
+  storeProductCount: number | null;
   createdAt: Date | null;
 };
 
@@ -144,6 +172,7 @@ export type CategoryInput = {
 const PRODUCT_FROM = `
   FROM products p
   LEFT JOIN categories c ON c.id = p.category_id
+  LEFT JOIN stores os ON os.id = p.owner_store_id
 `;
 
 /**
@@ -170,6 +199,9 @@ function productColumns(scope: StoreScope, allowLocalPrice: boolean): string {
   ${stock} AS stock, ${effectiveMin} AS stock_min, p.stock_min AS catalog_stock_min,
   ${localPrice} AS local_sale_price, ${localMin} AS local_stock_min,
   p.description, p.is_active, p.created_at,
+  CASE WHEN ${listedSql(scope)} THEN 1 ELSE 0 END AS listed,
+  p.owner_store_id, os.name AS owner_store_name,
+  (SELECT COUNT(*) FROM product_stocks pc WHERE pc.product_id = p.id AND pc.is_listed = 1) AS listed_store_count,
   c.name AS category_name, c.kind AS category_kind`;
 }
 
@@ -200,6 +232,10 @@ function mapProductRow(row: any): ProductRow {
     barcode: row.barcode ?? null,
     description: row.description ?? null,
     isActive: Boolean(row.is_active),
+    listed: Boolean(row.listed),
+    ownerStoreId: row.owner_store_id == null ? null : Number(row.owner_store_id),
+    ownerStoreName: row.owner_store_name ?? null,
+    listedStoreCount: Number(row.listed_store_count ?? 0),
     stockValue: stock * purchasePrice,
     saleValue: stock * salePrice,
     margin,
@@ -217,6 +253,8 @@ function buildProductWhere(options: ProductListOptions): { whereSql: string; arg
   // Un produit désactivé doit rester consultable (« Inclure les désactivés »),
   // mais il est hors du catalogue courant par défaut.
   if (!options.includeInactive) where.push('p.is_active = 1');
+  // Assortiment : seuls les produits proposés par la portée, sauf vue « catalogue ».
+  if (!options.catalog) where.push(listedSql(options.scope ?? []));
   if (options.categoryId) {
     where.push('p.category_id = ?');
     args.push(options.categoryId);
@@ -305,14 +343,18 @@ export async function searchProducts(term: string, limit = 20, scope: StoreScope
  */
 export async function getProductsSummary(scope: StoreScope = []): Promise<ProductsSummary> {
   const stock = `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
+  // Compteurs sur l'**assortiment** de la portée, pas sur tout le catalogue.
+  const listed = listedSql(scope);
   const row = await rawGet<any>(
     `SELECT
-       (SELECT COUNT(*) FROM products) AS total_products,
-       (SELECT COUNT(*) FROM products WHERE is_active = 1) AS active_products,
-       (SELECT COUNT(*) FROM categories WHERE is_active = 1) AS categories_count,
+       (SELECT COUNT(*) FROM products p WHERE ${listed}) AS total_products,
+       (SELECT COUNT(*) FROM products p WHERE p.is_active = 1 AND ${listed}) AS active_products,
+       (SELECT COUNT(*) FROM categories c WHERE c.is_active = 1
+          AND EXISTS (SELECT 1 FROM products p WHERE p.category_id = c.id AND p.is_active = 1 AND ${listed})) AS categories_count,
+       (SELECT COUNT(*) FROM categories WHERE is_active = 1) AS catalog_categories_count,
        (SELECT COUNT(*) FROM products p
-         WHERE p.is_active = 1 AND ${stock} > 0 AND p.stock_min > 0 AND ${stock} <= p.stock_min) AS low_stock_count,
-       (SELECT COUNT(*) FROM products p WHERE p.is_active = 1 AND ${stock} <= 0) AS out_of_stock_count,
+         WHERE p.is_active = 1 AND ${listed} AND ${stock} > 0 AND p.stock_min > 0 AND ${stock} <= p.stock_min) AS low_stock_count,
+       (SELECT COUNT(*) FROM products p WHERE p.is_active = 1 AND ${listed} AND ${stock} <= 0) AS out_of_stock_count,
        (SELECT COALESCE(SUM(${stock} * p.purchase_price), 0) FROM products p WHERE p.is_active = 1) AS stock_purchase_value,
        (SELECT COALESCE(SUM(${stock} * p.sale_price), 0) FROM products p WHERE p.is_active = 1) AS stock_sale_value`,
   );
@@ -321,6 +363,7 @@ export async function getProductsSummary(scope: StoreScope = []): Promise<Produc
     totalProducts: Number(row?.total_products ?? 0),
     activeProducts: Number(row?.active_products ?? 0),
     categoriesCount: Number(row?.categories_count ?? 0),
+    catalogCategoriesCount: Number(row?.catalog_categories_count ?? 0),
     lowStockCount: Number(row?.low_stock_count ?? 0),
     outOfStockCount: Number(row?.out_of_stock_count ?? 0),
     stockPurchaseValue: Number(row?.stock_purchase_value ?? 0),
@@ -423,20 +466,58 @@ async function assertProductNameAvailable(name: string, exceptId?: number): Prom
     [name],
   );
   if (row && Number(row.id) !== exceptId) {
-    throw new ConflictError(`Un produit porte déjà le nom « ${name} ».`);
+    // Le nom est unique dans tout le réseau : un magasin qui ne voit pas ce
+    // produit doit savoir qu'il peut le reprendre au lieu de le recréer.
+    throw new ConflictError(
+      exceptId === undefined
+        ? `« ${name} » existe déjà dans le catalogue commun : ajoutez-le à votre magasin avec « Ajouter du catalogue » au lieu de le recréer.`
+        : `Un produit porte déjà le nom « ${name} ».`,
+    );
   }
+}
+
+/** Refus de modifier ou désactiver la fiche commune d'un produit (403). */
+export class CatalogEditError extends Error {
+  readonly status = 403;
+  constructor(message: string) {
+    super(message);
+    this.name = 'CatalogEditError';
+  }
+}
+
+/**
+ * Qui peut modifier la **fiche** d'un produit (nom, catégorie, prix catalogue…) :
+ *  - le siège ou une installation autonome (`central`) : toujours ;
+ *  - sinon, le magasin qui l'a créé, tant qu'aucun autre magasin ne le propose
+ *    (sa modification changerait le produit des autres).
+ * Prix local, seuil local et stock restent modifiables par chaque magasin.
+ */
+export async function canEditProductCatalog(
+  productId: number,
+  context: { central: boolean; storeId: number | null },
+): Promise<boolean> {
+  if (context.central) return true;
+  if (!context.storeId) return false;
+  const row = await rawGet<{ owner_store_id: number | null; others: number }>(
+    `SELECT p.owner_store_id,
+            (SELECT COUNT(*) FROM product_stocks ps
+              WHERE ps.product_id = p.id AND ps.is_listed = 1 AND ps.store_id <> ?) AS others
+       FROM products p WHERE p.id = ?`,
+    [context.storeId, productId],
+  );
+  return Boolean(row) && Number(row!.owner_store_id) === Number(context.storeId) && Number(row!.others) === 0;
 }
 
 export async function createProduct(
   input: ProductInput,
-  options: { userId?: number | null; storeId?: number | null } = {},
+  options: { userId?: number | null; storeId?: number | null; ownerStoreId?: number | null } = {},
 ): Promise<ProductRow> {
   return withTransaction(() => createProductInTx(input, options));
 }
 
 async function createProductInTx(
   input: ProductInput,
-  options: { userId?: number | null; storeId?: number | null },
+  options: { userId?: number | null; storeId?: number | null; ownerStoreId?: number | null },
 ): Promise<ProductRow> {
   const name = (input.name ?? '').trim();
   if (!name) throw new ValidationError('Le champ « Nom » est obligatoire');
@@ -462,19 +543,15 @@ async function createProductInTx(
       barcode: input.barcode?.trim() || null,
       description: input.description?.trim() || null,
       isActive: input.isActive ?? true,
+      ownerStoreId: options.ownerStoreId ?? null,
     })
     .returning({ id: products.id, syncId: products.syncId });
 
   if (!inserted[0]) throw new Error('Produit non créé');
 
-  // Le produit existe dans **chaque** magasin, à stock nul.
-  await rawAll(
-    `INSERT INTO product_stocks (store_id, product_id, quantity, created_at, sync_id, updated_at)
-     SELECT s.id, p.id, 0, unixepoch(), 'ps-' || s.sync_id || '-' || p.sync_id, unixepoch()
-       FROM stores s, products p
-      WHERE p.id = ? AND NOT EXISTS (SELECT 1 FROM product_stocks ps WHERE ps.store_id = s.id AND ps.product_id = p.id)`,
-    [inserted[0].id],
-  );
+  // Le produit entre dans l'assortiment du **seul** magasin qui le crée ; les
+  // autres le reprendront du catalogue s'ils le vendent (avant v2 : partout).
+  if (options.storeId) await ensureProductStockRow(options.storeId, inserted[0].id);
 
   if (options.storeId && (input.localSalePrice !== undefined || input.localStockMin !== undefined)) {
     await setLocalProductSettings(options.storeId, inserted[0].id, {
@@ -501,7 +578,7 @@ async function createProductInTx(
 export async function updateProduct(
   id: number,
   patch: Partial<ProductInput>,
-  options: { userId?: number | null; storeId?: number | null; centralEdit?: boolean } = {},
+  options: { userId?: number | null; storeId?: number | null; canEditCatalog?: boolean } = {},
 ): Promise<ProductRow> {
   return withTransaction(() => updateProductInTx(id, patch, options));
 }
@@ -509,7 +586,7 @@ export async function updateProduct(
 async function updateProductInTx(
   id: number,
   patch: Partial<ProductInput>,
-  options: { userId?: number | null; storeId?: number | null; centralEdit?: boolean },
+  options: { userId?: number | null; storeId?: number | null; canEditCatalog?: boolean },
 ): Promise<ProductRow> {
   const scope = options.storeId ? [options.storeId] : [];
   const existing = await getProduct(id, scope);
@@ -553,12 +630,13 @@ async function updateProductInTx(
     stockDelta = round3(target - existing.stock);
   }
 
-  // Catalogue central (§7) : sur un poste de magasin, seuls les réglages
-  // locaux (prix local, seuil local, stock) sont modifiables.
+  // Fiche commune (§7, README §28.5) : seuls le siège, ou le magasin créateur
+  // d'un produit qu'il est seul à proposer, la modifient. Les autres ne
+  // touchent qu'aux réglages locaux (prix local, seuil local, stock).
   const centralKeys = Object.keys(update).filter((key) => key !== 'updatedAt');
-  if (centralKeys.length > 0 && options.centralEdit === false) {
+  if (centralKeys.length > 0 && options.canEditCatalog === false) {
     throw new ValidationError(
-      'Le catalogue est géré au siège : sur ce poste, seuls le prix local, le seuil local et le stock du magasin sont modifiables.',
+      'Ce produit appartient au catalogue commun : seuls le prix local, le seuil local et le stock de votre magasin sont modifiables. La fiche se modifie au siège (ou par le magasin qui l’a créé, s’il est seul à le vendre).',
     );
   }
 
@@ -629,13 +707,19 @@ export async function reactivateProduct(id: number): Promise<void> {
  * Lecture — catégories
  * ------------------------------------------------------------------ */
 
-const CATEGORY_SELECT = `
+function categorySelect(scope?: StoreScope): string {
+  const storeCount = scope
+    ? `(SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 1 AND ${listedSql(scope)})`
+    : 'NULL';
+  return `
   SELECT c.id, c.name, c.kind, c.description, c.is_active, c.created_at,
          (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) AS product_count,
          (SELECT COUNT(*) FROM products p
-           WHERE p.category_id = c.id AND p.is_active = 1) AS active_product_count
+           WHERE p.category_id = c.id AND p.is_active = 1) AS active_product_count,
+         ${storeCount} AS store_product_count
   FROM categories c
 `;
+}
 
 function mapCategoryRow(row: any): CategoryRow {
   return {
@@ -646,6 +730,7 @@ function mapCategoryRow(row: any): CategoryRow {
     isActive: Boolean(row.is_active),
     productCount: Number(row.product_count ?? 0),
     activeProductCount: Number(row.active_product_count ?? 0),
+    storeProductCount: row.store_product_count == null ? null : Number(row.store_product_count),
     createdAt: row.created_at ? new Date(Number(row.created_at) * 1000) : null,
   };
 }
@@ -660,16 +745,18 @@ export async function listCategories(
     includeInactive?: boolean;
     /** `recent` (défaut) = dernière insertion ; `name` = ordre alphabétique. */
     sort?: ListSort;
+    /** Magasins dont on compte les produits (`storeProductCount`). */
+    scope?: StoreScope;
   } = {},
 ): Promise<CategoryRow[]> {
   const whereSql = options.includeInactive ? '' : 'WHERE c.is_active = 1';
   const orderBy = sqlOrderBy(options.sort ?? DEFAULT_LIST_SORT, 'c', ['recent', 'name']);
-  const rows = await rawAll<any>(`${CATEGORY_SELECT} ${whereSql} ORDER BY ${orderBy}`);
+  const rows = await rawAll<any>(`${categorySelect(options.scope)} ${whereSql} ORDER BY ${orderBy}`);
   return rows.map(mapCategoryRow);
 }
 
 export async function getCategory(id: number): Promise<CategoryRow | null> {
-  const row = await rawGet<any>(`${CATEGORY_SELECT} WHERE c.id = ?`, [id]);
+  const row = await rawGet<any>(`${categorySelect()} WHERE c.id = ?`, [id]);
   return row ? mapCategoryRow(row) : null;
 }
 

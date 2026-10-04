@@ -110,9 +110,8 @@ export function WorkerFormModal({
   const [dailyRate, setDailyRate] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [team, setTeam] = useState('');
-  const [shared, setShared] = useState(false);
   const [teams, setTeams] = useState<string[]>([]);
-  const { allStores, activeStore } = useAuth();
+  const { activeStore } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -125,7 +124,6 @@ export function WorkerFormModal({
     setDailyRate(worker ? String(worker.dailyRate ?? 0) : '');
     setIsActive(worker?.isActive ?? true);
     setTeam(worker?.team ?? '');
-    setShared(worker ? worker.storeId === null : false);
     fetch('/api/workers?teams=1', { cache: 'no-store', credentials: 'same-origin' })
       .then(async (response) => (response.ok ? ((await response.json()) as { teams: { team: string }[] }) : { teams: [] }))
       .then((payload) => setTeams((payload.teams ?? []).map((t) => t.team)))
@@ -164,7 +162,6 @@ export function WorkerFormModal({
           dailyRate: rate,
           isActive,
           team: team.trim() || null,
-          ...(allStores ? { shared } : {}),
         }),
       });
 
@@ -302,20 +299,10 @@ export function WorkerFormModal({
           </datalist>
         </FormField>
 
-        {allStores ? (
-          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3">
-            <input
-              type="checkbox"
-              className="checkbox checkbox-sm"
-              checked={shared}
-              onChange={(event) => setShared(event.target.checked)}
-              disabled={isSubmitting}
-            />
-            <span className="text-sm">Commun à tous les magasins (sinon rattaché à {activeStore?.name ?? 'votre magasin actif'})</span>
-          </label>
-        ) : (
-          <p className="text-xs text-base-content/55">L’ouvrier est rattaché à votre magasin : les autres magasins ne le voient pas.</p>
-        )}
+        {/* Chaque magasin a ses propres ouvriers (README §28.5). */}
+        <p className="text-xs text-base-content/55">
+          L’ouvrier est rattaché à {worker?.storeName ?? activeStore?.name ?? 'votre magasin'} : les autres magasins ne le voient pas.
+        </p>
 
         {worker && (
           <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3">

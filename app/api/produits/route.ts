@@ -9,8 +9,9 @@ import {
   toBool,
   toNumber,
   scopeFromRequest,
-  requireCentralEdit,
+  requireActiveStore,
 } from '@/lib/api';
+import { canEditCentralData } from '@/lib/device';
 import { createProduct, isCategoryKind, listProducts } from '@/lib/products';
 import { writeAudit } from '@/lib/audit';
 import { parseListSort } from '@/lib/list-sort';
@@ -19,6 +20,12 @@ import { parseListSort } from '@/lib/list-sort';
  * GET /api/produits — liste paginée du catalogue (README §27.2).
  * Filtres : `search`, `categoryId`, `kind`, `lowStock`, `outOfStock`, `includeInactive`.
  * Tri : `?sort=recent` (défaut, dernier produit enregistré) ou `?sort=name`.
+ *
+ * Par défaut, seuls les produits de l'**assortiment** de la portée (README
+ * §28.5). `?catalog=true` : tout le catalogue commun, chaque ligne disant si
+ * le magasin actif le propose déjà (`listed`) — pour « Ajouter du catalogue ».
+ * `canEditCatalog` dit si l'utilisateur peut modifier la fiche commune
+ * (contrôle définitif côté serveur à l'enregistrement).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -30,9 +37,12 @@ export async function GET(request: NextRequest) {
     const rawKind = params.get('kind');
     const categoryId = toNumber(params.get('categoryId') ?? params.get('category'), 0);
 
+    const catalog = toBool(params.get('catalog'), false);
     const result = await listProducts({
       // Stock, seuil et prix affichés pour la portée demandée (magasin actif par défaut).
-      scope: scopeFromRequest(user, request),
+      // En vue catalogue, `listed` se lit toujours pour le magasin actif.
+      scope: catalog ? (user.storeId ? [user.storeId] : []) : scopeFromRequest(user, request),
+      catalog,
       search: params.get('search')?.trim() || undefined,
       categoryId: categoryId > 0 ? categoryId : undefined,
       kind: isCategoryKind(rawKind) ? rawKind : undefined,
@@ -44,7 +54,14 @@ export async function GET(request: NextRequest) {
       sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
-    return ok(result);
+    const central = await canEditCentralData();
+    return ok({
+      ...result,
+      data: result.data.map((p) => ({
+        ...p,
+        canEditCatalog: central || (p.ownerStoreId !== null && p.ownerStoreId === user.storeId && p.listedStoreCount <= 1),
+      })),
+    });
   } catch (error) {
     return fail(error);
   }
@@ -54,8 +71,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('products.create');
-    // Le catalogue est commun : il se crée au siège (ou en installation autonome).
-    await requireCentralEdit();
+    // Chaque magasin crée ses produits (README §28.5) : le produit entre dans
+    // l'assortiment du magasin actif. Créé au siège, il appartient au
+    // catalogue commun ; créé par un magasin, ce magasin en garde la fiche.
+    const storeId = await requireActiveStore(user);
+    const central = await canEditCentralData();
     const body = await readJson<any>(request);
 
     const categoryId = toNumber(body.categoryId, 0);
@@ -74,7 +94,7 @@ export async function POST(request: NextRequest) {
         isActive: toBool(body.isActive, true),
       },
       // Le stock initial éventuel est enregistré dans le magasin actif.
-      { userId: user.id, storeId: user.storeId },
+      { userId: user.id, storeId, ownerStoreId: central && user.allStores ? null : storeId },
     );
 
     await writeAudit({

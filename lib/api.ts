@@ -79,7 +79,12 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
     const permissions = await getEffectivePermissions({ id: session.id, role: session.role });
     const viewAll = session.role === 'admin' || permissions.includes('stores.viewAll');
-    const context = await resolveStoreContext({ id: session.id, role: session.role }, session.storeId, viewAll);
+    const context = await resolveStoreContext(
+      { id: session.id, role: session.role },
+      session.storeId,
+      viewAll,
+      permissions.includes('stores.switch'),
+    );
 
     if (context.activeStoreId !== session.storeId) {
       // Le magasin enregistré n'est plus accessible (affectation retirée,

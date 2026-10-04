@@ -57,11 +57,14 @@
     magasins sont en lecture seule depuis ce poste) ;
   - `store` : poste d'un **magasin**, inscrit avec un code à usage unique généré au siège.
 - **Données centrales** (`hqOnly` dans `db/sync-registry.ts`) : utilisateurs, magasins,
-  affectations, permissions, paramètres, catégories, produits. Elles ne se modifient
+  affectations, permissions, paramètres, catégories. Elles ne se modifient
   **qu'au siège** (ou en autonome). Sur un poste magasin, l'API renvoie 403
   (`requireCentralEdit()` dans `lib/api.ts`).
-- **Catalogue commun, prix local possible** : le produit est unique ; chaque magasin a
-  une ligne `product_stocks` (stock, seuil local, prix local).
+- **Catalogue commun, assortiment par magasin** (README §28.5) : le produit est unique,
+  mais chaque magasin ne voit que **ses** produits (`product_stocks.is_listed`) ; il en
+  crée ou en reprend du catalogue. Ligne `product_stocks` : stock, seuil local, prix local.
+- **Clients, fournisseurs, ouvriers propres à chaque magasin** ; un nouveau magasin part
+  vide (README §28.5).
 - **Stock = somme des mouvements** (`stock_movements`, par magasin). Jamais écrit en dur.
 - **Numérotation par magasin et par poste** : `FAC-{STORE}{POSTE}-AAAA-NNNNNN`
   (ex. `FAC-KAL1-2026-000042`) — deux postes hors ligne ne produisent jamais le même numéro.
@@ -88,6 +91,19 @@
 ## 2. État d'avancement
 
 ### ✅ Fait
+
+- **Refonte des comptes** (README §17.2) : rôles = un niveau par domaine, rôle Comptable,
+  administrateur jamais désactivable ; `/utilisateurs` refait, assistant de création,
+  page `/utilisateurs/[id]`. **Catégories** : seulement celles du magasin, un magasin
+  peut en créer (README §28.5).
+- **Changer de magasin actif** (README §28.6) : permission `stores.switch`, administrateur
+  d'office ; sans elle, le compte reste dans son magasin principal. Case « Peut changer de
+  magasin » dans « Nouvel utilisateur » et dans la fenêtre « Magasins ».
+- **Données propres à chaque magasin** (README §28.5) : clients, fournisseurs, ouvriers,
+  assortiment de produits ; nouveau magasin vide ; `/produits` : « Nouveau produit »
+  pour tout magasin, « Ajouter du catalogue », « Retirer de ce magasin » ; formulaire de
+  magasin : « Produits de départ ». Listes clients / fournisseurs : magasin sous le nom
+  en vue « tous les magasins ».
 
 - Retrait complet de **briqueterie** et **atelier** (pages, API, tables, permissions, rôles).
   Les **chantiers** sont conservés.
@@ -490,7 +506,7 @@ que depuis le magasin du chantier.
 
 | Élément | Action |
 |---|---|
-| Bouton **Nouveau magasin** (`stores.manage`, masqué sur poste magasin) | Ouvre `StoreFormModal` : code (unique, 2-10 caractères), nom, type (Magasin / Siège), adresse, téléphone, e-mail, gérant (liste `GET /api/users?options=true`), date d'ouverture, horaires, pied de ticket, notes. **Enregistrer** → `POST /api/magasins`. Le magasin reçoit une ligne de stock à 0 pour chaque produit. Erreurs : « Ce code de magasin est déjà utilisé », « Le nom du magasin est obligatoire », 403 sur poste magasin. |
+| Bouton **Nouveau magasin** (`stores.manage`, masqué sur poste magasin) | Ouvre `StoreFormModal` : code (unique, 2-10 caractères), nom, type (Magasin / Siège), adresse, téléphone, e-mail, gérant (liste `GET /api/users?options=true`), date d'ouverture, horaires, pied de ticket, notes. **Enregistrer** → `POST /api/magasins`. Le magasin part **sans produit** ; champ « Produits de départ » pour recopier la liste d'un magasin existant (`copyAssortmentFrom`). Erreurs : « Ce code de magasin est déjà utilisé », « Le nom du magasin est obligatoire », 403 sur poste magasin. |
 | Sélecteur **Période** | Aujourd'hui / Semaine / Mois / Année → recharge les indicateurs. |
 | Case **Afficher les archivés** (admin) | `includeArchived=true`. |
 | **Cartes** | Magasins actifs, CA de la période, créances, valeur du stock — chacune avec son infobulle. |

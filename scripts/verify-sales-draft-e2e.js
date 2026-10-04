@@ -127,9 +127,17 @@ function reuseLocalSession() {
 function openDatabase() {
   const { createClient } = require('@libsql/client/sqlite3');
   const base = process.env.ELECTRON_APP_PATH || process.cwd();
-  const file = process.env.ELECTRON_APP_PATH
-    ? path.join(base, 'database.db')
-    : path.join(base, 'db', 'database.db');
+  /*
+   * `PDS_DB_PATH` d’abord, comme l’application (README §28.4) : sans lui, une
+   * recette lancée contre l'instance de recette (port 3100) écrivait ses
+   * fixtures dans la base de TRAVAIL — paiements et mouvements de caisse
+   * orphelins constatés le 4 octobre 2026.
+   */
+  const file = process.env.PDS_DB_PATH
+    ? path.resolve(process.env.PDS_DB_PATH)
+    : process.env.ELECTRON_APP_PATH
+      ? path.join(base, 'database.db')
+      : path.join(base, 'db', 'database.db');
 
   return createClient({ url: `file:${file.replace(/\\/g, '/')}` });
 }

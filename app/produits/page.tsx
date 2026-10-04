@@ -10,6 +10,11 @@
  * Le **stock** n'est jamais modifié ici : l'action « Ajuster le stock » renvoie
  * vers `/stocks`, seul endroit qui enregistre un mouvement et préserve
  * l'invariant « `products.stock` = somme des `stock_movements` » (§6.1).
+ *
+ * **Assortiment par magasin** (README §28.5) : la liste montre les produits du
+ * magasin consulté. « Nouveau produit » crée un produit pour le magasin actif,
+ * « Ajouter du catalogue » reprend un produit déjà créé ailleurs, « Retirer de
+ * ce magasin » l'enlève de l'assortiment (refusé tant qu'il reste du stock).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,6 +42,7 @@ import { RoleGate, usePermission } from '@/components/role-gate';
 import {
   CATEGORY_KIND_LABELS,
   CATEGORY_KIND_OPTIONS,
+  CatalogPickerModal,
   ProductFormModal,
   StockBadge,
   readApiError,
@@ -68,10 +74,10 @@ export default function ProduitsPage() {
   const canCreate = usePermission('products.create');
   const canUpdate = usePermission('products.update');
   const canDelete = usePermission('products.delete');
-  const { device } = useAuth();
-  /** Catalogue commun : créé et désactivé au siège seulement (le serveur renvoie 403 sinon). */
-  const canEditCatalog = device?.mode !== 'store';
+  const { activeStore, activeStoreId } = useAuth();
   const { scope, setScope, apply } = useStoreScope('produits');
+  /** « Retirer de ce magasin » n'a de sens que sur la liste du magasin actif. */
+  const viewingActiveStore = scope === 'current' || scope === activeStoreId;
 
   const currency = settings.currency || 'GNF';
   const units = settings.units.length > 0 ? settings.units : ['pièce'];
@@ -101,6 +107,9 @@ export default function ProduitsPage() {
   const [showDeactivateModal, setShowDeactivateModal] = useState(false);
   const [productToDeactivate, setProductToDeactivate] = useState<ProductView | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [productToUnlist, setProductToUnlist] = useState<ProductView | null>(null);
+  const [isUnlisting, setIsUnlisting] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -159,7 +168,9 @@ export default function ProduitsPage() {
     try {
       const [statsResponse, categoriesResponse] = await Promise.all([
         fetch(`/api/produits/stats?${apply(new URLSearchParams())}`, { cache: 'no-store', credentials: 'same-origin' }),
-        fetch('/api/produits/categories?includeInactive=true&limit=200', {
+        // `store=` : chaque catégorie revient avec son nombre de produits dans
+        // la portée affichée, pour ne filtrer que sur les catégories du magasin.
+        fetch(`/api/produits/categories?${apply(new URLSearchParams({ includeInactive: 'true', limit: '200' }))}`, {
           cache: 'no-store',
           credentials: 'same-origin',
         }),
@@ -254,6 +265,28 @@ export default function ProduitsPage() {
     }
   };
 
+  const confirmUnlist = async () => {
+    const target = productToUnlist;
+    if (!target) return;
+    setIsUnlisting(true);
+    try {
+      const response = await fetch(`/api/produits/${target.id}/assortiment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ listed: false }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'Retrait impossible'));
+      toast.success(`« ${target.name} » ne fait plus partie des produits de ${activeStore?.name ?? 'ce magasin'}`);
+      setProductToUnlist(null);
+      await refreshAll();
+    } catch (unlistError: any) {
+      toast.error(unlistError?.message ?? 'Retrait impossible', { autoClose: 8000 });
+    } finally {
+      setIsUnlisting(false);
+    }
+  };
+
   const reactivate = async (product: ProductView) => {
     try {
       const response = await fetch(`/api/produits/${product.id}?reactivate=true`, {
@@ -273,9 +306,17 @@ export default function ProduitsPage() {
 
   /* -------------------------------- Rendu ---------------------------------- */
 
+  /*
+   * Filtre : seulement les catégories **utilisées** par le magasin affiché
+   * (README §28.5) — la liste commune compte des catégories qu'il ne vend pas.
+   * La catégorie déjà choisie reste proposée, sinon le filtre se viderait.
+   */
   const categoryOptions = useMemo(
-    () => categories.filter((c) => c.isActive).map((c) => ({ value: String(c.id), label: c.name })),
-    [categories],
+    () =>
+      categories
+        .filter((c) => c.isActive && ((c.storeProductCount ?? 1) > 0 || String(c.id) === categoryId))
+        .map((c) => ({ value: String(c.id), label: c.name })),
+    [categories, categoryId],
   );
 
   const kindOptions = useMemo(
@@ -381,7 +422,16 @@ export default function ProduitsPage() {
         />
       )}
 
-      {canDelete && canEditCatalog &&
+      {canUpdate && viewingActiveStore && product.isActive && (
+        <IconAction
+          icon="store"
+          tone="danger"
+          label="Retirer des produits de ce magasin"
+          onClick={() => setProductToUnlist(product)}
+        />
+      )}
+
+      {canDelete && product.canEditCatalog &&
         (product.isActive ? (
           <IconAction
             icon="deactivate"
@@ -405,46 +455,46 @@ export default function ProduitsPage() {
       <PageHeader
         eyebrow="Gestion"
         title="Produits"
-        description="Catalogue, prix d’achat et de vente, unités et état du stock en temps réel."
+        description="Les produits de votre magasin : prix d’achat et de vente, unités et état du stock en temps réel."
         actions={
-          <RoleGate action="products.create">
-            {canEditCatalog && (
-            <button
-              type="button"
-              className="btn btn-primary min-h-11 sm:min-h-0"
-              onClick={() => setShowCreateModal(true)}
-            >
-              Nouveau produit
-            </button>
-            )}
-          </RoleGate>
+          <div className="flex flex-wrap gap-2">
+            <RoleGate action="products.update">
+              <button
+                type="button"
+                className="btn btn-outline min-h-11 sm:min-h-0"
+                onClick={() => setShowCatalogModal(true)}
+              >
+                Ajouter du catalogue
+              </button>
+            </RoleGate>
+            <RoleGate action="products.create">
+              <button
+                type="button"
+                className="btn btn-primary min-h-11 sm:min-h-0"
+                onClick={() => setShowCreateModal(true)}
+              >
+                Nouveau produit
+              </button>
+            </RoleGate>
+          </div>
         }
       />
-
-      {!canEditCatalog && (
-        <div className="alert border border-info/30 bg-info/10 text-sm">
-          <span>
-            <strong>Catalogue géré au siège.</strong> Depuis ce poste, vous pouvez fixer le prix et le
-            seuil d’alerte propres à votre magasin (bouton « Modifier »).
-          </span>
-        </div>
-      )}
 
       {/* Cartes de synthèse — état de chargement : SkeletonCards */}
       {stats ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StatCardDelta
             label="Produits actifs"
-            tooltip="Produits du catalogue proposés à la vente. Un produit désactivé reste sur les anciennes factures mais n’apparaît plus dans les listes de vente."
+            tooltip="Produits que le magasin affiché propose à la vente. Chaque magasin a sa propre liste : un produit d’un autre magasin s’ajoute avec « Ajouter du catalogue ». Un produit désactivé reste sur les anciennes factures."
             value={formatNumber(stats.activeProducts)}
             hint={`${formatNumber(stats.totalProducts)} au total, désactivés compris`}
             tone="primary"
           />
           <StatCardDelta
-            label="Catégories actives"
-            tooltip="Familles de produits (meubles, peinture, quincaillerie…). La catégorie indique aussi le type : produit fini, matière première ou service."
+            label="Catégories utilisées"
+            tooltip="Familles de produits (meubles, peinture, quincaillerie…) qui ont au moins un produit dans le magasin affiché. La liste des catégories est commune à toute l’entreprise : un magasin n’en utilise qu’une partie, et peut en ajouter une depuis « Catégories »."
             value={formatNumber(stats.categoriesCount)}
-            hint="Le type est porté par la catégorie"
+            hint={`Sur ${formatNumber(stats.catalogCategoriesCount)} catégories dans l’entreprise`}
             tone="info"
           />
           <StatCardDelta
@@ -601,14 +651,14 @@ export default function ProduitsPage() {
                 ? 'Aucun produit ne correspond'
                 : onlyInactive
                   ? 'Aucun produit actif'
-                  : 'Aucun produit au catalogue'
+                  : 'Aucun produit dans ce magasin'
             }
             description={
               hasFilters
                 ? 'Élargissez la recherche ou retirez un filtre pour retrouver vos articles.'
                 : onlyInactive
                   ? 'Tous les produits enregistrés sont désactivés : affichez-les pour en réactiver un.'
-                  : 'Commencez par créer une catégorie, puis votre premier produit : code généré, prix d’achat et de vente, unité et seuil d’alerte.'
+                  : 'Ajoutez un produit déjà créé par un autre magasin (« Ajouter du catalogue ») ou créez le vôtre : prix d’achat et de vente, unité et seuil d’alerte.'
             }
             action={
               hasFilters ? (
@@ -663,7 +713,7 @@ export default function ProduitsPage() {
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-base-content/50">
-              {formatNumber(total)} produit(s) au catalogue
+              {formatNumber(total)} produit(s)
             </p>
             <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
           </div>
@@ -693,6 +743,36 @@ export default function ProduitsPage() {
         units={units}
       />
 
+      <CatalogPickerModal
+        isOpen={showCatalogModal}
+        onClose={() => setShowCatalogModal(false)}
+        onAdded={refreshAll}
+      />
+
+      <ConfirmDialog
+        isOpen={productToUnlist !== null}
+        onClose={() => {
+          if (!isUnlisting) setProductToUnlist(null);
+        }}
+        onConfirm={() => void confirmUnlist()}
+        title="Retirer de ce magasin"
+        tone="error"
+        confirmLabel="Retirer"
+        isSubmitting={isUnlisting}
+        message={
+          productToUnlist ? (
+            <p>
+              « <strong>{productToUnlist.name}</strong> » ne sera plus proposé par{' '}
+              <strong>{activeStore?.name ?? 'ce magasin'}</strong> (ventes, achats, stocks, inventaires).
+              Les autres magasins et les anciennes factures ne changent pas, et vous pourrez le reprendre
+              avec « Ajouter du catalogue ». Le retrait est refusé tant qu’il reste du stock.
+            </p>
+          ) : (
+            'Confirmez le retrait.'
+          )
+        }
+      />
+
       <ConfirmDialog
         isOpen={showDeactivateModal}
         onClose={() => {
@@ -711,7 +791,7 @@ export default function ProduitsPage() {
             <>
               <p>
                 « <strong>{productToDeactivate.name}</strong> » ne sera
-                plus proposé à la vente ni dans les listes. <strong>Aucune donnée n’est supprimée</strong> :
+                plus proposé à la vente dans <strong>aucun magasin</strong>. <strong>Aucune donnée n’est supprimée</strong> :
                 les factures anciennes restent lisibles et le produit peut être réactivé.
               </p>
               <div className="mt-3 grid gap-2 sm:grid-cols-3">

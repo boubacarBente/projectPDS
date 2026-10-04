@@ -14,6 +14,8 @@ import { assertAssignableRole, assertAssignableStores } from '@/lib/user-scope';
 import { setUserAssignments } from '@/lib/stores';
 import { withTransaction } from '@/db';
 import { createUser, getUserStats, listUsersPage } from '@/lib/users';
+import { getOverridesForUsers, setUserOverrides } from '@/lib/user-permissions';
+import { resolvePermissions } from '@/lib/permissions';
 import { writeAudit } from '@/lib/audit';
 import { isRole } from '@/lib/permissions';
 import { parseListSort } from '@/lib/list-sort';
@@ -77,7 +79,24 @@ export async function GET(request: NextRequest) {
       sort: parseListSort(params.get('sort'), ['recent', 'name']),
     });
 
-    return ok(result);
+    /*
+     * Pour la liste (refonte du 4 octobre 2026) : le compte peut-il changer de
+     * magasin, et ses droits diffèrent-ils de son rôle ? Une seule requête pour
+     * toute la page.
+     */
+    const overrides = await getOverridesForUsers(result.data.map((u) => u.id));
+    return ok({
+      ...result,
+      data: result.data.map((u) => {
+        const own = overrides.get(u.id) ?? [];
+        const effective = resolvePermissions({ role: u.role }, own);
+        return {
+          ...u,
+          canSwitchStore: effective.includes('stores.switch'),
+          customized: own.some((o) => o.action !== 'stores.switch'),
+        };
+      }),
+    });
   } catch (error) {
     return fail(error);
   }
@@ -125,6 +144,12 @@ export async function POST(request: NextRequest) {
       }
       return row;
     });
+
+    // Droit de changer de magasin (README §28.6) : une surcharge « allow »,
+    // modifiable ensuite (bouton « Magasins » ou « Permissions »).
+    if (body.canSwitchStore === true && created.role !== 'admin') {
+      await setUserOverrides(created.id, [{ action: 'stores.switch', effect: 'allow' }], { id: user.id, name: user.name });
+    }
 
     await writeAudit({
       user,

@@ -22,6 +22,8 @@ export async function GET() {
     permissions: user.permissions,
     activeStoreId: user.storeId,
     allStores: user.allStores,
+    // Droit de changer de magasin actif (README §28.6) : pilote le sélecteur.
+    canSwitchStore: user.role === 'admin' || user.permissions.includes('stores.switch'),
     stores: stores.map((s) => ({
       id: s.id,
       code: s.code,

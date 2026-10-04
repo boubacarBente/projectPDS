@@ -28,6 +28,7 @@ import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { salesInvoices, salesInvoiceItems } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ValidationError, businessDate, toInt, toNumber } from '@/lib/api';
+import { assertCustomerInStore } from '@/lib/customers';
 import { writeAudit } from '@/lib/audit';
 import { addCashMovement } from '@/lib/caisse';
 import { resolvePeriod, type PeriodKey, type SnapshotPeriod } from '@/lib/dashboard';
@@ -318,28 +319,37 @@ async function auditUser(userId?: number | null): Promise<{ id: number; name: st
 /**
  * Rattachement du client (§10.5 étape 4).
  * La vente comptoir (`customerId = null`, « Client comptoir ») est valide.
+ *
+ * Le client doit être **du magasin de la vente** (README §28.5). `keepId` : le
+ * client déjà rattaché à la facture modifiée reste accepté tel quel (une
+ * facture reprise d'avant le cloisonnement peut viser un client d'un autre
+ * magasin).
  */
 async function resolveCustomer(input: {
   customerId?: number | null;
   customerName?: string;
+  storeId: number;
+  keepId?: number | null;
 }): Promise<{ customerId: number | null; customerName: string }> {
   const typedName = (input.customerName ?? '').trim();
   const customerId = input.customerId == null ? null : Number(input.customerId);
 
   if (customerId && Number.isInteger(customerId) && customerId > 0) {
-    const row = await rawGet<{ id: number; name: string }>(
-      'SELECT id, name FROM customers WHERE id = ?',
-      [customerId],
-    );
-    if (!row) throw new ValidationError('Client introuvable');
+    if (customerId === input.keepId) {
+      const row = await rawGet<{ id: number; name: string }>('SELECT id, name FROM customers WHERE id = ?', [customerId]);
+      if (!row) throw new ValidationError('Client introuvable');
+      return { customerId: row.id, customerName: typedName || row.name };
+    }
+    const row = await assertCustomerInStore(customerId, input.storeId);
     return { customerId: row.id, customerName: typedName || row.name };
   }
 
   if (typedName) {
-    // Comparaison insensible à la casse et aux espaces superflus.
+    // Comparaison insensible à la casse et aux espaces superflus, parmi les
+    // clients **de ce magasin** seulement.
     const row = await rawGet<{ id: number; name: string }>(
-      'SELECT id, name FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) ORDER BY id LIMIT 1',
-      [typedName],
+      'SELECT id, name FROM customers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND (store_id = ? OR store_id IS NULL) ORDER BY id LIMIT 1',
+      [typedName, input.storeId],
     );
     if (row) return { customerId: row.id, customerName: typedName };
   }
@@ -914,6 +924,7 @@ async function createSalesInvoiceInTx(input: SalesInvoiceInput): Promise<SalesIn
   const customer = await resolveCustomer({
     customerId: input.customerId,
     customerName: input.customerName,
+    storeId,
   });
 
   // 3. Numérotation (compteur `settings`, sans trou).
@@ -1056,6 +1067,8 @@ async function updateSalesInvoiceInTx(id: number, input: SalesInvoiceInput): Pro
   const customer = await resolveCustomer({
     customerId: input.customerId,
     customerName: input.customerName ?? existing.customerName,
+    storeId,
+    keepId: existing.customerId,
   });
 
   // --- Validations d'encaissement AVANT toute écriture (pas d'état partiel).

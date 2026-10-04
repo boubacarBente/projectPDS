@@ -19,6 +19,13 @@ interface ModalProps {
    * entier défile dans la boîte, avec son rembourrage habituel.
    */
   footer?: React.ReactNode;
+  /**
+   * Fermer en cliquant à côté de la fenêtre (défaut : oui). À désactiver pour
+   * une saisie longue : un clic à côté de l'assistant de création d'un compte
+   * fermait la fenêtre et perdait tout ce qui avait été tapé (constaté en
+   * recette le 4 octobre 2026). Le bouton ✕ ferme toujours.
+   */
+  closeOnOverlay?: boolean;
 }
 
 const sizeClasses = {
@@ -28,7 +35,7 @@ const sizeClasses = {
   xl: 'max-w-4xl',
 };
 
-export function Modal({ isOpen, onClose, title, children, size = 'md', fullScreenMobile = false, footer }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, size = 'md', fullScreenMobile = false, footer, closeOnOverlay = true }: ModalProps) {
   const hasFooter = footer !== undefined && footer !== null;
   return (
     <AnimatePresence>
@@ -41,7 +48,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', fullScree
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="fixed inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={onClose}
+            onClick={closeOnOverlay ? onClose : undefined}
           />
 
           {/* Modal box */}

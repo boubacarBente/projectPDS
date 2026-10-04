@@ -65,6 +65,8 @@ type AuthContextType = {
   activeStore: AuthStore | null;
   /** Compte multi-magasins (administrateur général ou `stores.viewAll`). */
   allStores: boolean;
+  /** Droit de changer de magasin actif (`stores.switch`, README §28.6). */
+  canSwitchStore: boolean;
   device: AuthDevice | null;
   /** Change le magasin actif puis recharge la page (toutes les données changent). */
   switchStore: (storeId: number) => Promise<void>;
@@ -81,6 +83,7 @@ const AuthContext = createContext<AuthContextType>({
   activeStoreId: null,
   activeStore: null,
   allStores: false,
+  canSwitchStore: false,
   device: null,
   switchStore: async () => {},
 });
@@ -94,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [stores, setStores] = useState<AuthStore[]>([]);
   const [activeStoreId, setActiveStoreId] = useState<number | null>(null);
   const [allStores, setAllStores] = useState(false);
+  const [canSwitchStore, setCanSwitchStore] = useState(false);
   const [device, setDevice] = useState<AuthDevice | null>(null);
   const refreshRequestId = useRef(0);
 
@@ -116,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStores(Array.isArray(data.stores) ? data.stores : []);
         setActiveStoreId(typeof data.activeStoreId === 'number' ? data.activeStoreId : null);
         setAllStores(Boolean(data.allStores));
+        setCanSwitchStore(Boolean(data.canSwitchStore));
         setDevice(data.device ?? null);
       } else if (requestId === refreshRequestId.current) {
         setUser(null);
@@ -186,6 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         activeStoreId,
         activeStore,
         allStores,
+        canSwitchStore,
         device,
         switchStore,
       }}

@@ -152,6 +152,13 @@ export async function addStockMovement(
     if (!product) throw new Error('Produit introuvable');
 
     await ensureProductStockRow(storeId, productId);
+    // Un magasin qui reçoit, vend ou corrige un produit le **propose** : tout
+    // mouvement le (re)met dans l'assortiment (transfert reçu, achat…).
+    await rawRun(
+      `UPDATE product_stocks SET is_listed = 1, updated_at = unixepoch()
+        WHERE store_id = ? AND product_id = ? AND is_listed = 0`,
+      [storeId, productId],
+    );
     const stockBefore = await getStoreStock(storeId, productId);
 
     const stockAfter = round3(type === 'exit' ? stockBefore - qty : stockBefore + qty);
@@ -221,6 +228,15 @@ export async function recomputeStocks(pairs: { storeId: number; productId: numbe
   }
 }
 
+/**
+ * **Assortiment** (README §28.5) : le produit `p` est-il proposé par au moins
+ * un magasin de la portée ? Toute liste de produits « du magasin » (produits,
+ * stocks, alertes, inventaires, sélecteurs) passe par ce filtre.
+ */
+export function listedSql(scope: StoreScope, alias = 'p'): string {
+  return `EXISTS (SELECT 1 FROM product_stocks pl WHERE pl.product_id = ${alias}.id AND pl.is_listed = 1 AND ${scopeSql('pl.store_id', scope)})`;
+}
+
 /** Expression SQL du stock d'un produit `p` sur une portée. */
 function stockExpr(scope: StoreScope): string {
   return `COALESCE((SELECT SUM(ps.quantity) FROM product_stocks ps WHERE ps.product_id = p.id AND ${scopeSql('ps.store_id', scope)}), 0)`;
@@ -272,7 +288,7 @@ export async function listStockProducts(options: {
   const stock = stockExpr(scope);
   const stockMin = stockMinExpr(scope);
 
-  const conditions: string[] = ['p.is_active = 1', 'p.deleted_at IS NULL'];
+  const conditions: string[] = ['p.is_active = 1', 'p.deleted_at IS NULL', listedSql(scope)];
   const args: unknown[] = [];
   if (options.search) {
     conditions.push('(p.name LIKE ? OR p.barcode = ?)');
@@ -311,7 +327,7 @@ export async function listStockProducts(options: {
     const detailRows = await rawAll<any>(
       `SELECT ps.product_id, ps.store_id, s.name, ps.quantity
          FROM product_stocks ps JOIN stores s ON s.id = ps.store_id
-        WHERE ps.product_id IN (${ids}) AND ${scopeSql('ps.store_id', scope)}
+        WHERE ps.product_id IN (${ids}) AND ps.is_listed = 1 AND ${scopeSql('ps.store_id', scope)}
         ORDER BY s.name`,
     );
     detail = new Map();
@@ -439,7 +455,7 @@ export async function getStockSummary(scope: StoreScope): Promise<StockSummary> 
   const rows = await rawAll<any>(
     `SELECT ${stockExpr(scope)} AS stock, ${stockMinExpr(scope)} AS stock_min,
             p.purchase_price, ${salePriceExpr(scope, (await getSettings()).localPricesAllowed)} AS sale_price, ${inTransitExpr(scope)} AS in_transit
-       FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL`,
+       FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL AND ${listedSql(scope)}`,
   );
 
   let totalStock = 0;
@@ -507,6 +523,59 @@ export async function setLocalProductSettings(
     .update(schema.productStocks)
     .set(updates)
     .where(and(eq(schema.productStocks.storeId, storeId), eq(schema.productStocks.productId, productId)));
+}
+
+export class AssortmentError extends Error {
+  readonly status = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'AssortmentError';
+  }
+}
+
+/**
+ * Ajoute un produit du catalogue à l'assortiment d'un magasin, ou l'en retire.
+ *
+ * Retirer est refusé tant que le magasin en a en stock ou en attend par
+ * transfert : la marchandise disparaîtrait des listes sans avoir quitté le
+ * magasin. On vide d'abord (transfert, ajustement). Rien n'est supprimé : la
+ * ligne garde son historique et revient au premier mouvement.
+ */
+export async function setProductListed(storeId: number, productId: number, listed: boolean): Promise<void> {
+  const product = await rawGet<{ name: string; is_active: number }>('SELECT name, is_active FROM products WHERE id = ?', [productId]);
+  if (!product) throw new AssortmentError('Produit introuvable');
+
+  if (listed) {
+    if (!product.is_active) throw new AssortmentError(`« ${product.name} » est désactivé dans le catalogue.`);
+    await ensureProductStockRow(storeId, productId);
+    await rawRun(
+      `UPDATE product_stocks SET is_listed = 1, updated_at = unixepoch()
+        WHERE store_id = ? AND product_id = ? AND is_listed = 0`,
+      [storeId, productId],
+    );
+    return;
+  }
+
+  const stock = await getStoreStock(storeId, productId);
+  if (Math.abs(stock) > 0.0005) {
+    throw new AssortmentError(
+      `« ${product.name} » est encore en stock dans ce magasin (${round3(stock)}) : transférez-le ou ajustez le stock à zéro avant de le retirer.`,
+    );
+  }
+  const incoming = await rawGet<{ reference: string }>(
+    `SELECT t.reference FROM stock_transfer_items ti JOIN stock_transfers t ON t.id = ti.transfer_id
+      WHERE ti.product_id = ? AND t.destination_store_id = ?
+        AND t.status IN ('draft', 'pending', 'approved', 'preparing', 'in_transit', 'partially_received', 'disputed') LIMIT 1`,
+    [productId, storeId],
+  );
+  if (incoming) {
+    throw new AssortmentError(`« ${product.name} » est attendu par le transfert ${incoming.reference} : terminez-le d'abord.`);
+  }
+  await rawRun(
+    `UPDATE product_stocks SET is_listed = 0, updated_at = unixepoch()
+      WHERE store_id = ? AND product_id = ? AND is_listed = 1`,
+    [storeId, productId],
+  );
 }
 
 /** Prix de vente effectif d'un produit dans un magasin (prix local sinon catalogue). */

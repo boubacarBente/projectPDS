@@ -8,6 +8,11 @@
  * Le solde d'un client est la somme des `remaining_amount` de ses factures
  * **non annulées** — ce qui est exactement « Σ total − Σ paiements » (§15),
  * sans double calcul.
+ *
+ * **Chaque magasin a ses propres clients** (README §28.5) : `customers.store_id`
+ * est le magasin propriétaire. La liste ne montre que les clients des magasins
+ * de la portée ; une vente, un devis, une demande ou un chantier n'accepte
+ * qu'un client **de son magasin** (`assertCustomerInStore`).
  */
 
 import { db, rawAll, rawGet } from '@/db';
@@ -15,10 +20,14 @@ import { customers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { scopeSql, type StoreScope } from '@/lib/stores';
 import { roundMoney } from '@/lib/format';
+import { assertStoreVisible, NotFoundError, ValidationError, type SessionUser } from '@/lib/api';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 export type CustomerRow = {
   id: number;
+  /** Magasin propriétaire de la fiche. */
+  storeId: number | null;
+  storeName: string | null;
   name: string;
   phone: string | null;
   address: string | null;
@@ -105,6 +114,8 @@ export async function listCustomers(options: {
   const args: (string | number)[] = [];
 
   if (!options.includeInactive) where.push('c.is_active = 1');
+  // Clients **du** magasin : la portée filtre les fiches, pas seulement les soldes.
+  if (options.scope) where.push(scopeSql('c.store_id', options.scope));
   if (options.search) {
     where.push('(c.name LIKE ? OR c.phone LIKE ? OR c.address LIKE ?)');
     const like = `%${options.search}%`;
@@ -128,7 +139,7 @@ export async function listCustomers(options: {
   const debtorFilter = options.debtorsOnly ? 'WHERE balance > 0.001' : '';
 
   const innerSql = `
-    SELECT c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active,
+    SELECT c.id, c.store_id, st.name AS store_name, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active,
            COALESCE(inv.invoice_count, 0)   AS invoice_count,
            COALESCE(inv.total_invoiced, 0)  AS total_invoiced,
            COALESCE(inv.total_paid, 0)      AS total_paid,
@@ -147,6 +158,7 @@ export async function listCustomers(options: {
       WHERE status = 'active' AND customer_id IS NOT NULL ${storeFilter(options.scope)}
       GROUP BY customer_id
     ) inv ON inv.customer_id = c.id
+    LEFT JOIN stores st ON st.id = c.store_id
     ${whereSql}
   `;
 
@@ -201,6 +213,8 @@ export async function listCustomers(options: {
 function mapCustomerRow(row: any): CustomerRow {
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
     name: row.name,
     phone: row.phone,
     address: row.address,
@@ -223,7 +237,7 @@ function storeFilter(scope: StoreScope | undefined, column = 'store_id'): string
 
 export async function getCustomer(id: number, scope?: StoreScope): Promise<CustomerRow | null> {
   const row = await rawGet<any>(
-    `SELECT c.id, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active, c.created_at,
+    `SELECT c.id, c.store_id, st.name AS store_name, c.name, c.phone, c.address, c.notes, c.credit_limit, c.is_active, c.created_at,
             COALESCE(inv.invoice_count, 0)   AS invoice_count,
             COALESCE(inv.total_invoiced, 0)  AS total_invoiced,
             COALESCE(inv.total_paid, 0)      AS total_paid,
@@ -237,6 +251,7 @@ export async function getCustomer(id: number, scope?: StoreScope): Promise<Custo
        FROM sales_invoices WHERE status = 'active' AND customer_id IS NOT NULL ${storeFilter(scope)}
        GROUP BY customer_id
      ) inv ON inv.customer_id = c.id
+     LEFT JOIN stores st ON st.id = c.store_id
      WHERE c.id = ?`,
     [id],
   );
@@ -244,10 +259,42 @@ export async function getCustomer(id: number, scope?: StoreScope): Promise<Custo
   return row ? mapCustomerRow(row) : null;
 }
 
-export async function createCustomer(input: CustomerInput): Promise<CustomerRow> {
+/**
+ * Client utilisable par un document du magasin `storeId` : il doit exister et
+ * appartenir à ce magasin. Une fiche sans magasin (donnée antérieure non
+ * reprise) reste acceptée plutôt que de bloquer une vente.
+ */
+export async function assertCustomerInStore(
+  customerId: number,
+  storeId: number | null | undefined,
+): Promise<{ id: number; name: string }> {
+  const row = await rawGet<{ id: number; name: string; store_id: number | null; store_name: string | null }>(
+    `SELECT c.id, c.name, c.store_id, s.name AS store_name
+       FROM customers c LEFT JOIN stores s ON s.id = c.store_id WHERE c.id = ?`,
+    [customerId],
+  );
+  if (!row) throw new ValidationError('Client introuvable');
+  if (storeId && row.store_id != null && Number(row.store_id) !== Number(storeId)) {
+    throw new ValidationError(
+      `« ${row.name} » est un client du magasin ${row.store_name ?? 'd’un autre magasin'} : chaque magasin a ses propres clients. Créez la fiche dans ce magasin.`,
+    );
+  }
+  return { id: Number(row.id), name: String(row.name) };
+}
+
+/** La fiche doit appartenir à un magasin du périmètre de l'utilisateur (404 / 403 sinon). */
+export async function assertCustomerVisible(user: SessionUser, id: number): Promise<void> {
+  const row = await rawGet<{ store_id: number | null }>('SELECT store_id FROM customers WHERE id = ?', [id]);
+  if (!row) throw new NotFoundError('Client introuvable');
+  assertStoreVisible(user, row.store_id);
+}
+
+/** Création dans le magasin actif (`storeId`), jamais dans un magasin reçu du navigateur. */
+export async function createCustomer(input: CustomerInput, storeId: number): Promise<CustomerRow> {
   const inserted = await db
     .insert(customers)
     .values({
+      storeId,
       name: input.name.trim(),
       phone: input.phone?.trim() || null,
       address: input.address?.trim() || null,
@@ -430,8 +477,8 @@ export async function getCustomersSummary(scope?: StoreScope): Promise<{
 }> {
   const row = await rawGet<any>(
     `SELECT
-       (SELECT COUNT(*) FROM customers) AS total_customers,
-       (SELECT COUNT(*) FROM customers WHERE is_active = 1) AS active_customers,
+       (SELECT COUNT(*) FROM customers WHERE 1 = 1 ${storeFilter(scope)}) AS total_customers,
+       (SELECT COUNT(*) FROM customers WHERE is_active = 1 ${storeFilter(scope)}) AS active_customers,
        (SELECT COUNT(DISTINCT customer_id) FROM sales_invoices
          WHERE status = 'active' AND remaining_amount > 0.001 AND customer_id IS NOT NULL ${storeFilter(scope)}) AS debtors_count,
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM sales_invoices

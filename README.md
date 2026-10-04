@@ -1479,24 +1479,52 @@ Système **repris de Gaz** : hachage **SHA-256** (`crypto.subtle.digest`), cooki
 
 ### 17.2 Rôles et permissions
 
-| Action | Admin | Gérant | Vendeur / Caissier | Magasinier |
-|---|:--:|:--:|:--:|:--:|
-| Tableau de bord | ✅ | ✅ | ✅ | ✅ |
-| Créer une vente | ✅ | ✅ | ✅ | ❌ |
-| Modifier une vente | ✅ | ✅ | ✅ (du jour) | ❌ |
-| **Annuler une vente** | ✅ | ✅ | ❌ | ❌ |
-| Clients / fournisseurs | ✅ | ✅ | consultation + création | consultation |
-| Produits / prix d'achat | ✅ | ✅ | consultation | consultation |
-| Achats | ✅ | ✅ | ❌ | ✅ (réception) |
-| Stock / inventaire | ✅ | ✅ | ❌ | ✅ |
-| Caisse : ouvrir/clôturer | ✅ | ✅ | ✅ | ❌ |
-| Dépenses | ✅ | ✅ | saisie | ❌ |
-| Rapports | ✅ | ✅ | limité (jour) | ❌ |
-| Paramètres | ✅ | partiel | ❌ | ❌ |
-| Utilisateurs | ✅ | ❌ | ❌ | ❌ |
-| Sauvegarde / restauration | ✅ | ❌ | ❌ | ❌ |
+> **Refonte du 4 octobre 2026.** Un rôle n'est plus une liste de ~60 permissions
+> techniques : c'est **un niveau par domaine**, en mots simples — *Aucun accès →
+> Consulter → Saisir → Gérer* (chaque niveau inclut le précédent). Source unique :
+> `ACCESS_AREAS` et `ROLE_LEVELS` dans `lib/permissions.ts` ; la matrice
+> `PERMISSIONS` en est **déduite**. Le serveur vérifie toujours les mêmes
+> permissions techniques (`can(user, 'sales.cancel')`) dans chaque Route Handler.
 
-Implémentation : `lib/permissions.ts` (`can(user, 'sales.cancel')`) — **vérifié côté serveur** dans chaque Route Handler, jamais uniquement dans l'interface.
+| Domaine | Administrateur | Gérant | Vendeur / Caissier | Magasinier | Comptable *(nouveau)* |
+|---|---|---|---|---|---|
+| Tableau de bord et rapports | Gérer | Gérer | Consulter (jour) | Consulter (jour) | Gérer |
+| Ventes et encaissements | Gérer | Gérer (annuler) | Saisir | Consulter | Consulter |
+| Clients | Gérer | Gérer | Saisir | Consulter | Consulter |
+| Fournisseurs | Gérer | Gérer | Consulter | Saisir | Consulter |
+| Produits et catégories | Gérer | Gérer | Consulter | Gérer | Consulter |
+| Achats | Gérer | Gérer | — | Saisir | Consulter |
+| Stock | Gérer | Gérer | Consulter | Gérer | Consulter |
+| Caisse | Gérer | Gérer | Saisir | — | Consulter |
+| Dépenses | Gérer | Gérer | Saisir | — | Gérer (approuver) |
+| Chantiers | Gérer | Gérer | Consulter | Consulter | Consulter |
+| Transferts | Gérer | Gérer | — | Saisir | Consulter |
+| Inventaires | Gérer | Gérer | — | Saisir | Consulter |
+| Magasins | Gérer | Consulter | Consulter | Consulter | Consulter |
+| Comptes et historique | Gérer | Gérer (ses magasins) | — | — | Consulter (historique) |
+| Paramètres | Gérer | Consulter | Consulter | Consulter | Consulter |
+
+Ce que chaque niveau autorise exactement (« Vendre et encaisser », « Annuler une
+vente validée »…) est écrit dans `ACCESS_AREAS` et affiché tel quel à l'écran.
+
+**Changements assumés par rapport à l'ancienne matrice** : le vendeur ne voit plus
+les soldes ni les bénéfices (invariant 13) ; le gérant consulte les paramètres de
+l'entreprise sans les modifier (ils valent pour tout le réseau) ; le magasinier ne
+gère plus les ouvriers ; personne d'autre que l'administrateur ne change de magasin
+d'office (§28.6) ; nouveau rôle **Comptable** (consulte tout, approuve les dépenses).
+
+**L'administrateur ne se désactive jamais** (`assertNotAdministrator`, `lib/users.ts`) :
+pour retirer l'accès à un administrateur, on change d'abord son rôle — ce qui reste
+refusé s'il est le dernier administrateur actif. Personne ne désactive son propre compte.
+
+**Écran `/utilisateurs`** : trois chiffres, répartition par rôle cliquable (filtre),
+liste « une ligne = un clic ». Création par un **assistant en 4 étapes** (Qui → Rôle,
+choisi sur des cartes « peut / ne peut pas » → Magasins → Vérifier). Chaque compte a sa
+**page** `/utilisateurs/[id]` (onglets Profil, Magasins, Droits, Sécurité ;
+`?onglet=` dans l'adresse) : les droits s'ajustent **domaine par domaine**, les
+domaines modifiés par rapport au rôle sont encadrés, « Tout remettre comme le rôle »
+annule les ajustements. Les ajustements restent enregistrés en surcharges `allow` /
+`deny` (§17.4).
 
 ### 17.3 Historique des actions
 `lib/audit.ts` → `writeAudit({ user, action, entity, entityId, details })`, appelé pour : connexion/déconnexion, création/modification/**annulation** de vente, encaissement, modification de prix, ajustement de stock, dépense, opérations sur les paramètres, sauvegarde/restauration, gestion des utilisateurs. Écran `/utilisateurs` → onglet **Historique** (filtres par utilisateur, action, date).
@@ -2368,8 +2396,9 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
    jamais un `storeId` envoyé par le navigateur.
 2. La lecture s'élargit par `?store=all|<id>`, toujours bornée au périmètre de
    l'utilisateur (`scopeFromRequest`, 403 sinon).
-3. Données centrales (produits, catégories, comptes, magasins, paramètres
-   d'entreprise) : modifiables **au siège uniquement** (`requireCentralEdit`).
+3. Données centrales (catégories, comptes, magasins, paramètres d'entreprise) :
+   modifiables **au siège uniquement** (`requireCentralEdit`). **Clients,
+   fournisseurs, ouvriers et produits sont propres à chaque magasin** (§28.5).
 4. Un magasin **suspendu** n'accepte plus aucune opération ; **archiver** est refusé
    tant qu'une caisse est ouverte ou qu'un transfert est en cours. Rien ne se supprime.
 5. Numéros de documents : `{PREFIX}-{STORE}{POSTE}-{AAAA}-{NNNNNN}` — uniques à
@@ -2413,9 +2442,12 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | **`/achats`** : portée magasin, magasin sous la référence, infobulles | ✅ | guide §6.5 |
 | **`/caisse`** : portée magasin (consultation ; ouverture, clôture et mouvements restent ceux du magasin actif), mouvements en 5 colonnes et historique des sessions en 6 (tiennent en 1366 px), « solde après » masqué en vue multi-magasins, **alerte de solde négatif** (signe d'un apport non saisi ou d'une sortie en trop), infobulles. Démonstration : apport initial de trésorerie par magasin | ✅ | guide §6.6 |
 | **`/stocks`** : portée magasin, produits en 4 colonnes et journal en 5 (tiennent en 1366 px), en vue « tous les magasins » stock de chaque magasin et quantité en transit sous le total, action « Demander un transfert » sur un produit en alerte, ajustement réservé au magasin actif, infobulles | ✅ | guide §6.8 |
-| **`/clients`** et **`/fournisseurs`** : référentiel commun à tous les magasins, la portée (`StoreScopeSelect`) change les soldes, dettes et chiffres d'affaires de la liste et des cartes. **Fiches** : chargées en `?store=all` dès que l'utilisateur a plusieurs magasins (borné à son périmètre par le serveur), avec le **détail par magasin** (`byStore` : solde et facturé / dette et acheté) — sinon un client qui doit de l'argent à Matoto paraissait soldé depuis Kaloum. « Dette restante » du fournisseur en `MoneyText due`, infobulles sur toutes les cartes | ✅ | guide §6.5, §6.13 |
+| **`/clients`** et **`/fournisseurs`** : *(remplacé par §28.5 : chaque magasin a désormais ses propres fiches)* la portée (`StoreScopeSelect`) change les soldes, dettes et chiffres d'affaires de la liste et des cartes. **Fiches** : chargées en `?store=all` dès que l'utilisateur a plusieurs magasins (borné à son périmètre par le serveur), avec le **détail par magasin** (`byStore` : solde et facturé / dette et acheté) — sinon un client qui doit de l'argent à Matoto paraissait soldé depuis Kaloum. « Dette restante » du fournisseur en `MoneyText due`, infobulles sur toutes les cartes | ✅ | guide §6.5, §6.13 |
 | **Prestations de chantier multi-magasins — serveur** (cahier « Prestations de chantier ») : catalogue de prestations **local à chaque magasin** (`services`, historique des prix), **demandes** (`service_requests`), **devis distincts** (`quotes`, prix figés, expiration calculée, conversion en chantier), **lignes facturées** du chantier (`service_job_items` : le montant facturé ne vient plus des coûts — la marge valait toujours 0), étapes, sous-traitance (fournisseurs marqués sous-traitants, payés par dépenses rattachées), dépenses rattachées **vérifiées côté serveur**, ouvriers par magasin et par équipe, retard calculé, pilotage consolidé, historique par document. Migration `0006` purement additive. `npm run verify:chantiers` : 39 contrôles (critères 2 à 11 du cahier) | ✅ | `lib/services.ts`, `lib/quotes.ts`, `lib/service-requests.ts`, `lib/jobs.ts`, `lib/jobs-dashboard.ts` |
 | Prestations de chantier — **écrans** : `/prestations` (+ fiche), `/chantiers/demandes`, `/chantiers/devis` (saisie, document, conversion), `/chantiers` et fiche à onglets, facture de chantier, `/chantiers/pilotage` (magasin et consolidé), `/chantiers/planning`, `/ouvriers`, `/sous-traitants`, paramètres (préfixes `DEV` `DEM` `PRE`, validité). Vérifiés à 1366 et 400 px. Correctifs au passage : graphiques noirs (couleurs `oklch` du thème ignorées par le canevas), menu à deux entrées actives, rapports qui comptaient les anciens chantiers-devis. `next build` ✓, `verify:routes` 151/151 | ✅ | README §19 |
+| **Données propres à chaque magasin** (demande client du 4 octobre 2026) : clients, fournisseurs, sous-traitants, ouvriers et **assortiment de produits** par magasin ; un nouveau magasin part **vide** (aucun produit, stock, client, fournisseur, ouvrier). Migrations `0007` (colonnes), `0008` (reprise clients / fournisseurs / assortiment), `0009` (ouvriers). Essais API : 16 contrôles (cloisonnement, vente et achat refusés hors magasin, création / reprise / retrait de produit, nouveau magasin vide) | ✅ | §28.5 |
+| **Changer de magasin actif** : permission `stores.switch` (administrateur d'office, sinon accordée par compte), magasin principal imposé sans elle, case « Peut changer de magasin » à la création et dans « Magasins » | ✅ | §28.6 |
+| **Refonte des comptes** : rôles par domaine (Aucun accès / Consulter / Saisir / Gérer), rôle Comptable, administrateur jamais désactivable, `/utilisateurs` refait (assistant de création en 4 étapes, page `/utilisateurs/[id]` à onglets), période d'affectation repliée (« Remplacement temporaire »). Catégories : seulement celles du magasin, création par un magasin. Essais API : 19 contrôles ; écrans vérifiés à 1366 et 400 px | ✅ | §17.2, §28.5 |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette
@@ -2452,6 +2484,58 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
   ```
   ⚠️ Après un `git checkout` d'un fichier, `next dev` peut ne pas recharger le module
   (constaté sur `lib/purchases.ts`) : en cas de doute, redémarrer l'instance.
+- ⚠️ **Migrations et `next dev` ouvert** : le serveur de développement applique une
+  migration dès qu'elle apparaît dans `db/migrations`. Un fichier complété **après**
+  coup n'est jamais rejoué (constaté sur `0007` : colonnes appliquées, reprise de
+  données ignorée). Écrire la migration **en entier** avant de l'enregistrer, ou
+  mettre les ajouts dans une nouvelle migration (`drizzle-kit generate --custom`).
+
+### 28.5 Données propres à chaque magasin
+
+Demande client (4 octobre 2026) : *chaque magasin a ses propres clients, ses propres
+produits, son stock ; un nouveau magasin arrive avec des données vides*. Règles :
+
+| Donnée | Règle | Où |
+|---|---|---|
+| **Clients** | `customers.store_id` = magasin propriétaire. La liste ne montre que ceux de la portée ; la fiche d'un autre magasin renvoie 403 (`assertCustomerVisible`). Vente, devis, demande et chantier n'acceptent qu'un client **de leur magasin** (`assertCustomerInStore`, 400 « chaque magasin a ses propres clients »). Un client qui achète dans deux magasins a deux fiches. | `lib/customers.ts` |
+| **Fournisseurs / sous-traitants** | Même règle (`suppliers.store_id`, `assertSupplierInStore`) pour les achats et la sous-traitance de chantier. | `lib/suppliers.ts` |
+| **Ouvriers** | Toujours rattachés au magasin actif ; l'option « commun à tous les magasins » est retirée. | `lib/workers.ts` |
+| **Produits** | Le **catalogue reste commun** (un nom = un produit dans tout le réseau : c'est ce qui permet les transferts et les rapports par produit), mais chaque magasin a son **assortiment** (`product_stocks.is_listed`). Listes de produits, stocks, alertes, inventaires, sélecteurs de vente et d'achat : produits de l'assortiment seulement (`listedSql`). | `lib/products.ts`, `lib/stock.ts` |
+| Créer un produit | Tout magasin (`products.create`) : le produit entre dans **son** assortiment ; `owner_store_id` = ce magasin (`null` si créé au siège par un administrateur général). Nom déjà pris ailleurs → 409 « ajoutez-le avec Ajouter du catalogue ». | `POST /api/produits` |
+| Reprendre / retirer | « Ajouter du catalogue » (`GET /api/produits?catalog=true`, puis `POST /api/produits/[id]/assortiment {listed:true}`). « Retirer de ce magasin » (`{listed:false}`) refusé tant qu'il reste du stock ou un transfert entrant. Tout mouvement de stock (achat, transfert reçu…) remet le produit dans l'assortiment. | `setProductListed` |
+| Modifier la fiche commune | Siège / autonome, **ou** magasin créateur tant qu'il est seul à proposer le produit (`canEditProductCatalog`). Les autres ne règlent que prix local, seuil local et stock. Désactiver suit la même règle. | `app/api/produits/[id]` |
+| **Nouveau magasin** | Part **vide** : aucun produit (donc aucun stock), client, fournisseur ou ouvrier. Option à la création : « Mêmes produits que… » (`copyAssortmentFrom`, liste seule, sans stock ni prix local). | `createStore` |
+| **Catégories** | Liste **commune** (rapports réseau cohérents, pas de doublon « Peinture » / « Peintures »), mais l'écran ne montre au magasin que **ses** catégories : la carte « Catégories utilisées » compte celles qui ont un produit dans son assortiment (« sur N dans l'entreprise »), le filtre de `/produits` ne propose qu'elles (`storeProductCount` de `GET /api/produits/categories?store=`). Un magasin **crée** une catégorie qui lui manque (nom unique) ; la modifier ou la désactiver reste au siège. | `lib/products.ts` |
+| Restent communs | Unités, paramètres d'entreprise, comptes utilisateurs. | |
+
+**Synchronisation** : `customers`, `suppliers`, `workers` passent en portée `store`
+(un poste ne reçoit que ceux de son magasin) ; `products` n'est plus `hqOnly` (un
+poste magasin envoie les produits qu'il crée), clé naturelle `name`.
+
+**Reprise de l'existant** (`0008`, `0009`, déterministe sur chaque poste) : un client,
+fournisseur ou ouvrier va au magasin où il a le plus de documents, sinon au siège. En
+réseau, un magasin ne garde dans son assortiment que les produits qu'il a eus (mouvement,
+stock ou réglage local) ; un produit que personne ne propose reste au siège. Un magasin
+unique garde tout. Les anciens documents qui visent un client d'un autre magasin restent
+lisibles et modifiables (le client déjà rattaché est accepté tel quel).
+
+### 28.6 Changer de magasin actif
+
+Demande client (4 octobre 2026) : *l'administrateur passe d'un magasin à l'autre ; tout
+autre utilisateur doit en avoir la permission, et on choisit quels magasins il voit*.
+
+| Règle | Où |
+|---|---|
+| Permission **`stores.switch`** « Changer de magasin actif ». L'administrateur l'a toujours ; **aucun autre rôle ne l'a par défaut** : elle s'accorde par compte (surcharge `allow`). | `lib/permissions.ts` |
+| **Quels magasins il voit** = ses affectations (bouton « Magasins » de `/utilisateurs`). Chaque affectation peut avoir une période (« À partir du » / « Jusqu'au », pour un remplacement temporaire) : hors période, le magasin n'est pas accessible. *Corrigé* : la date de début était ignorée (accès dès la saisie). | `lib/stores.ts` |
+| Sans la permission, le magasin actif est **toujours** son **magasin principal** : celui dont il est gérant, sinon sa plus ancienne affectation (`getHomeStoreId`). Il **consulte** ses autres magasins (sélecteur de portée des listes), mais toutes ses opérations vont dans le magasin principal. | `resolveStoreContext` |
+| Connexion : pas d'écran de choix du magasin sans la permission (`needsStoreChoice`). `POST /api/auth/store` vers un autre magasin → 403 « Demandez la permission Changer de magasin actif ». | `app/api/auth/*` |
+| Interface : sélecteur de la barre latérale remplacé par le nom du magasin, bouton « Travailler dans ce magasin » masqué (`canSwitchStore` de `/api/auth/me`). | `components/store-switcher.tsx` |
+| Réglage : case **« Peut changer de magasin »** dans « Nouvel utilisateur » (`canSwitchStore` de `POST /api/users`) et dans la fenêtre « Magasins » (`PUT /api/users/[id]/magasins`, les autres surcharges du compte sont conservées), ou dans « Permissions ». | `components/utilisateurs/*` |
+
+⚠️ **Changement pour les comptes existants** : un gérant ou un magasinier affecté à
+plusieurs magasins ne change plus de magasin tant qu'on ne lui a pas accordé le droit.
+Essais API : 16 contrôles (sans droit, avec droit, retrait, administrateur, création).
 
 ---
 

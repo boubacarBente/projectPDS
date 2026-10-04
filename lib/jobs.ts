@@ -44,6 +44,8 @@ import { getSettings, nextDocumentNumber } from '@/lib/settings';
 import { jobCategoryLabel, jobCategoryStoredValues, matchJobCategory } from '@/lib/job-categories';
 import { assertServiceUsable, lineAmount } from '@/lib/services';
 import { NotFoundError, ValidationError, ConflictError } from '@/lib/api';
+import { assertCustomerInStore } from '@/lib/customers';
+import { assertSupplierInStore } from '@/lib/suppliers';
 import { roundMoney, today } from '@/lib/format';
 
 /* ------------------------------------------------------------------ *
@@ -917,14 +919,6 @@ export async function assertJobEditable(jobId: number, storeId: number): Promise
   return job;
 }
 
-async function customerExists(customerId: number): Promise<boolean> {
-  const rows = await db
-    .select({ id: customers.id })
-    .from(customers)
-    .where(eq(customers.id, customerId))
-    .limit(1);
-  return rows.length > 0;
-}
 
 export function cleanDate(value: unknown): string | null {
   if (value === null || value === undefined || value === '') return null;
@@ -1137,9 +1131,8 @@ async function createServiceJobInTx(
   if (!Number.isInteger(customerId) || customerId <= 0) {
     throw new ValidationError('Le client du chantier est obligatoire');
   }
-  if (!(await customerExists(customerId))) {
-    throw new ValidationError('Client introuvable');
-  }
+  // Le client doit être de ce magasin (README §28.5).
+  await assertCustomerInStore(customerId, input.storeId);
 
   const lines = [...(input.frozenItems ?? [])];
   for (const item of input.items ?? []) lines.push(await prepareServiceLine(item, input.storeId));
@@ -1221,7 +1214,7 @@ export async function updateServiceJob(id: number, patch: ServiceJobPatch, store
       if (!Number.isInteger(customerId) || customerId <= 0) {
         throw new ValidationError('Le client du chantier est obligatoire');
       }
-      if (!(await customerExists(customerId))) throw new ValidationError('Client introuvable');
+      if (customerId !== job.customerId) await assertCustomerInStore(customerId, storeId);
       values.customerId = customerId;
     }
     if (patch.category !== undefined) {
@@ -1470,12 +1463,9 @@ export async function addJobSubcontract(
 ): Promise<JobSubcontractRow> {
   return withTransaction(async () => {
     await assertJobEditable(jobId, storeId);
-    const supplier = await rawGet<{ id: number; is_active: number }>(
-      'SELECT id, is_active FROM suppliers WHERE id = ?',
-      [Number(input.supplierId)],
-    );
-    if (!supplier) throw new NotFoundError('Sous-traitant introuvable');
-    if (!supplier.is_active) throw new ValidationError('Ce sous-traitant est désactivé.');
+    // Sous-traitant **de ce magasin** (README §28.5).
+    const supplier = await assertSupplierInStore(Number(input.supplierId), storeId, 'sous-traitant');
+    if (!supplier.isActive) throw new ValidationError('Ce sous-traitant est désactivé.');
     const work = String(input.work ?? '').trim();
     if (!work) throw new ValidationError('Décrivez les travaux confiés.');
     const agreedAmount = roundMoney(Number(input.agreedAmount));

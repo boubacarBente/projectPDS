@@ -110,17 +110,21 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
     `balances.view` (`canViewSalesProfit()` dans `lib/sales.ts`) : sinon ils valent
     `null` dans `GET /api/ventes` et `GET /api/ventes/[id]`, et l'interface masque la
     colonne / la statistique. Masquer un élément d'interface ne protège rien (§9).
-    ⚠️ Dans la matrice livrée, **Vendeur/Caissier détient déjà `balances.view`** (il voit
-    `/soldes` et la marge) : il voit donc aussi le bénéfice. Pour le lui retirer, il faut
-    changer la matrice ou passer par une surcharge `deny` par utilisateur.
+    Depuis la refonte des rôles (README §17.2), **le vendeur n'a plus `balances.view`** :
+    ni `/soldes` ni bénéfice. On le lui accorde au besoin dans sa fiche (domaine
+    « Tableau de bord et rapports » → Gérer).
 14. **La marge ne sort jamais d'un document client** : ni PDF, ni image, ni WhatsApp.
     Elle vit dans des zones `no-print` ou des écrans internes — jamais dans
     `InvoiceDocument`, `purchase-document` ni un gabarit d'export (`lib/export-document.ts`).
 15. **Magasin actif.** Toute écriture va dans `user.storeId` (`requireActiveStore`),
     jamais dans un `storeId` reçu du navigateur. La lecture s'élargit par `?store=all|<id>`
     via `scopeFromRequest` (borné au périmètre, 403 sinon) ; un document d'un autre magasin
-    passe par `assertStoreVisible`. Données centrales (produits, catégories, comptes,
+    passe par `assertStoreVisible`. Données centrales (catégories, comptes,
     magasins, paramètres d'entreprise) : `requireCentralEdit()` — siège uniquement.
+    **Clients, fournisseurs, ouvriers et assortiment de produits sont propres à chaque
+    magasin** (README §28.5) : toute liste de produits « du magasin » passe par
+    `listedSql`, tout document vérifie son client / fournisseur par
+    `assertCustomerInStore` / `assertSupplierInStore`. Un nouveau magasin part vide.
 16. **Une carte d'indicateur = une infobulle en mots simples.** L'application vise un
     public non technicien : `StatCardDelta` reçoit `tooltip="…"` (ce que le chiffre
     représente, comment il est obtenu, à quelle date). Toute page est vérifiée à
@@ -141,6 +145,11 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
     ne traduit d'un poste à l'autre que les colonnes déclarées en `references()` ; un
     identifiant stocké en simple entier pointe vers une mauvaise ligne ailleurs. Le lien
     inverse se calcule à la lecture (devis → chantier : `service_jobs.quote_id`).
+21. **Rôles = un niveau par domaine.** On ne modifie jamais la matrice `PERMISSIONS` à
+    la main : on change `ROLE_LEVELS` (ou un niveau de `ACCESS_AREAS`) dans
+    `lib/permissions.ts`. Toute nouvelle `Action` doit entrer dans **exactement un**
+    niveau d'un domaine, sinon aucun écran ne permet de l'accorder. Un administrateur
+    ne se désactive jamais (`assertNotAdministrator`).
 
 ## Organisation
 

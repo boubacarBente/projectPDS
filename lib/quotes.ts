@@ -28,6 +28,7 @@ import { matchJobCategory, jobCategoryLabel } from '@/lib/job-categories';
 import { createServiceJob, prepareServiceLine, type JobItemInput, type ServiceJobRow } from '@/lib/jobs';
 import { syncRequestStatusFromQuote } from '@/lib/service-requests';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
+import { assertCustomerInStore } from '@/lib/customers';
 import { roundMoney, today } from '@/lib/format';
 
 export const QUOTE_STATUS_VALUES = ['draft', 'sent', 'accepted', 'refused', 'cancelled'] as const;
@@ -318,12 +319,11 @@ function addDays(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function assertCustomer(customerId: unknown): Promise<number> {
+/** Le client doit exister **et** appartenir au magasin du devis (README §28.5). */
+async function assertCustomer(customerId: unknown, storeId: number): Promise<number> {
   const id = Number(customerId);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError('Le client du devis est obligatoire.');
-  const row = await rawGet<{ id: number }>('SELECT id FROM customers WHERE id = ?', [id]);
-  if (!row) throw new ValidationError('Client introuvable');
-  return id;
+  return (await assertCustomerInStore(id, storeId)).id;
 }
 
 async function validCategory(value: unknown): Promise<string | null> {
@@ -363,7 +363,7 @@ async function writeItems(quoteId: number, items: JobItemInput[], storeId: numbe
 export async function createQuote(input: QuoteInput & { storeId: number; userId?: number | null }): Promise<QuoteRow> {
   return withTransaction(async () => {
     if (!input.storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
-    const customerId = await assertCustomer(input.customerId);
+    const customerId = await assertCustomer(input.customerId, input.storeId);
     const requestId = await validRequest(input.requestId, input.storeId);
     const date = cleanDate(input.date, 'Date du devis') ?? today();
     const validity = Number((await getSettings()).quoteValidityDays ?? 30) || 30;
@@ -424,7 +424,9 @@ export async function updateQuote(id: number, patch: Partial<QuoteInput>, storeI
       throw new ConflictError('Seul un devis en brouillon ou envoyé peut être modifié.');
     }
     const values: Record<string, unknown> = { updatedAt: new Date() };
-    if (patch.customerId !== undefined) values.customerId = await assertCustomer(patch.customerId);
+    if (patch.customerId !== undefined && Number(patch.customerId) !== current.customerId) {
+      values.customerId = await assertCustomer(patch.customerId, storeId);
+    }
     if (patch.date !== undefined) values.date = cleanDate(patch.date, 'Date du devis') ?? current.date;
     if (patch.validUntil !== undefined) values.validUntil = cleanDate(patch.validUntil, 'Validité');
     if (patch.category !== undefined) values.category = await validCategory(patch.category);

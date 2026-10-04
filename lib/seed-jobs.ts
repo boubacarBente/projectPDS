@@ -52,7 +52,8 @@ export type JobsSeedContext = {
   admin: UserRef;
   gerantKal: UserRef;
   gerantMat: UserRef;
-  customerIds: number[];
+  /** Clients de chaque magasin (README §28.5 : chaque magasin a les siens), même ordre partout. */
+  customersByStore: Record<number, number[]>;
   productIds: Map<string, number>;
 };
 
@@ -85,7 +86,11 @@ const CATALOG: Record<'KAL' | 'MAT' | 'SIEGE', { name: string; category: string;
 
 export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedReport> {
   const report: JobsSeedReport = { services: 0, requests: 0, quotes: 0, jobs: 0, subcontractors: 0 };
-  const { kaloum, matoto, hq, gerantKal, gerantMat, admin, customerIds, productIds } = ctx;
+  const { kaloum, matoto, hq, gerantKal, gerantMat, admin, productIds } = ctx;
+  const customersOf = (store: StoreRef) => ctx.customersByStore[store.id] ?? [];
+  const K = customersOf(kaloum);
+  const M = customersOf(matoto);
+  const H = customersOf(hq);
   const userIn = (user: UserRef, store: StoreRef) => ({ id: user.id, name: user.name, storeId: store.id });
   const audit = (user: UserRef, store: StoreRef, entity: string, entityId: number, action: 'create' | 'update' | 'validate' | 'cancel', details: Record<string, unknown>) =>
     writeAudit({ user: userIn(user, store), storeId: store.id, action, entity, entityId, details });
@@ -139,7 +144,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await rename('Alpha Condé', kaloum.id, 'Équipe façade');
   await rename('Aïssatou Barry', kaloum.id, 'Équipe finitions');
   await rename('Ousmane Sylla', kaloum.id, 'Équipe finitions');
-  // Kadiatou Soumah reste commune à tous les magasins.
+  await rename('Kadiatou Soumah', kaloum.id, null);
   for (const worker of [
     { name: 'Mamadou Bah', role: 'foreman' as const, dailyRate: 140_000, specialty: 'Chef de chantier gros œuvre' },
     { name: 'Fodé Camara', role: 'worker' as const, dailyRate: 80_000, specialty: 'Maçon' },
@@ -153,14 +158,14 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     address: 'Dixinn, Conakry',
     isSubcontractor: true,
     specialty: 'Électricien',
-  });
+  }, kaloum.id);
   const plomberie = await createSupplier({
     name: 'Plomberie Moderne Matoto',
     phone: '+224 669 12 12 12',
     address: 'Matoto, Conakry',
     isSubcontractor: true,
     specialty: 'Plombier',
-  });
+  }, matoto.id);
   report.subcontractors = 2;
 
   /* -------------------------------- Aides -------------------------------- */
@@ -229,18 +234,18 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   };
 
   // Kaloum — une demande à chaque étape.
-  await request(kaloum, gerantKal, customerIds[2], 'Repeindre le salon et les deux chambres, couleur claire.', [S('KAL', 'Peinture intérieure deux couches')], -1, 15, 'Matam, Conakry');
-  const rStudy = await request(kaloum, gerantKal, customerIds[4], 'Faux plafond dans le séjour avec spots encastrés.', [S('KAL', 'Faux plafond placo'), S('KAL', 'Installation électrique complète')], -6, 30, 'Ratoma, Conakry');
+  await request(kaloum, gerantKal, K[2], 'Repeindre le salon et les deux chambres, couleur claire.', [S('KAL', 'Peinture intérieure deux couches')], -1, 15, 'Matam, Conakry');
+  const rStudy = await request(kaloum, gerantKal, K[4], 'Faux plafond dans le séjour avec spots encastrés.', [S('KAL', 'Faux plafond placo'), S('KAL', 'Installation électrique complète')], -6, 30, 'Ratoma, Conakry');
   await setServiceRequestStatus(rStudy.id, 'study', kaloum.id);
-  const rVisit = await request(kaloum, gerantKal, customerIds[3], 'Carrelage terrasse et salle de bain, plomberie à refaire.', [S('KAL', 'Pose de carrelage'), S('KAL', 'Plomberie salle de bain')], -9, 20, 'Nongo, Conakry');
+  const rVisit = await request(kaloum, gerantKal, K[3], 'Carrelage terrasse et salle de bain, plomberie à refaire.', [S('KAL', 'Pose de carrelage'), S('KAL', 'Plomberie salle de bain')], -9, 20, 'Nongo, Conakry');
   await setServiceRequestStatus(rVisit.id, 'visit', kaloum.id);
-  const rRefused = await request(kaloum, gerantKal, customerIds[5], 'Habillage Alucobond de l’enseigne.', [S('KAL', 'Habillage de façade Alucobond')], -40, null, 'Taouyah, Conakry');
+  const rRefused = await request(kaloum, gerantKal, K[5], 'Habillage Alucobond de l’enseigne.', [S('KAL', 'Habillage de façade Alucobond')], -40, null, 'Taouyah, Conakry');
   await setServiceRequestStatus(rRefused.id, 'refused', kaloum.id, 'Budget du client insuffisant cette année');
 
   // Devis à préparer (brouillon) et devis envoyé, liés à une demande.
-  const rDraft = await request(kaloum, gerantKal, customerIds[0], 'Peinture des parties communes de la résidence.', [S('KAL', 'Peinture intérieure deux couches')], -4, 25, 'Kipé, Conakry');
+  const rDraft = await request(kaloum, gerantKal, K[0], 'Peinture des parties communes de la résidence.', [S('KAL', 'Peinture intérieure deux couches')], -4, 25, 'Kipé, Conakry');
   await quote(kaloum, gerantKal, {
-    customer: customerIds[0],
+    customer: K[0],
     requestId: rDraft.id,
     title: 'Peinture parties communes — bâtiment B',
     category: 'Peinture',
@@ -248,9 +253,9 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     dateOffset: -2,
     items: [{ serviceId: S('KAL', 'Peinture intérieure deux couches'), quantity: 640 }],
   });
-  const rSent = await request(kaloum, gerantKal, customerIds[1], 'Faux plafond de la salle de réception.', [S('KAL', 'Faux plafond placo')], -15, 20, 'Kaloum, Conakry');
+  const rSent = await request(kaloum, gerantKal, K[1], 'Faux plafond de la salle de réception.', [S('KAL', 'Faux plafond placo')], -15, 20, 'Kaloum, Conakry');
   const qSent = await quote(kaloum, gerantKal, {
-    customer: customerIds[1],
+    customer: K[1],
     requestId: rSent.id,
     title: 'Faux plafond — salle de réception',
     category: 'Placo / faux plafond',
@@ -265,7 +270,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
 
   // Devis expiré (envoyé il y a 50 jours, validité 30 jours), refusé, annulé.
   const qExpired = await quote(kaloum, gerantKal, {
-    customer: customerIds[2],
+    customer: K[2],
     title: 'Carrelage cuisine',
     category: 'Carrelage',
     site: 'Matam, Conakry',
@@ -274,7 +279,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   });
   await setQuoteStatus(qExpired.id, 'sent', kaloum.id);
   const qRefused = await quote(kaloum, gerantKal, {
-    customer: customerIds[5],
+    customer: K[5],
     requestId: undefined,
     title: 'Enseigne Alucobond',
     category: 'Alucobond / façade',
@@ -285,7 +290,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await setQuoteStatus(qRefused.id, 'sent', kaloum.id);
   await setQuoteStatus(qRefused.id, 'refused', kaloum.id);
   const qCancelled = await quote(kaloum, gerantKal, {
-    customer: customerIds[4],
+    customer: K[4],
     title: 'Plomberie — doublon',
     category: 'Plomberie',
     site: 'Ratoma, Conakry',
@@ -297,9 +302,9 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   /* ------------------------------ Chantiers ------------------------------ */
 
   // K1 — façade de l'hôtel : demande → devis accepté → chantier en cours, équipe, étapes, dépenses, acompte.
-  const rFacade = await request(kaloum, gerantKal, customerIds[1], 'Habillage complet de la façade nord de l’hôtel.', [S('KAL', 'Habillage de façade Alucobond')], -30, -15, 'Kaloum, Conakry');
+  const rFacade = await request(kaloum, gerantKal, K[1], 'Habillage complet de la façade nord de l’hôtel.', [S('KAL', 'Habillage de façade Alucobond')], -30, -15, 'Kaloum, Conakry');
   const qFacade = await quote(kaloum, gerantKal, {
-    customer: customerIds[1],
+    customer: K[1],
     requestId: rFacade.id,
     title: 'Habillage façade Alucobond — aile nord',
     category: 'Alucobond / façade',
@@ -337,7 +342,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const k2 = await createServiceJob({
     storeId: kaloum.id,
     userId: gerantKal.id,
-    customerId: customerIds[3],
+    customerId: K[3],
     category: 'Construction complète',
     title: 'Second œuvre villa — électricité et plomberie',
     siteAddress: 'Villa Nongo, Conakry',
@@ -368,7 +373,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const k3 = await createServiceJob({
     storeId: kaloum.id,
     userId: gerantKal.id,
-    customerId: customerIds[4],
+    customerId: K[4],
     category: 'Placo / faux plafond',
     title: 'Faux plafond séjour et couloir',
     siteAddress: 'Ratoma, Conakry',
@@ -383,7 +388,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const k4 = await createServiceJob({
     storeId: kaloum.id,
     userId: gerantKal.id,
-    customerId: customerIds[2],
+    customerId: K[2],
     category: 'Peinture',
     title: 'Peinture extérieure — en attente du client',
     siteAddress: 'Matam, Conakry',
@@ -399,7 +404,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const k5 = await createServiceJob({
     storeId: kaloum.id,
     userId: gerantKal.id,
-    customerId: customerIds[0],
+    customerId: K[0],
     category: 'Carrelage',
     title: 'Carrelage hall d’entrée',
     siteAddress: 'Kipé, Conakry',
@@ -427,7 +432,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     const job = await createServiceJob({
       storeId: store.id,
       userId: user.id,
-      customerId: customerIds[customerIndex],
+      customerId: customersOf(store)[customerIndex],
       category,
       title,
       siteAddress: 'Conakry',
@@ -455,7 +460,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const m1 = await createServiceJob({
     storeId: matoto.id,
     userId: gerantMat.id,
-    customerId: customerIds[3],
+    customerId: M[3],
     category: 'Gros œuvre / maçonnerie',
     title: 'Extension — élévation et carrelage',
     siteAddress: 'Matoto, Conakry',
@@ -481,9 +486,9 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await pay(matoto, gerantMat, m1.id, 0.3, d(-10));
   await jobAudit(gerantMat, matoto, m1.id, {});
 
-  const rMat = await request(matoto, gerantMat, customerIds[2], 'Installer des points lumineux dans toute la maison.', [S('MAT', 'Point lumineux')], -8, 10, 'Matoto, Conakry');
+  const rMat = await request(matoto, gerantMat, M[2], 'Installer des points lumineux dans toute la maison.', [S('MAT', 'Point lumineux')], -8, 10, 'Matoto, Conakry');
   const qMat = await quote(matoto, gerantMat, {
-    customer: customerIds[2],
+    customer: M[2],
     requestId: rMat.id,
     title: 'Éclairage maison',
     category: 'Électricité',
@@ -498,7 +503,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await jobAudit(gerantMat, matoto, m2.id, { fromQuote: qMat.reference });
   // Un devis accepté pas encore converti, à Matoto.
   const qWaiting = await quote(matoto, gerantMat, {
-    customer: customerIds[5],
+    customer: M[5],
     title: 'Carrelage bureaux',
     category: 'Carrelage',
     site: 'Taouyah, Conakry',
@@ -506,13 +511,13 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     items: [{ serviceId: S('MAT', 'Pose de carrelage'), quantity: 110 }],
   });
   await setQuoteStatus(qWaiting.id, 'accepted', matoto.id);
-  await request(matoto, gerantMat, customerIds[0], 'Terrassement pour une piscine.', [S('MAT', 'Terrassement et fouilles')], -2, 40, 'Kipé, Conakry');
+  await request(matoto, gerantMat, M[0], 'Terrassement pour une piscine.', [S('MAT', 'Terrassement et fouilles')], -2, 40, 'Kipé, Conakry');
 
   // Siège — une cuisine sur mesure terminée.
   const s1 = await createServiceJob({
     storeId: hq.id,
     userId: admin.id,
-    customerId: customerIds[1],
+    customerId: H[1],
     category: 'Menuiserie / meubles',
     title: 'Cuisine sur mesure — restaurant de l’hôtel',
     siteAddress: 'Kaloum, Conakry',

@@ -9,13 +9,12 @@ import {
   toNumber,
   NotFoundError,
   scopeFromRequest,
-  requireCentralEdit,
   ValidationError,
 } from '@/lib/api';
 import { canEditCentralData } from '@/lib/device';
 import { getSettings } from '@/lib/settings';
 import { assertStoreWritable } from '@/lib/stores';
-import { deactivateProduct, getProduct, reactivateProduct, updateProduct } from '@/lib/products';
+import { CatalogEditError, canEditProductCatalog, deactivateProduct, getProduct, reactivateProduct, updateProduct } from '@/lib/products';
 import { writeAudit } from '@/lib/audit';
 
 type Params = { params: Promise<{ id: string }> };
@@ -26,10 +25,15 @@ export async function GET(request: NextRequest, { params }: Params) {
     const user = await requireAction('products.view');
     const { id } = await params;
 
-    const product = await getProduct(parseId(id), scopeFromRequest(user, request));
+    const productId = parseId(id);
+    const product = await getProduct(productId, scopeFromRequest(user, request));
     if (!product) throw new NotFoundError('Produit introuvable');
 
-    return ok(product);
+    const canEditCatalog = await canEditProductCatalog(productId, {
+      central: await canEditCentralData(),
+      storeId: user.storeId,
+    });
+    return ok({ ...product, canEditCatalog });
   } catch (error) {
     return fail(error);
   }
@@ -81,8 +85,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const product = await updateProduct(productId, patch as any, {
       userId: user.id,
       storeId: user.storeId,
-      // Sur un poste de magasin, les champs du catalogue commun sont verrouillés.
-      centralEdit: await canEditCentralData(),
+      // Fiche commune : siège, ou magasin créateur seul à proposer le produit.
+      canEditCatalog: await canEditProductCatalog(productId, {
+        central: await canEditCentralData(),
+        storeId: user.storeId,
+      }),
     });
 
     await writeAudit({
@@ -108,9 +115,20 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('products.delete');
-    await requireCentralEdit();
     const { id } = await params;
     const productId = parseId(id);
+    // Désactiver retire le produit de **tout** le réseau : même règle que la
+    // modification de la fiche. Pour ne plus le vendre dans un seul magasin,
+    // on le retire de l'assortiment (`/api/produits/[id]/assortiment`).
+    const allowed = await canEditProductCatalog(productId, {
+      central: await canEditCentralData(),
+      storeId: user.storeId,
+    });
+    if (!allowed) {
+      throw new CatalogEditError(
+        'Ce produit est aussi proposé par d’autres magasins : retirez-le de votre magasin au lieu de le désactiver, ou demandez au siège.',
+      );
+    }
 
     const reactivate = request.nextUrl.searchParams.get('reactivate') === 'true';
 

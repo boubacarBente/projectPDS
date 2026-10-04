@@ -7,6 +7,7 @@ import {
   required,
   toBool,
   requireAction,
+  requireActiveStore,
   scopeFromRequest,
 } from '@/lib/api';
 import { createSupplier, listSuppliers } from '@/lib/suppliers';
@@ -44,6 +45,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('suppliers.create');
+    // Le fournisseur appartient au magasin actif de la session (README §28.5).
+    const storeId = await requireActiveStore(user);
     const body = await readJson<any>(request);
 
     const supplier = await createSupplier({
@@ -54,7 +57,7 @@ export async function POST(request: NextRequest) {
       isActive: toBool(body.isActive, true),
       isSubcontractor: toBool(body.isSubcontractor, false),
       specialty: body.specialty ?? null,
-    });
+    }, storeId);
 
     await writeAudit({
       user,

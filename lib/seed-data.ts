@@ -257,18 +257,30 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     productIds.set(product.name, created.id);
     report.products += 1;
   }
-  const customerIds: number[] = [];
-  for (const customer of CUSTOMERS) {
-    customerIds.push((await createCustomer(customer)).id);
-    report.customers += 1;
-  }
-  const supplierIds: number[] = [];
-  for (const supplier of SUPPLIERS) {
-    supplierIds.push((await createSupplier(supplier)).id);
-    report.suppliers += 1;
+  /*
+   * Chaque magasin a ses propres clients et fournisseurs (README §28.5) : la
+   * démonstration crée la même liste dans chaque magasin (même ordre, donc
+   * mêmes indices), ce qui montre aussi qu'un client des deux magasins a deux
+   * fiches.
+   */
+  const customersByStore: Record<number, number[]> = {};
+  const suppliersByStore: Record<number, number[]> = {};
+  for (const store of [hq, kaloum, matoto]) {
+    customersByStore[store.id] = [];
+    for (const customer of CUSTOMERS) {
+      customersByStore[store.id].push((await createCustomer(customer, store.id)).id);
+      report.customers += 1;
+    }
+    suppliersByStore[store.id] = [];
+    for (const supplier of SUPPLIERS) {
+      suppliersByStore[store.id].push((await createSupplier(supplier, store.id)).id);
+      report.suppliers += 1;
+    }
   }
   for (const worker of WORKERS) {
-    await createWorker(worker);
+    // Chaque magasin a ses ouvriers : ceux de la liste démarrent au siège
+    // (lib/seed-jobs.ts en déplace une partie vers Kaloum).
+    await createWorker({ ...worker, storeId: hq.id });
     report.workers += 1;
   }
 
@@ -294,6 +306,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     [matoto, 0.6],
   ];
   for (const [store, share] of shares) {
+    const supplierIds = suppliersByStore[store.id];
     for (const [index, supplierId] of supplierIds.entries()) {
       const lines = PRODUCTS.filter((_, i) => i % supplierIds.length === index).map((product) => ({
         productId: productIds.get(product.name)!,
@@ -342,7 +355,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
         const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
         await createPurchaseInvoice({
           storeId: store.id,
-          supplierId: pick(supplierIds),
+          supplierId: pick(suppliersByStore[store.id]),
           date,
           paymentMethod: random() < 0.5 ? 'Virement' : 'Espèces',
           amountPaid: random() < 0.7 ? total : Math.round(total * 0.5),
@@ -379,7 +392,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
         if (lines.length === 0) continue;
         const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
         const mode = random();
-        const customerId = mode < 0.5 ? null : pick(customerIds);
+        const customerId = mode < 0.5 ? null : pick(customersByStore[store.id]);
         const amountPaid = customerId === null || mode < 0.75 ? total : mode < 0.9 ? Math.round(total * 0.5) : 0;
         try {
           await createSalesInvoice({
@@ -548,7 +561,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     admin: adminRef,
     gerantKal: { id: gerantKal, name: 'Mariama Bangoura' },
     gerantMat: { id: gerantMat, name: 'Thierno Diallo' },
-    customerIds,
+    customersByStore,
     productIds,
   });
   report.serviceJobs += jobsReport.jobs;
@@ -608,7 +621,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     const product = PRODUCTS[6];
     await createSalesInvoice({
       storeId: store.id,
-      customerId: customerIds[2],
+      customerId: customersByStore[store.id][2],
       date: today(),
       status: 'draft',
       paymentMethod: 'Espèces',

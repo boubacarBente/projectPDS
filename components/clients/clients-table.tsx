@@ -19,17 +19,21 @@ import { Badge, MoneyText } from '@/components/design-system';
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
 import type { CustomerRecord } from '@/components/clients/clients-modals';
+import { StoreTag } from '@/components/store-scope';
 
 export function customerExceedsCreditLimit(customer: CustomerRecord): boolean {
   return customer.creditLimit > 0 && customer.balance > customer.creditLimit;
 }
 
-function CustomerNameCell({ customer }: { customer: CustomerRecord }) {
+function CustomerNameCell({ customer, showStore }: { customer: CustomerRecord; showStore: boolean }) {
   return (
-    <span className="flex min-w-0 flex-wrap items-center gap-2">
-      <span className="truncate font-semibold">{customer.name}</span>
-      {!customer.isActive && <Badge tone="neutral">Inactif</Badge>}
-      {customerExceedsCreditLimit(customer) && <Badge tone="warning">Plafond dépassé</Badge>}
+    <span className="block min-w-0">
+      <span className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="truncate font-semibold">{customer.name}</span>
+        {!customer.isActive && <Badge tone="neutral">Inactif</Badge>}
+        {customerExceedsCreditLimit(customer) && <Badge tone="warning">Plafond dépassé</Badge>}
+      </span>
+      <StoreTag name={customer.storeName} show={showStore} />
     </span>
   );
 }
@@ -45,6 +49,7 @@ export function ClientsTable({
   canPay,
   isLoading,
   emptyState,
+  showStore = false,
 }: {
   data: CustomerRecord[];
   onOpenDetail: (customer: CustomerRecord) => void;
@@ -57,6 +62,8 @@ export function ClientsTable({
   /** Le squelette est rendu par la page ; ce drapeau évite un état vide trompeur. */
   isLoading: boolean;
   emptyState: ReactNode;
+  /** Vue multi-magasins : magasin propriétaire sous le nom (règle `StoreTag`). */
+  showStore?: boolean;
 }) {
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
@@ -65,7 +72,7 @@ export function ClientsTable({
       key: 'name',
       label: 'Nom',
       primary: true,
-      render: (customer: CustomerRecord) => <CustomerNameCell customer={customer} />,
+      render: (customer: CustomerRecord) => <CustomerNameCell customer={customer} showStore={showStore} />,
     },
     {
       key: 'phone',

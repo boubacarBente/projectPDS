@@ -111,7 +111,7 @@ export default function ClientsPage() {
    * Le référentiel client est commun à tous les magasins ; la portée change les
    * soldes et le chiffre d'affaires affichés (ventes du ou des magasins choisis).
    */
-  const { scope, setScope, apply } = useStoreScope('clients');
+  const { scope, setScope, apply, isConsolidated } = useStoreScope('clients');
   const canUpdate = usePermission('customers.update');
   const canDelete = usePermission('customers.delete');
   const canPay = usePermission('payments.create');
@@ -615,6 +615,7 @@ export default function ClientsPage() {
       ) : (
         <ClientsTable
           data={visibleCustomers}
+          showStore={isConsolidated}
           isLoading={isLoading}
           canUpdate={canUpdate}
           canDelete={canDelete}

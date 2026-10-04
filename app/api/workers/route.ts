@@ -6,6 +6,7 @@ import {
   readJson,
   required,
   requireAction,
+  requireActiveStore,
   requireUser,
   scopeFromRequest,
   toBool,
@@ -54,10 +55,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** POST /api/workers — création d'un ouvrier (table unique partagée). */
+/** POST /api/workers — création d'un ouvrier, toujours dans le magasin actif (README §28.5). */
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('workers.manage');
+    const storeId = await requireActiveStore(user);
     const body = await readJson<any>(request);
 
     const worker = await createWorker({
@@ -68,8 +70,8 @@ export async function POST(request: NextRequest) {
       dailyRate: toNumber(body.dailyRate, 0),
       isActive: toBool(body.isActive, true),
       team: body.team ?? null,
-      // Rattaché au magasin actif ; « commun » réservé à qui voit tous les magasins.
-      storeId: body.shared === true && user.allStores ? null : user.storeId,
+      // Chaque magasin a ses propres ouvriers : plus d'ouvrier « commun ».
+      storeId,
     });
 
     await writeAudit({

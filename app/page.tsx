@@ -524,7 +524,7 @@ function DashboardHeader({
 
 export default function DashboardPage() {
   const { settings } = useSettings();
-  const [period, setPeriod] = useState<PeriodKey>('month');
+  const [period, setPeriod] = useState<PeriodKey>('total');
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

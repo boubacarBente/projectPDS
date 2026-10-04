@@ -85,7 +85,7 @@ type StatusChange = { status: StoreStatus; title: string; confirm: string; needs
 export default function MagasinFichePage() {
   const params = useParams<{ id: string }>();
   const storeId = Number(params.id);
-  const { device, stores: myStores, activeStoreId, switchStore } = useAuth();
+  const { device, stores: myStores, activeStoreId, switchStore, canSwitchStore } = useAuth();
   const canManage = usePermission('stores.manage');
   const canAudit = usePermission('audit.view');
   const canEdit = canManage && device?.mode !== 'store';
@@ -295,7 +295,7 @@ export default function MagasinFichePage() {
         <StoreKindBadge kind={store.kind} />
         <StoreStatusBadge status={store.status} />
         {isActive && <Badge tone="primary">Magasin actif de votre session</Badge>}
-        {isMine && !isActive && store.status === 'active' && (
+        {canSwitchStore && isMine && !isActive && store.status === 'active' && (
           <button
             type="button"
             className="btn btn-sm btn-outline min-h-11 sm:min-h-0"

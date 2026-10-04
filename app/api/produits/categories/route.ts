@@ -7,7 +7,7 @@ import {
   readJson,
   required,
   requireAction,
-  requireCentralEdit,
+  scopeFromRequest,
   toBool,
 } from '@/lib/api';
 import { createCategory, listCategories } from '@/lib/products';
@@ -24,7 +24,7 @@ import { parseListSort } from '@/lib/list-sort';
  */
 export async function GET(request: NextRequest) {
   try {
-    await requireAction('products.view');
+    const user = await requireAction('products.view');
 
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
@@ -32,6 +32,8 @@ export async function GET(request: NextRequest) {
     const all = await listCategories({
       includeInactive: toBool(params.get('includeInactive'), false),
       sort: parseListSort(params.get('sort'), ['recent', 'name']),
+      // `storeProductCount` : produits de chaque catégorie dans la portée demandée.
+      scope: scopeFromRequest(user, request),
     });
 
     const start = (page - 1) * limit;
@@ -47,11 +49,15 @@ export async function GET(request: NextRequest) {
  * POST /api/produits/categories — création.
  * Le **type** (`finished` | `raw_material` | `service`) appartient à la
  * catégorie, pas au produit : c'est le seul endroit à paramétrer.
+ *
+ * Liste **commune** à tout le réseau, mais un magasin peut y ajouter la
+ * catégorie qui lui manque (README §28.5) : il crée bien ses produits, il ne
+ * doit pas attendre le siège pour les ranger. Le nom reste unique. Modifier ou
+ * désactiver une catégorie (qui touche tous les magasins) reste au siège.
  */
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('products.create');
-    await requireCentralEdit();
     const body = await readJson<any>(request);
 
     const category = await createCategory({

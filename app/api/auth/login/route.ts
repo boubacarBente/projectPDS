@@ -4,7 +4,7 @@ import { getUserByUsername, touchLastLogin, upgradePasswordHashIfLegacy, verifyP
 import { writeAudit } from '@/lib/audit';
 import { createSessionResponse } from '@/lib/session';
 import { getEffectivePermissions } from '@/lib/user-permissions';
-import { getAccessibleStoreIds, listStores } from '@/lib/stores';
+import { getAccessibleStoreIds, getHomeStoreId, listStores } from '@/lib/stores';
 import type { Role } from '@/lib/permissions';
 
 /**
@@ -120,12 +120,18 @@ export async function POST(request: NextRequest) {
       entityId: user.id,
     });
 
+    // Sans `stores.switch`, pas de choix : le compte ouvre sa session dans son
+    // magasin principal (README §28.6).
+    const canSwitch = role === 'admin' || permissions.includes('stores.switch');
+    const startStoreId = canSwitch ? (ids[0] ?? null) : await getHomeStoreId(user.id, ids);
+
     return await createSessionResponse(sessionUser, 200, {
-      storeId: ids[0] ?? null,
+      storeId: startStoreId,
       extra: {
         stores: stores.map((s) => ({ id: s.id, code: s.code, name: s.name, kind: s.kind, status: s.status })),
-        // Plusieurs magasins : l'écran de connexion propose le choix du contexte (§5).
-        needsStoreChoice: ids.length > 1,
+        // Plusieurs magasins et le droit d'en changer : l'écran de connexion
+        // propose le choix du contexte (§5).
+        needsStoreChoice: canSwitch && ids.length > 1,
       },
     });
   } catch (error: any) {

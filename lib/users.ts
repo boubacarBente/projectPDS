@@ -38,7 +38,7 @@ import { DEFAULT_LIST_SORT, compareByListSort, type ListSort } from '@/lib/list-
  * Longueur minimale du mot de passe.
  *
  * La constante vit dans `lib/constants.ts`, un module **sans dépendance
- * serveur** : `components/utilisateurs/utilisateurs-modals.tsx` est un composant
+ * serveur** : `components/utilisateurs/user-wizard.tsx` est un composant
  * client et doit pouvoir valider la longueur sans importer ce fichier (qui
  * entraînerait `@libsql/client` et `fs` dans le bundle navigateur).
  */
@@ -335,6 +335,21 @@ async function assertNotLastActiveAdmin(
   );
 }
 
+/**
+ * **Un administrateur ne se désactive jamais** (demande client, 4 octobre
+ * 2026). Avant, seul le *dernier* administrateur actif était protégé : un
+ * administrateur pouvait en désactiver un autre, ou se désactiver lui-même
+ * s'il en restait un. Pour retirer l'accès à un administrateur, on change
+ * d'abord son rôle — ce qui reste soumis à la règle du dernier administrateur.
+ */
+function assertNotAdministrator(target: { name: string; role: string }): void {
+  if (target.role !== 'admin') return;
+  throw new ConflictError(
+    `« ${target.name} » est administrateur : un administrateur ne peut pas être désactivé. ` +
+      'Pour lui retirer l’accès, changez d’abord son rôle (il doit rester au moins un autre administrateur).',
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Écritures
  * ------------------------------------------------------------------ */
@@ -434,6 +449,9 @@ export async function updateUser(id: number, patch: UserPatch): Promise<UserRow>
 
   if (patch.isActive !== undefined && patch.isActive !== existing.isActive) {
     if (!patch.isActive) {
+      // Rôle visé après ce même enregistrement : désactiver en retirant le rôle
+      // d'un seul coup ne contourne pas la règle.
+      assertNotAdministrator({ name: existing.name, role: String(values.role ?? existing.role) });
       await assertNotLastActiveAdmin(id, existing, 'deactivate');
       values.isActive = false;
       values.deletedAt = new Date();
@@ -502,6 +520,7 @@ export async function deactivateUser(id: number): Promise<void> {
   const existing = await getUser(id);
   if (!existing) throw new NotFoundError('Utilisateur introuvable');
 
+  assertNotAdministrator(existing);
   await assertNotLastActiveAdmin(id, existing, 'deactivate');
 
   await deactivateUserFromAuth(id);

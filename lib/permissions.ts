@@ -6,13 +6,14 @@
  * chaque Route Handler.
  */
 
-export type Role = 'admin' | 'manager' | 'seller' | 'storekeeper';
+export type Role = 'admin' | 'manager' | 'seller' | 'storekeeper' | 'accountant';
 
 export const ROLES: Role[] = [
   'admin',
   'manager',
   'seller',
   'storekeeper',
+  'accountant',
 ];
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -20,6 +21,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   manager: 'Gérant de magasin',
   seller: 'Vendeur / Caissier',
   storekeeper: 'Magasinier',
+  accountant: 'Comptable',
 };
 
 export const ROLE_LABELS_PLURAL: Record<Role, string> = {
@@ -27,6 +29,7 @@ export const ROLE_LABELS_PLURAL: Record<Role, string> = {
   manager: 'Gérants de magasin',
   seller: 'Vendeurs / Caissiers',
   storekeeper: 'Magasiniers',
+  accountant: 'Comptables',
 };
 
 export type Action =
@@ -86,6 +89,7 @@ export type Action =
   | 'stores.view'
   | 'stores.manage'
   | 'stores.viewAll'
+  | 'stores.switch'
   | 'transfers.view'
   | 'transfers.create'
   | 'transfers.approve'
@@ -103,178 +107,341 @@ export type Action =
   | 'backup.manage'
   | 'sync.manage';
 
-/**
- * Matrice des permissions (README §17.2).
- * Toute action absente d'un rôle est refusée.
+/* ------------------------------------------------------------------ *
+ * Domaines d'accès et niveaux (refonte du 4 octobre 2026, README §17.2)
+ * ------------------------------------------------------------------ *
+ *
+ * Avant : chaque rôle était une liste de ~60 permissions techniques, et
+ * personnaliser un compte voulait dire cocher des actions une par une. Un
+ * administrateur non technicien ne savait pas ce qu'il accordait.
+ *
+ * Désormais, un rôle — et la personnalisation d'un compte — se décrit par
+ * **domaine** (Ventes, Caisse, Stock…) avec un **niveau** cumulatif en mots
+ * simples : Aucun accès → Consulter → Saisir → Gérer. Chaque niveau inclut
+ * le précédent. Les permissions techniques (\`Action\`) restent la seule chose
+ * que le serveur vérifie : les niveaux ne font que les regrouper.
  */
-const PERMISSIONS: Record<Role, Action[]> = {
-  admin: [
-    'dashboard.view',
-    'reports.view',
-    'reports.viewAll',
-    'balances.view',
-    'sales.view',
-    'sales.create',
-    'sales.update',
-    'sales.cancel',
-    'sales.delete',
-    'customers.view',
-    'customers.create',
-    'customers.update',
-    'customers.delete',
-    'suppliers.view',
-    'suppliers.create',
-    'suppliers.update',
-    'suppliers.delete',
-    'products.view',
-    'products.create',
-    'products.update',
-    'products.delete',
-    'purchases.view',
-    'purchases.create',
-    'purchases.update',
-    'purchases.delete',
-    'stock.view',
-    'stock.adjust',
-    'cash.view',
-    'cash.open',
-    'cash.close',
-    'cash.manual',
-    'expenses.view',
-    'expenses.create',
-    'expenses.update',
-    'expenses.delete',
-    'expenses.approve',
-    'payments.view',
-    'payments.create',
-    'workers.manage',
-    'jobs.view',
-    'jobs.create',
-    'jobs.update',
-    'jobs.delete',
-    'services.manage',
-    'users.manage',
-    'audit.view',
-    'settings.view',
-    'settings.update',
-    'settings.critical',
-    'backup.manage',
-    'sync.manage',
-    'stores.view',
-    'stores.manage',
-    'stores.viewAll',
-    'transfers.view',
-    'transfers.create',
-    'transfers.approve',
-    'transfers.ship',
-    'transfers.receive',
-    'inventory.view',
-    'inventory.manage',
-    'inventory.validate',
-  ],
-  manager: [
-    'dashboard.view',
-    'reports.view',
-    'reports.viewAll',
-    'balances.view',
-    'sales.view',
-    'sales.create',
-    'sales.update',
-    'sales.cancel',
-    'customers.view',
-    'customers.create',
-    'customers.update',
-    'suppliers.view',
-    'suppliers.create',
-    'suppliers.update',
-    'products.view',
-    'products.create',
-    'products.update',
-    'purchases.view',
-    'purchases.create',
-    'purchases.update',
-    'stock.view',
-    'stock.adjust',
-    'cash.view',
-    'cash.open',
-    'cash.close',
-    'cash.manual',
-    'expenses.view',
-    'expenses.create',
-    'expenses.update',
-    'expenses.delete',
-    'expenses.approve',
-    'payments.view',
-    'payments.create',
-    'workers.manage',
-    'jobs.view',
-    'jobs.create',
-    'jobs.update',
-    'services.manage',
-    'audit.view',
-    'settings.view',
-    'settings.update',
-    'stores.view',
-    'transfers.view',
-    'transfers.create',
-    'transfers.approve',
-    'transfers.ship',
-    'transfers.receive',
-    'inventory.view',
-    'inventory.manage',
-    'inventory.validate',
-    'users.manage',
-  ],
-  seller: [
-    'dashboard.view',
-    'reports.view',
-    'balances.view',
-    'sales.view',
-    'sales.create',
-    'sales.update',
-    'customers.view',
-    'customers.create',
-    'suppliers.view',
-    'suppliers.create',
-    'products.view',
-    'stock.view',
-    'cash.view',
-    'cash.open',
-    'cash.close',
-    'cash.manual',
-    'expenses.view',
-    'expenses.create',
-    'payments.view',
-    'payments.create',
-    'jobs.view',
-    'settings.view',
-    'stores.view',
-  ],
-  storekeeper: [
-    'dashboard.view',
-    'sales.view',
-    'customers.view',
-    'suppliers.view',
-    'products.view',
-    'products.create',
-    'products.update',
-    'purchases.view',
-    'purchases.create',
-    'purchases.update',
-    'stock.view',
-    'stock.adjust',
-    'workers.manage',
-    'jobs.view',
-    'settings.view',
-    'stores.view',
-    'transfers.view',
-    'transfers.create',
-    'transfers.ship',
-    'transfers.receive',
-    'inventory.view',
-    'inventory.manage',
-  ],
+
+export type AccessLevel = 'none' | 'view' | 'edit' | 'manage';
+
+export type AccessAreaLevel = {
+  level: Exclude<AccessLevel, 'none'>;
+  /** Ce que la personne peut faire à ce niveau, en mots simples. */
+  label: string;
+  /** Actions **ajoutées** par ce niveau (les niveaux sont cumulatifs). */
+  actions: Action[];
 };
+
+export type AccessArea = {
+  id: string;
+  label: string;
+  /** Une phrase : à quoi sert ce domaine. */
+  description: string;
+  levels: AccessAreaLevel[];
+};
+
+export const ACCESS_AREAS: AccessArea[] = [
+  {
+    id: 'pilotage',
+    label: 'Tableau de bord et rapports',
+    description: 'Les chiffres du magasin : ventes du jour, rapports, soldes et bénéfices.',
+    levels: [
+      { level: 'view', label: 'Tableau de bord et rapport du jour', actions: ['dashboard.view', 'reports.view'] },
+      { level: 'manage', label: 'Tous les rapports, soldes et bénéfices', actions: ['reports.viewAll', 'balances.view'] },
+    ],
+  },
+  {
+    id: 'ventes',
+    label: 'Ventes et encaissements',
+    description: 'Factures de vente, brouillons et paiements des clients.',
+    levels: [
+      { level: 'view', label: 'Consulter les ventes et les reçus', actions: ['sales.view', 'payments.view'] },
+      { level: 'edit', label: 'Vendre et encaisser', actions: ['sales.create', 'sales.update', 'sales.delete', 'payments.create'] },
+      { level: 'manage', label: 'Annuler une vente validée', actions: ['sales.cancel'] },
+    ],
+  },
+  {
+    id: 'clients',
+    label: 'Clients',
+    description: 'Fiches clients du magasin, historique et soldes.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['customers.view'] },
+      { level: 'edit', label: 'Créer et modifier', actions: ['customers.create', 'customers.update'] },
+      { level: 'manage', label: 'Désactiver un client', actions: ['customers.delete'] },
+    ],
+  },
+  {
+    id: 'fournisseurs',
+    label: 'Fournisseurs',
+    description: 'Fiches fournisseurs et sous-traitants du magasin, dettes.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['suppliers.view'] },
+      { level: 'edit', label: 'Créer et modifier', actions: ['suppliers.create', 'suppliers.update'] },
+      { level: 'manage', label: 'Désactiver un fournisseur', actions: ['suppliers.delete'] },
+    ],
+  },
+  {
+    id: 'produits',
+    label: 'Produits et catégories',
+    description: 'Produits du magasin, prix, catégories.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['products.view'] },
+      { level: 'edit', label: 'Prix et seuils du magasin, ajouter du catalogue', actions: ['products.update'] },
+      { level: 'manage', label: 'Créer et désactiver des produits et catégories', actions: ['products.create', 'products.delete'] },
+    ],
+  },
+  {
+    id: 'achats',
+    label: 'Achats',
+    description: 'Factures d’achat chez les fournisseurs (entrées de stock).',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['purchases.view'] },
+      { level: 'edit', label: 'Enregistrer et corriger un achat', actions: ['purchases.create', 'purchases.update'] },
+      { level: 'manage', label: 'Annuler un achat', actions: ['purchases.delete'] },
+    ],
+  },
+  {
+    id: 'stock',
+    label: 'Stock',
+    description: 'Quantités en stock et journal des mouvements.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['stock.view'] },
+      { level: 'manage', label: 'Corriger le stock', actions: ['stock.adjust'] },
+    ],
+  },
+  {
+    id: 'caisse',
+    label: 'Caisse',
+    description: 'Ouverture, clôture et mouvements de la caisse du magasin.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['cash.view'] },
+      { level: 'edit', label: 'Ouvrir et clôturer la caisse', actions: ['cash.open', 'cash.close'] },
+      { level: 'manage', label: 'Entrées et sorties d’argent manuelles', actions: ['cash.manual'] },
+    ],
+  },
+  {
+    id: 'depenses',
+    label: 'Dépenses',
+    description: 'Frais du magasin (loyer, transport…) et leur approbation.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['expenses.view'] },
+      { level: 'edit', label: 'Saisir une dépense', actions: ['expenses.create'] },
+      { level: 'manage', label: 'Approuver, modifier et annuler', actions: ['expenses.update', 'expenses.delete', 'expenses.approve'] },
+    ],
+  },
+  {
+    id: 'chantiers',
+    label: 'Chantiers',
+    description: 'Demandes, devis, chantiers, prestations et ouvriers.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['jobs.view'] },
+      { level: 'edit', label: 'Demandes, devis et chantiers', actions: ['jobs.create', 'jobs.update'] },
+      { level: 'manage', label: 'Prestations, ouvriers et annulations', actions: ['jobs.delete', 'services.manage', 'workers.manage'] },
+    ],
+  },
+  {
+    id: 'transferts',
+    label: 'Transferts entre magasins',
+    description: 'Envoyer et recevoir de la marchandise d’un magasin à l’autre.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['transfers.view'] },
+      { level: 'edit', label: 'Demander, expédier et réceptionner', actions: ['transfers.create', 'transfers.ship', 'transfers.receive'] },
+      { level: 'manage', label: 'Valider les transferts', actions: ['transfers.approve'] },
+    ],
+  },
+  {
+    id: 'inventaires',
+    label: 'Inventaires',
+    description: 'Comptage physique du stock et correction des écarts.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['inventory.view'] },
+      { level: 'edit', label: 'Ouvrir un inventaire et compter', actions: ['inventory.manage'] },
+      { level: 'manage', label: 'Valider (appliquer les écarts)', actions: ['inventory.validate'] },
+    ],
+  },
+  {
+    id: 'magasins',
+    label: 'Magasins',
+    description: 'Fiches des magasins et passage d’un magasin à l’autre.',
+    levels: [
+      { level: 'view', label: 'Voir ses magasins', actions: ['stores.view'] },
+      { level: 'edit', label: 'Changer de magasin actif', actions: ['stores.switch'] },
+      { level: 'manage', label: 'Voir et gérer tous les magasins', actions: ['stores.viewAll', 'stores.manage'] },
+    ],
+  },
+  {
+    id: 'comptes',
+    label: 'Comptes et historique',
+    description: 'Comptes utilisateurs et journal des actions.',
+    levels: [
+      { level: 'view', label: 'Consulter l’historique des actions', actions: ['audit.view'] },
+      { level: 'manage', label: 'Gérer les comptes de ses magasins', actions: ['users.manage'] },
+    ],
+  },
+  {
+    id: 'parametres',
+    label: 'Paramètres',
+    description: 'Réglages de l’entreprise, sauvegarde et synchronisation.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['settings.view'] },
+      { level: 'edit', label: 'Modifier les paramètres', actions: ['settings.update'] },
+      { level: 'manage', label: 'Sauvegarde, synchronisation, remise à zéro', actions: ['settings.critical', 'backup.manage', 'sync.manage'] },
+    ],
+  },
+];
+
+export const ACCESS_LEVEL_LABELS: Record<AccessLevel, string> = {
+  none: 'Aucun accès',
+  view: 'Consulter',
+  edit: 'Saisir',
+  manage: 'Gérer',
+};
+
+const LEVEL_ORDER: AccessLevel[] = ['none', 'view', 'edit', 'manage'];
+
+/** Niveaux proposés pour un domaine (« Aucun accès » compris). */
+export function areaLevels(area: AccessArea): AccessLevel[] {
+  return ['none', ...area.levels.map((l) => l.level)];
+}
+
+/** Actions accordées par un niveau d'un domaine (niveaux cumulatifs). */
+export function actionsForAreaLevel(area: AccessArea, level: AccessLevel): Action[] {
+  const rank = LEVEL_ORDER.indexOf(level);
+  return area.levels.filter((l) => LEVEL_ORDER.indexOf(l.level) <= rank).flatMap((l) => l.actions);
+}
+
+/**
+ * Niveau correspondant exactement à un ensemble d'actions, ou \`custom\` si
+ * l'ensemble ne tombe sur aucun niveau (personnalisation fine héritée de
+ * l'ancien écran, par exemple).
+ */
+export function areaLevelOf(area: AccessArea, granted: Iterable<Action>): AccessLevel | 'custom' {
+  const set = new Set(granted);
+  const own = area.levels.flatMap((l) => l.actions).filter((a) => set.has(a));
+  for (const level of areaLevels(area)) {
+    const expected = actionsForAreaLevel(area, level);
+    if (expected.length === own.length && expected.every((a) => set.has(a))) return level;
+  }
+  return 'custom';
+}
+
+/** Ensemble d'actions correspondant à un niveau par domaine. */
+export function actionsForLevels(levels: Record<string, AccessLevel>): Action[] {
+  return ACCESS_AREAS.flatMap((area) => actionsForAreaLevel(area, levels[area.id] ?? 'none'));
+}
+
+/**
+ * **Rôles** = un niveau par domaine. C'est la seule définition des rôles :
+ * \`PERMISSIONS\` en est déduit. Un domaine absent vaut « Aucun accès ».
+ *
+ * Choix assumés (changements par rapport à l'ancienne matrice) :
+ *  - le vendeur ne voit plus les soldes ni les bénéfices (invariant 13) ;
+ *  - le gérant consulte les paramètres de l'entreprise mais ne les modifie
+ *    plus (ils valent pour tout le réseau) ;
+ *  - personne d'autre que l'administrateur ne change de magasin d'office
+ *    (README §28.6).
+ */
+export const ROLE_LEVELS: Record<Role, Record<string, AccessLevel>> = {
+  admin: Object.fromEntries(ACCESS_AREAS.map((a) => [a.id, 'manage'])) as Record<string, AccessLevel>,
+  manager: {
+    pilotage: 'manage',
+    ventes: 'manage',
+    clients: 'manage',
+    fournisseurs: 'manage',
+    produits: 'manage',
+    achats: 'manage',
+    stock: 'manage',
+    caisse: 'manage',
+    depenses: 'manage',
+    chantiers: 'manage',
+    transferts: 'manage',
+    inventaires: 'manage',
+    magasins: 'view',
+    comptes: 'manage',
+    parametres: 'view',
+  },
+  seller: {
+    pilotage: 'view',
+    ventes: 'edit',
+    clients: 'edit',
+    fournisseurs: 'view',
+    produits: 'view',
+    stock: 'view',
+    caisse: 'edit',
+    depenses: 'edit',
+    chantiers: 'view',
+    magasins: 'view',
+    parametres: 'view',
+  },
+  storekeeper: {
+    pilotage: 'view',
+    ventes: 'view',
+    clients: 'view',
+    fournisseurs: 'edit',
+    produits: 'manage',
+    achats: 'edit',
+    stock: 'manage',
+    chantiers: 'view',
+    transferts: 'edit',
+    inventaires: 'edit',
+    magasins: 'view',
+    parametres: 'view',
+  },
+  accountant: {
+    pilotage: 'manage',
+    ventes: 'view',
+    clients: 'view',
+    fournisseurs: 'view',
+    produits: 'view',
+    achats: 'view',
+    stock: 'view',
+    caisse: 'view',
+    depenses: 'manage',
+    chantiers: 'view',
+    transferts: 'view',
+    inventaires: 'view',
+    magasins: 'view',
+    comptes: 'view',
+    parametres: 'view',
+  },
+};
+
+/** Fiche de présentation d'un rôle, pour l'écran de création d'un compte. */
+export const ROLE_PROFILES: Record<Role, { summary: string; can: string[]; cannot: string[] }> = {
+  admin: {
+    summary: 'Dirige l’entreprise : a tous les droits, dans tous les magasins.',
+    can: ['Tout faire dans tous les magasins', 'Créer les magasins et les comptes', 'Modifier les paramètres de l’entreprise'],
+    cannot: ['Être désactivé ou limité : un administrateur garde toujours tous ses droits'],
+  },
+  manager: {
+    summary: 'Responsable d’un magasin : gère tout ce qui s’y passe.',
+    can: ['Vendre, acheter, gérer la caisse et le stock', 'Approuver les dépenses et valider les transferts', 'Voir les rapports et le bénéfice', 'Gérer les comptes de son magasin'],
+    cannot: ['Modifier les paramètres de l’entreprise', 'Changer de magasin sans autorisation'],
+  },
+  seller: {
+    summary: 'Au comptoir : vend, encaisse et tient la caisse.',
+    can: ['Créer des ventes et encaisser', 'Créer des clients', 'Ouvrir et clôturer la caisse', 'Saisir une dépense'],
+    cannot: ['Annuler une vente validée', 'Voir les bénéfices', 'Modifier les prix ou le stock'],
+  },
+  storekeeper: {
+    summary: 'À l’entrepôt : réceptionne, range et compte la marchandise.',
+    can: ['Enregistrer les achats', 'Créer des produits et corriger le stock', 'Expédier et réceptionner les transferts', 'Compter les inventaires'],
+    cannot: ['Vendre ou toucher à la caisse', 'Valider un inventaire', 'Voir les bénéfices'],
+  },
+  accountant: {
+    summary: 'Contrôle les chiffres : consulte tout, approuve les dépenses.',
+    can: ['Consulter ventes, achats, caisse et stock', 'Voir tous les rapports, soldes et bénéfices', 'Approuver les dépenses'],
+    cannot: ['Vendre, acheter ou toucher au stock', 'Modifier une fiche client ou produit'],
+  },
+};
+
+/**
+ * Matrice des permissions (README §17.2), **déduite** des niveaux de
+ * \`ROLE_LEVELS\`. Toute action absente d'un rôle est refusée.
+ */
+const PERMISSIONS: Record<Role, Action[]> = Object.fromEntries(
+  ROLES.map((role) => [role, actionsForLevels(ROLE_LEVELS[role])]),
+) as Record<Role, Action[]>;
 
 export type PermissionUser = { role?: string | null } | null | undefined;
 
@@ -331,6 +498,7 @@ export const ALL_ACTIONS: Action[] = [
   'stores.view',
   'stores.manage',
   'stores.viewAll',
+  'stores.switch',
   'transfers.view',
   'transfers.create',
   'transfers.approve',
@@ -433,6 +601,12 @@ export const ACTION_META: Record<Action, ActionMeta> = {
   'stores.view': { label: 'Voir ses magasins', group: 'Magasins', description: 'Fiche et indicateurs des magasins auxquels on est affecté.' },
   'stores.manage': { label: 'Gérer les magasins', group: 'Magasins', description: 'Créer, modifier, suspendre ou archiver un magasin, désigner son gérant.', dangerous: true },
   'stores.viewAll': { label: 'Vue consolidée tous magasins', group: 'Magasins', description: 'Consulter les opérations de tous les magasins, même sans affectation.', dangerous: true },
+  /*
+   * Demande client (4 octobre 2026) : seul l'administrateur change de magasin
+   * d'office ; tout autre compte doit en recevoir le droit (surcharge « allow »).
+   * Sans lui, le compte travaille dans son magasin principal (README §28.6).
+   */
+  'stores.switch': { label: 'Changer de magasin actif', group: 'Magasins', description: 'Passer d’un magasin à l’autre parmi ceux auxquels on est affecté. Sans ce droit, le compte reste dans son magasin principal (celui dont il est gérant, sinon sa première affectation).', dangerous: true },
   'transfers.view': { label: 'Consulter les transferts', group: 'Magasins', description: 'Transferts de stock entre magasins et leur historique.' },
   'transfers.create': { label: 'Demander un transfert', group: 'Magasins', description: 'Créer une demande de transfert vers ou depuis son magasin.' },
   'transfers.approve': { label: 'Valider un transfert', group: 'Magasins', description: 'Valider ou refuser une demande de transfert.', dangerous: true },

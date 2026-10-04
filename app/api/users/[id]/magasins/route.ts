@@ -3,6 +3,8 @@ import { ValidationError, fail, ok, parseId, readJson, requireAction, requireCen
 import { listUserAssignments, setUserAssignments } from '@/lib/stores';
 import { assertAssignableStores, assertCanManageUser } from '@/lib/user-scope';
 import { revokeUserSessions } from '@/lib/session';
+import { getUser } from '@/lib/users';
+import { getUserOverrides, setUserOverrides } from '@/lib/user-permissions';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,7 +26,10 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
 /**
  * PUT /api/users/[id]/magasins — remplace les affectations.
- * Corps : `{ stores: [{ storeId, isManager?, startsAt?, endsAt? }] }`.
+ * Corps : `{ stores: [{ storeId, isManager?, startsAt?, endsAt? }], canSwitchStore? }`.
+ * `canSwitchStore` (facultatif) accorde ou retire le droit de changer de
+ * magasin actif (`stores.switch`, README §28.6) : réglé au même endroit que
+ * les magasins visibles, les autres surcharges du compte sont conservées.
  *
  * Un gérant ne peut affecter qu'à ses propres magasins, et les affectations
  * qu'il ne voit pas (autres magasins) sont conservées telles quelles.
@@ -62,6 +67,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
     }
 
     const result = await setUserAssignments(userId, wanted, { id: actor.id, name: actor.name });
+
+    if (typeof body.canSwitchStore === 'boolean') {
+      const target = await getUser(userId);
+      if (target && target.role !== 'admin') {
+        const others = (await getUserOverrides(userId)).filter((o) => o.action !== 'stores.switch');
+        await setUserOverrides(
+          userId,
+          body.canSwitchStore ? [...others, { action: 'stores.switch', effect: 'allow' }] : others,
+          { id: actor.id, name: actor.name },
+        );
+      }
+    }
     if (userId !== actor.id) await revokeUserSessions(userId);
 
     return ok(result);

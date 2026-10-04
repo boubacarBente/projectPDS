@@ -23,7 +23,7 @@ import { rawAll, rawGet } from '@/db';
 import { getCashBalance, getCashSummary, getOpenSession } from '@/lib/caisse';
 import { previousPeriod, startOfMonth, startOfWeek, today, endOfMonth } from '@/lib/format';
 import { getPeriodResult } from '@/lib/profit';
-import { getStockSummary } from '@/lib/stock';
+import { getStockSummary, listedSql } from '@/lib/stock';
 import { getStoreIndicators, scopeSql, type StoreScope } from '@/lib/stores';
 
 export type PeriodKey = 'day' | 'week' | 'month' | 'year' | 'total';
@@ -300,7 +300,7 @@ export async function getDashboardSnapshot(
   const stockAlerts = await rawAll<any>(
     `SELECT * FROM (
        SELECT p.id, p.name, p.unit, ${stockExpr} AS stock, ${minExpr} AS stock_min
-         FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL
+         FROM products p WHERE p.is_active = 1 AND p.deleted_at IS NULL AND ${listedSql(scope)}
      ) WHERE stock <= 0 OR (stock_min > 0 AND stock <= stock_min)
      ORDER BY (stock <= 0) DESC, stock ASC
      LIMIT 8`,

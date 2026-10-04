@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, parseId, parsePagination, requireAction, NotFoundError, scopeFromRequest } from '@/lib/api';
-import { getSupplier, listSupplierPayments } from '@/lib/suppliers';
+import { assertSupplierVisible, getSupplier, listSupplierPayments } from '@/lib/suppliers';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -16,6 +16,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     const supplier = await getSupplier(supplierId);
     if (!supplier) throw new NotFoundError('Fournisseur introuvable');
+    await assertSupplierVisible(user, supplierId);
 
     const { page, limit } = parsePagination(request.nextUrl.searchParams);
 

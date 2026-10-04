@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, parsePagination, readJson, required, toBool, toNumber, requireAction, scopeFromRequest } from '@/lib/api';
+import { fail, ok, parsePagination, readJson, required, toBool, toNumber, requireAction, requireActiveStore, scopeFromRequest } from '@/lib/api';
 import { createCustomer, listCustomers } from '@/lib/customers';
 import { writeAudit } from '@/lib/audit';
 import { parseListSort } from '@/lib/list-sort';
@@ -33,6 +33,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAction('customers.create');
+    // Le client appartient au magasin actif de la session (README §28.5).
+    const storeId = await requireActiveStore(user);
     const body = await readJson<any>(request);
 
     const customer = await createCustomer({
@@ -42,7 +44,7 @@ export async function POST(request: NextRequest) {
       notes: body.notes ?? null,
       creditLimit: toNumber(body.creditLimit, 0),
       isActive: toBool(body.isActive, true),
-    });
+    }, storeId);
 
     await writeAudit({
       user,

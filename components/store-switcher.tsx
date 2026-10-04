@@ -7,7 +7,8 @@ import { useAuth } from '@/components/auth-provider';
 /**
  * Sélecteur du **magasin actif** (pied de l'en-tête de la sidebar).
  *
- * - Un seul magasin accessible : simple étiquette (rien à choisir).
+ * - Un seul magasin accessible, ou pas le droit d'en changer (`stores.switch`,
+ *   README §28.6) : simple étiquette (rien à choisir).
  * - Plusieurs magasins : liste déroulante ; choisir un magasin appelle
  *   `POST /api/auth/store` puis recharge la page — ventes, caisse, stock,
  *   dépenses… sont alors enregistrées dans ce magasin.
@@ -15,7 +16,7 @@ import { useAuth } from '@/components/auth-provider';
  *   seule (le serveur refuse toute écriture hors du magasin « siège »).
  */
 export function StoreSwitcher({ collapsed = false }: { collapsed?: boolean }) {
-  const { stores, activeStore, activeStoreId, switchStore, device } = useAuth();
+  const { stores, activeStore, activeStoreId, switchStore, device, canSwitchStore } = useAuth();
   const [busy, setBusy] = useState(false);
 
   if (stores.length === 0) return null;
@@ -40,8 +41,12 @@ export function StoreSwitcher({ collapsed = false }: { collapsed?: boolean }) {
       <label className="block text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sidebar-text-muted)' }} htmlFor="store-switcher">
         Magasin actif
       </label>
-      {stores.length === 1 ? (
-        <p className="truncate rounded-lg px-2 py-1.5 text-sm font-medium" style={{ backgroundColor: 'var(--sidebar-active)', color: 'var(--sidebar-text)' }}>
+      {stores.length === 1 || !canSwitchStore ? (
+        <p
+          className="truncate rounded-lg px-2 py-1.5 text-sm font-medium"
+          style={{ backgroundColor: 'var(--sidebar-active)', color: 'var(--sidebar-text)' }}
+          title={stores.length > 1 ? 'Changer de magasin demande la permission « Changer de magasin actif ».' : undefined}
+        >
           {activeStore?.name ?? stores[0].name}
         </p>
       ) : (

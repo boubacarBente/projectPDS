@@ -45,6 +45,7 @@ import { db, rawAll, rawGet, withTransaction } from '@/db';
 import { purchaseInvoices, purchaseInvoiceItems } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { NotFoundError, ValidationError, businessDate, toInt, toNumber } from '@/lib/api';
+import { assertSupplierInStore } from '@/lib/suppliers';
 import { writeAudit } from '@/lib/audit';
 import { addCashMovement } from '@/lib/caisse';
 import { resolvePeriod, type PeriodKey, type SnapshotPeriod } from '@/lib/dashboard';
@@ -287,20 +288,28 @@ async function auditUser(userId?: number | null): Promise<{ id: number; name: st
 }
 
 /** Fournisseur **obligatoire** (§14) : contrairement à une dépense. */
+/**
+ * Fournisseur de l'achat : il doit être **du magasin de l'achat** (README
+ * §28.5), sauf s'il est déjà celui de l'achat modifié (`keepId`, achat repris
+ * d'avant le cloisonnement).
+ */
 async function resolveSupplier(
   supplierId: unknown,
+  storeId: number,
+  keepId?: number | null,
 ): Promise<{ supplierId: number; supplierName: string }> {
   const id = toInt(supplierId, 0);
   if (!Number.isInteger(id) || id <= 0) {
     throw new ValidationError('Le fournisseur est obligatoire pour un achat');
   }
 
-  const row = await rawGet<{ id: number; name: string }>('SELECT id, name FROM suppliers WHERE id = ?', [
-    id,
-  ]);
-  if (!row) throw new ValidationError('Fournisseur introuvable');
-
-  return { supplierId: Number(row.id), supplierName: String(row.name ?? SUPPLIER_FALLBACK) };
+  if (id === keepId) {
+    const row = await rawGet<{ id: number; name: string }>('SELECT id, name FROM suppliers WHERE id = ?', [id]);
+    if (!row) throw new ValidationError('Fournisseur introuvable');
+    return { supplierId: Number(row.id), supplierName: String(row.name ?? SUPPLIER_FALLBACK) };
+  }
+  const row = await assertSupplierInStore(id, storeId);
+  return { supplierId: row.id, supplierName: row.name || SUPPLIER_FALLBACK };
 }
 
 type InvoiceRecord = {
@@ -788,7 +797,7 @@ async function createPurchaseInvoiceInTx(input: PurchaseInvoiceInput): Promise<P
   // 1. Validation : fournisseur obligatoire (existence vérifiée), lignes
   //    valides, quantités > 0, prix ≥ 0. **Aucun contrôle de stock** : un achat
   //    augmente le stock.
-  const supplier = await resolveSupplier(input.supplierId);
+  const supplier = await resolveSupplier(input.supplierId, storeId);
   const items = await buildPurchaseItems(input.lines);
 
   const date = businessDate(input.date, 'date');
@@ -915,7 +924,7 @@ async function updatePurchaseInvoiceInTx(id: number, input: PurchaseInvoiceInput
   }
 
   const previousItems = await getItemRecords(id);
-  const supplier = await resolveSupplier(input.supplierId ?? existing.supplierId);
+  const supplier = await resolveSupplier(input.supplierId ?? existing.supplierId, storeId, existing.supplierId);
   const items = await buildPurchaseItems(input.lines);
 
   const date = businessDate(input.date, 'date');

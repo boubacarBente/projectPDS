@@ -9,8 +9,9 @@ import { roundMoney } from '@/lib/format';
  * avec leurs travaux sur les chantiers des magasins visibles : montant
  * convenu, payé (dépenses décaissées rattachées) et reste (cahier §12).
  *
- * La fiche reste commune (référentiel fournisseurs) ; les montants sont ceux
- * des chantiers du ou des magasins choisis (`?store=`).
+ * Chaque magasin a ses propres sous-traitants (README §28.5) : la liste ne
+ * montre que ceux des magasins choisis (`?store=`), avec les montants de
+ * leurs chantiers.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
        FROM suppliers f
        LEFT JOIN job_subcontracts s ON s.supplier_id = f.id AND s.status = 'active'
          AND s.job_id IN (SELECT j.id FROM service_jobs j WHERE ${scopeSql('j.store_id', scope)} AND j.status <> 'cancelled')
-       WHERE f.is_subcontractor = 1 ${searchSql}
+       WHERE f.is_subcontractor = 1 AND ${scopeSql('f.store_id', scope)} ${searchSql}
        GROUP BY f.id
        ORDER BY f.is_active DESC, agreed DESC, f.name COLLATE NOCASE`,
       args,

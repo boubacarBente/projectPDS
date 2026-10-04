@@ -50,7 +50,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.dailyRate !== undefined) patch.dailyRate = toNumber(body.dailyRate, 0);
     if (body.isActive !== undefined) patch.isActive = toBool(body.isActive, true);
     if (body.team !== undefined) patch.team = body.team;
-    if (body.shared !== undefined && user.allStores) patch.storeId = body.shared === true ? null : user.storeId;
 
     const worker = await updateWorker(workerId, patch as any);
 

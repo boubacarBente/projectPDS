@@ -161,7 +161,8 @@ export async function listWorkers(
   }
   if (options.scope) {
     const ids = options.scope.filter((id) => Number.isInteger(id) && id > 0);
-    where.push(ids.length ? `(w.store_id IS NULL OR w.store_id IN (${ids.join(',')}))` : 'w.store_id IS NULL');
+    // Chaque magasin a ses propres ouvriers (README §28.5) : plus d'ouvrier « commun ».
+    where.push(ids.length ? `w.store_id IN (${ids.join(',')})` : '0 = 1');
   }
   if (options.team?.trim()) {
     where.push('w.team = ?');
@@ -304,7 +305,7 @@ export async function reactivateWorker(id: number): Promise<void> {
 /** Noms d'équipe connus (pour le choix « Affecter une équipe »). */
 export async function listWorkerTeams(scope?: number[]): Promise<{ team: string; count: number }[]> {
   const ids = (scope ?? []).filter((id) => Number.isInteger(id) && id > 0);
-  const storeFilter = scope ? (ids.length ? `AND (store_id IS NULL OR store_id IN (${ids.join(',')}))` : 'AND store_id IS NULL') : '';
+  const storeFilter = scope ? (ids.length ? `AND store_id IN (${ids.join(',')})` : 'AND 0 = 1') : '';
   const rows = await rawAll<{ team: string; count: number }>(
     `SELECT team, COUNT(*) AS count FROM workers
      WHERE is_active = 1 AND team IS NOT NULL AND team <> '' ${storeFilter}

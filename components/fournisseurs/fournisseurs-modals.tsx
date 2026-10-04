@@ -39,6 +39,9 @@ import { formatCurrency, formatNumber, today } from '@/lib/format';
 
 export type SupplierRecord = {
   id: number;
+  /** Magasin propriétaire (README §28.5 : chaque magasin a ses fournisseurs). */
+  storeId?: number | null;
+  storeName?: string | null;
   name: string;
   phone: string | null;
   address: string | null;

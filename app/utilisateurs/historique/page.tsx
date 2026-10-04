@@ -240,6 +240,17 @@ function HistoriqueContent() {
     if (saved.page) setPage(saved.page);
   });
 
+  // Lien « Voir l'historique de ce compte » de la fiche utilisateur :
+  // `?userId=<id>` prime sur le filtre mémorisé.
+  useEffect(() => {
+    if (!rehydrated) return;
+    const fromUrl = new URLSearchParams(window.location.search).get('userId');
+    if (fromUrl && /^\d+$/.test(fromUrl)) {
+      setUserId(fromUrl);
+      setPage(1);
+    }
+  }, [rehydrated]);
+
   const reload = useCallback(() => setRefreshToken((value) => value + 1), []);
 
   /** Filtre « utilisateur » : liste réduite via `GET /api/users?options=true`. */

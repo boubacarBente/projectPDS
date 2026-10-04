@@ -86,9 +86,13 @@ async function main() {
   console.log(`Magasins actifs : Kaloum #${kalStore}, Matoto #${matStore}`);
   check('Deux gérants travaillent dans deux magasins différents', kalStore && matStore && kalStore !== matStore);
 
+  // Chaque magasin a ses propres clients (README §28.5) : un client par magasin.
   const customers = await kal.api('/api/clients?limit=1');
   const customerId = customers.body?.data?.[0]?.id;
-  check('Un client existe (référentiel commun)', Boolean(customerId));
+  check('Kaloum a un client', Boolean(customerId));
+  const matCustomers = await mat.api('/api/clients?limit=1');
+  const matCustomerId = matCustomers.body?.data?.[0]?.id;
+  check('Matoto a son propre client', Boolean(matCustomerId) && matCustomerId !== customerId);
   const settings = (await kal.api('/api/parametres')).body;
   const category = settings?.jobCategories?.[0] ?? settings?.settings?.jobCategories?.[0] ?? 'Carrelage';
   const expenseCategory = settings?.expenseCategories?.[0] ?? settings?.settings?.expenseCategories?.[0] ?? 'Transport';
@@ -223,9 +227,14 @@ async function main() {
   console.log('\n— Vue consolidée (critère 8)');
   const matJob = await mat.api('/api/chantiers', {
     method: 'POST',
-    body: { customerId, category, title: `Matoto ${tag}`, items: [{ serviceId: matService.id, quantity: 10 }] },
+    body: { customerId: matCustomerId, category, title: `Matoto ${tag}`, items: [{ serviceId: matService.id, quantity: 10 }] },
   });
   check('Matoto ouvre un chantier avec sa propre prestation (10 × 30 000)', matJob.body?.total === 300000, err(matJob));
+  const foreignCustomer = await mat.api('/api/chantiers', {
+    method: 'POST',
+    body: { customerId, category, title: `Client étranger ${tag}`, items: [{ serviceId: matService.id, quantity: 1 }] },
+  });
+  check('Matoto ne peut pas ouvrir un chantier pour un client de Kaloum', foreignCustomer.status === 400, err(foreignCustomer));
   const consolidated = await admin.api('/api/chantiers/pilotage?store=all');
   check('L’administrateur obtient le pilotage consolidé', consolidated.status === 200, err(consolidated));
   const stores = (consolidated.body?.byStore ?? []).map((s) => s.storeId);

@@ -29,7 +29,11 @@ import { useSettings } from '@/app/parametres/page';
 import { formatCurrency } from '@/lib/format';
 
 /** Ligne produit telle que sérialisée par l'API (`createdAt` devient une chaîne). */
-export type ProductView = Omit<ProductRow, 'createdAt'> & { createdAt?: string | null };
+/**
+ * `canEditCatalog` : calculé par le serveur (`GET /api/produits`) — la fiche
+ * commune est-elle modifiable par cet utilisateur ? (README §28.5)
+ */
+export type ProductView = Omit<ProductRow, 'createdAt'> & { createdAt?: string | null; canEditCatalog?: boolean };
 
 /** Ligne catégorie telle que sérialisée par l'API. */
 export type CategoryView = Omit<CategoryRow, 'createdAt'> & { createdAt?: string | null };
@@ -146,8 +150,13 @@ export function ProductFormModal({
   const isEdit = product !== null;
   const { device, activeStore } = useAuth();
   const { settings } = useSettings();
-  // Le catalogue est commun : sur un poste de magasin, seuls les réglages locaux se modifient.
-  const canEditCatalog = device?.mode !== 'store';
+  /*
+   * Chaque magasin crée ses produits (README §28.5). En modification, la fiche
+   * commune n'est modifiable que par le siège ou par le magasin qui a créé le
+   * produit, s'il est seul à le proposer — le serveur le dit (`canEditCatalog`)
+   * et le revérifie à l'enregistrement.
+   */
+  const canEditCatalog = isEdit ? (product?.canEditCatalog ?? device?.mode !== 'store') : true;
   const localPricesAllowed = settings.localPricesAllowed;
   const [form, setForm] = useState<ProductFormState>(() => emptyProductForm(units));
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -484,8 +493,17 @@ export function ProductFormModal({
 
         {!canEditCatalog && (
           <p className="mt-4 rounded-xl border border-info/30 bg-info/10 px-3 py-2 text-sm">
-            Le catalogue (nom, prix, unité…) est géré au siège. Depuis ce poste, seuls les réglages du
-            magasin se modifient.
+            Ce produit est aussi vendu par d’autres magasins (ou appartient au catalogue du siège) :
+            sa fiche (nom, prix, unité…) se modifie au siège. Ici, seuls les réglages de votre magasin
+            se modifient.
+          </p>
+        )}
+
+        {!isEdit && (
+          <p className="mt-4 rounded-xl border border-info/30 bg-info/10 px-3 py-2 text-sm">
+            Le produit sera ajouté aux produits de <strong>{activeStore?.name ?? 'votre magasin'}</strong>.
+            Les autres magasins ne le verront que s’ils l’ajoutent à leur tour. S’il existe déjà dans un
+            autre magasin, utilisez plutôt « Ajouter du catalogue ».
           </p>
         )}
 
@@ -556,9 +574,10 @@ export function CategoryFormModal({
   category: CategoryView | null;
 }) {
   const isEdit = category !== null;
-  // Les catégories sont centrales : verrouillées sur un poste de magasin (le serveur refuse aussi).
+  // Liste commune : un magasin peut en ajouter une (README §28.5), mais modifier
+  // une catégorie existante touche tout le réseau — au siège seulement (le serveur refuse aussi).
   const { device } = useAuth();
-  const canEditCatalog = device?.mode !== 'store';
+  const canEditCatalog = !isEdit || device?.mode !== 'store';
   const [form, setForm] = useState<CategoryFormState>(emptyCategoryForm);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -710,6 +729,149 @@ export function CategoryFormModal({
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+/* ==================================================================
+ * Ajouter un produit du catalogue commun au magasin actif
+ * ================================================================== */
+
+/**
+ * Chaque magasin a ses propres produits (README §28.5), mais le catalogue est
+ * commun : plutôt que de recréer « Ciment 50 kg » (refusé, le nom est unique
+ * dans tout le réseau), un magasin reprend le produit existant. Il garde alors
+ * la fiche commune et règle son prix local et son seuil.
+ */
+export function CatalogPickerModal({
+  isOpen,
+  onClose,
+  onAdded,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onAdded: () => void | Promise<void>;
+}) {
+  const { activeStore } = useAuth();
+  const [search, setSearch] = useState('');
+  const [rows, setRows] = useState<ProductView[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [addingId, setAddingId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSearch('');
+    setError(null);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ catalog: 'true', limit: '30', sort: 'name' });
+        if (search.trim()) params.set('search', search.trim());
+        const response = await fetch(`/api/produits?${params}`, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(await readApiError(response, 'Catalogue indisponible'));
+        const payload = await response.json();
+        setRows((payload.data ?? []) as ProductView[]);
+      } catch (loadError: any) {
+        if (loadError?.name !== 'AbortError') setError(loadError?.message ?? 'Catalogue indisponible');
+      } finally {
+        if (!controller.signal.aborted) setIsLoading(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isOpen, search]);
+
+  const add = async (product: ProductView) => {
+    setAddingId(product.id);
+    try {
+      const response = await fetch(`/api/produits/${product.id}/assortiment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ listed: true }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'Ajout impossible'));
+      toast.success(`« ${product.name} » fait maintenant partie des produits de ${activeStore?.name ?? 'votre magasin'}`);
+      setRows((current) => current.map((row) => (row.id === product.id ? { ...row, listed: true } : row)));
+      await onAdded();
+    } catch (addError: any) {
+      toast.error(addError?.message ?? 'Ajout impossible', { autoClose: 8000 });
+    } finally {
+      setAddingId(null);
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Ajouter un produit du catalogue" size="lg" fullScreenMobile>
+      <p className="text-sm text-base-content/70">
+        Produits déjà créés par le siège ou par un autre magasin. Ajoutez ceux que{' '}
+        <strong>{activeStore?.name ?? 'votre magasin'}</strong> vend : ils apparaîtront dans vos ventes,
+        achats, stocks et inventaires.
+      </p>
+      <input
+        type="search"
+        className="input input-bordered field-rounded mt-4 w-full"
+        placeholder="Rechercher un produit…"
+        aria-label="Rechercher un produit du catalogue"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        autoComplete="off"
+      />
+      <div className="mt-4 space-y-2">
+        {isLoading && rows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-base-content/60">Chargement…</p>
+        ) : error ? (
+          <p className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">{error}</p>
+        ) : rows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-base-content/60">Aucun produit ne correspond.</p>
+        ) : (
+          rows.map((product) => (
+            <div
+              key={product.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-base-200 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-medium">{product.name}</p>
+                <p className="text-xs text-base-content/60">
+                  {product.categoryName ?? 'Sans catégorie'} · {formatCurrency(product.catalogSalePrice)} ·{' '}
+                  {product.ownerStoreName ? `créé par ${product.ownerStoreName}` : 'catalogue du siège'} ·{' '}
+                  {product.listedStoreCount} magasin(s)
+                </p>
+              </div>
+              {product.listed ? (
+                <Badge tone="success">Déjà dans votre magasin</Badge>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary min-h-11 sm:min-h-0"
+                  disabled={addingId !== null}
+                  onClick={() => void add(product)}
+                >
+                  {addingId === product.id ? <span className="loading loading-spinner loading-sm" /> : 'Ajouter'}
+                </button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="sticky bottom-0 mt-5 flex justify-end border-t border-base-200 bg-base-100 pt-4">
+        <button type="button" className="btn btn-ghost" onClick={onClose}>
+          Fermer
+        </button>
+      </div>
     </Modal>
   );
 }

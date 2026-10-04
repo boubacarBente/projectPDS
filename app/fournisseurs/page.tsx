@@ -27,7 +27,7 @@ import {
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber } from '@/lib/format';
 import { clampPage, useViewStateRehydration, writeViewState } from '@/lib/view-state';
-import { StoreScopeSelect, useStoreScope } from '@/components/store-scope';
+import { StoreScopeSelect, StoreTag, useStoreScope } from '@/components/store-scope';
 
 /**
  * Liste des fournisseurs (README §7.3).
@@ -95,7 +95,7 @@ export default function FournisseursPage() {
   const canDelete = usePermission('suppliers.delete');
   const canPay = usePermission('payments.create');
   // Référentiel commun ; la portée change les dettes et achats affichés.
-  const { scope, setScope, apply } = useStoreScope('fournisseurs');
+  const { scope, setScope, apply, isConsolidated } = useStoreScope('fournisseurs');
 
   const rehydrated = useViewStateRehydration<ViewState>('fournisseurs', (saved) => {
     if (saved.search !== undefined) setSearch(saved.search);
@@ -276,9 +276,13 @@ export default function FournisseursPage() {
       label: 'Nom',
       primary: true,
       render: (supplier) => (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold">{supplier.name}</span>
-          {!supplier.isActive && <Badge tone="neutral">Inactif</Badge>}
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">{supplier.name}</span>
+            {!supplier.isActive && <Badge tone="neutral">Inactif</Badge>}
+          </div>
+          {/* Chaque magasin a ses fournisseurs : en vue multi-magasins, celui de la fiche. */}
+          <StoreTag name={supplier.storeName} show={isConsolidated} />
         </div>
       ),
     },

@@ -8,7 +8,7 @@
  *
  * Chaque table déclare sa **portée** — c'est elle qui décide quels postes
  * reçoivent la ligne :
- *  - `global`   : référentiel partagé (catalogue, clients, utilisateurs…),
+ *  - `global`   : référentiel partagé (catalogue, utilisateurs, magasins…),
  *                 reçu par tous les postes ;
  *  - `store`    : opération d'un magasin (colonne `store_id`), reçue par les
  *                 postes de ce magasin et par le siège ;
@@ -53,11 +53,24 @@ export const SYNCED_TABLES: SyncedTable[] = [
   { name: 'user_stores', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['user_id', 'store_id'] },
   { name: 'user_permissions', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['user_id', 'action'] },
   { name: 'settings', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['key'] },
-  { name: 'categories', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['name'] },
-  { name: 'products', scope: { kind: 'global' }, hqOnly: true },
-  { name: 'customers', scope: { kind: 'global' } },
-  { name: 'suppliers', scope: { kind: 'global' } },
-  { name: 'workers', scope: { kind: 'global' } },
+  // Liste commune ; un poste magasin peut y ajouter une catégorie (README §28.5).
+  { name: 'categories', scope: { kind: 'global' }, naturalKey: ['name'] },
+  /*
+   * Catalogue commun, mais **un magasin peut créer ses produits** (assortiment
+   * par magasin, README §28.5) : la table n'est plus `hqOnly`. Qui peut
+   * modifier quelle fiche est décidé côté serveur (`canEditProductCatalog`).
+   * Clé naturelle : deux magasins qui créent hors ligne le même nom exact
+   * obtiennent un seul produit.
+   */
+  { name: 'products', scope: { kind: 'global' }, naturalKey: ['name'] },
+  /*
+   * Clients et fournisseurs **propres à chaque magasin** (README §28.5) : un
+   * poste ne reçoit que ceux de son magasin, le siège les reçoit tous.
+   */
+  { name: 'customers', scope: { kind: 'store', column: 'store_id' } },
+  { name: 'suppliers', scope: { kind: 'store', column: 'store_id' } },
+  // Ouvriers propres à chaque magasin (README §28.5).
+  { name: 'workers', scope: { kind: 'store', column: 'store_id' } },
   { name: 'product_stocks', scope: { kind: 'store', column: 'store_id' }, naturalKey: ['store_id', 'product_id'] },
   { name: 'sales_invoices', scope: { kind: 'store', column: 'store_id' } },
   {

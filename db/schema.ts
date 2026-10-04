@@ -174,8 +174,16 @@ export const userStores = sqliteTable(
  * 2. Partenaires
  * ------------------------------------------------------------------ */
 
+/**
+ * **Chaque magasin a ses propres clients** (v2, demande client du 4 octobre
+ * 2026) : `store_id` est le magasin propriétaire. Les autres magasins ne voient
+ * pas la fiche ; le siège voit tout (`?store=all`). Un client qui achète dans
+ * deux magasins a donc deux fiches — c'est le choix assumé.
+ * Synchronisé en portée `store` (`db/sync-registry.ts`).
+ */
 export const customers = sqliteTable('customers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   name: text('name').notNull(),
   phone: text('phone'),
   address: text('address'),
@@ -185,10 +193,12 @@ export const customers = sqliteTable('customers', {
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [index('customers_store_idx').on(t.storeId)]);
 
+/** Fournisseurs (et sous-traitants) **propres à chaque magasin**, comme les clients. */
 export const suppliers = sqliteTable('suppliers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').references(() => stores.id),
   name: text('name').notNull(),
   phone: text('phone'),
   address: text('address'),
@@ -204,7 +214,7 @@ export const suppliers = sqliteTable('suppliers', {
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [index('suppliers_store_idx').on(t.storeId)]);
 
 /* ------------------------------------------------------------------ *
  * 3. Produits et stock
@@ -236,6 +246,12 @@ export const products = sqliteTable(
     stockMin: real('stock_min').notNull().default(0),
     /** Code-barres éventuel (§7). */
     barcode: text('barcode'),
+    /**
+     * Magasin qui a créé le produit (`null` = catalogue commun du siège).
+     * Ce magasin peut modifier la fiche tant qu'aucun autre ne la propose ;
+     * au-delà, seul le siège la modifie (`canEditProductCatalog`).
+     */
+    ownerStoreId: integer('owner_store_id').references(() => stores.id),
     description: text('description'),
     isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
     createdAt: createdAt(),
@@ -278,6 +294,12 @@ export const productStocks = sqliteTable(
     stockMin: real('stock_min'),
     /** Prix de vente local (null = prix du catalogue). */
     salePrice: real('sale_price'),
+    /**
+     * **Assortiment du magasin** : le produit est proposé (listes, ventes,
+     * achats, inventaires) seulement si `is_listed = 1`. Une ligne retirée garde
+     * son historique ; tout mouvement de stock la remet dans l'assortiment.
+     */
+    isListed: integer('is_listed', { mode: 'boolean' }).notNull().default(true),
     createdAt: createdAt(),
     ...syncCols(),
   },

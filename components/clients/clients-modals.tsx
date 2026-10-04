@@ -39,6 +39,9 @@ import { formatNumber, today } from '@/lib/format';
 
 export type CustomerRecord = {
   id: number;
+  /** Magasin propriétaire (README §28.5 : chaque magasin a ses clients). */
+  storeId?: number | null;
+  storeName?: string | null;
   name: string;
   phone: string | null;
   address: string | null;

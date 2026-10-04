@@ -42,8 +42,9 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/magasins — création d'un magasin (siège uniquement).
  * Corps : `{ code, name, kind?, address?, phone?, email?, managerUserId?,
- * openingDate?, openingHours?, receiptFooter?, notes? }`.
- * Le nouveau magasin reçoit une ligne de stock (à zéro) pour chaque produit.
+ * openingDate?, openingHours?, receiptFooter?, notes?, copyAssortmentFrom? }`.
+ * `copyAssortmentFrom` : magasin dont on recopie la liste des produits proposés.
+ * Sans copie, le nouveau magasin part d’un assortiment vide (README §28.5).
  * Permission : `stores.manage`.
  */
 export async function POST(request: NextRequest) {
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest) {
         openingHours: body.openingHours ?? null,
         receiptFooter: body.receiptFooter ?? null,
         notes: body.notes ?? null,
+        copyAssortmentFrom: body.copyAssortmentFrom ? Number(body.copyAssortmentFrom) : null,
       },
       { id: user.id, name: user.name },
     );

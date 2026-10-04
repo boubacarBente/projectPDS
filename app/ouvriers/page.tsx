@@ -22,8 +22,9 @@ import {
 /* ==================================================================
  * Ouvriers et équipes (cahier « Prestations » §11).
  *
- * Chaque magasin voit **ses** ouvriers et les ouvriers **communs** (créés
- * avant la v2, ou déclarés communs par l'administration). Les équipes
+ * Chaque magasin voit **ses** ouvriers seulement (README §28.5 : un magasin
+ * part de données vides ; les anciens ouvriers communs ont été rattachés à un
+ * magasin par la migration 0008). Les équipes
  * regroupent des ouvriers : « Affecter une équipe » sur un chantier les ajoute
  * tous d'un coup, chacun à son tarif journalier.
  * ================================================================== */
@@ -128,7 +129,7 @@ export default function OuvriersPage() {
       render: (w) => (
         <div className="flex flex-col items-start gap-1">
           {w.team ? <Badge tone="primary">{w.team}</Badge> : <span className="text-xs text-base-content/50">Sans équipe</span>}
-          <span className="text-xs text-base-content/55">{w.storeId ? w.storeName : 'Commun à tous les magasins'}</span>
+          <span className="text-xs text-base-content/55">{w.storeName ?? ''}</span>
         </div>
       ),
     },
@@ -206,7 +207,7 @@ export default function OuvriersPage() {
         <SkeletonCards count={3} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
-          <StatCardDelta label="Ouvriers actifs" tooltip="Ouvriers du magasin (et ouvriers communs) qu’on peut affecter à un chantier." tone="primary" value={formatNumber(active.length)} hint={`${formatNumber(active.filter((w) => w.role === 'foreman').length)} chef(s) d’équipe`} />
+          <StatCardDelta label="Ouvriers actifs" tooltip="Ouvriers du magasin qu’on peut affecter à un chantier. Chaque magasin a ses propres ouvriers." tone="primary" value={formatNumber(active.length)} hint={`${formatNumber(active.filter((w) => w.role === 'foreman').length)} chef(s) d’équipe`} />
           <StatCardDelta label="Équipes" tooltip="Groupes d’ouvriers affectables d’un coup à un chantier." tone="info" value={formatNumber(new Set(active.map((w) => w.team).filter(Boolean)).size)} hint={`${formatNumber(active.filter((w) => !w.team).length)} ouvrier(s) sans équipe`} />
           <StatCardDelta label="Main-d’œuvre cumulée" tooltip="Total jours × tarif de toutes les affectations de ces ouvriers sur les chantiers." tone="warning" value={<MoneyText value={(rows ?? []).reduce((sum, w) => sum + w.totalLaborCost, 0)} />} hint={`${formatQuantity((rows ?? []).reduce((sum, w) => sum + w.totalDays, 0))} jour(s) travaillé(s)`} />
         </div>
@@ -277,7 +278,6 @@ export default function OuvriersPage() {
                       <span className="block truncate text-xs text-base-content/55">
                         {workerRoleLabel(w.role)}
                         {w.specialty ? ` · ${w.specialty}` : ''}
-                        {w.storeId ? '' : ' · commun'}
                       </span>
                     </span>
                     <span className="flex items-center gap-2">

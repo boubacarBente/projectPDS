@@ -19,7 +19,7 @@ import { eq } from 'drizzle-orm';
 import { NotFoundError, ValidationError } from '@/lib/api';
 import { writeAudit } from '@/lib/audit';
 import { nextDocumentNumber } from '@/lib/settings';
-import { adjustStock, getStoreStock } from '@/lib/stock';
+import { adjustStock, getStoreStock, listedSql } from '@/lib/stock';
 import { assertStoreWritable, scopeSql, type StoreScope } from '@/lib/stores';
 
 export type InventoryStatus = 'open' | 'validated' | 'cancelled';
@@ -206,6 +206,7 @@ export async function openInventory(
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
         WHERE p.is_active = 1 AND p.deleted_at IS NULL
+          AND ${listedSql([storeId])}
           AND (c.kind IS NULL OR c.kind <> 'service')
           ${categoryId ? 'AND p.category_id = ?' : ''}
         ORDER BY p.name COLLATE NOCASE`,

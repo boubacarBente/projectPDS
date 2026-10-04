@@ -24,6 +24,7 @@ import { scopeSql, type StoreScope } from '@/lib/stores';
 import { nextDocumentNumber } from '@/lib/settings';
 import { assertServiceUsable } from '@/lib/services';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
+import { assertCustomerInStore } from '@/lib/customers';
 import { today } from '@/lib/format';
 
 export const REQUEST_STATUS_VALUES = [
@@ -237,12 +238,11 @@ function cleanDate(value: unknown, label: string): string | null {
   return text;
 }
 
-async function assertCustomer(customerId: unknown): Promise<number> {
+/** Le client doit exister **et** appartenir au magasin de la demande (README §28.5). */
+async function assertCustomer(customerId: unknown, storeId: number): Promise<number> {
   const id = Number(customerId);
   if (!Number.isInteger(id) || id <= 0) throw new ValidationError('Le client est obligatoire.');
-  const row = await rawGet<{ id: number }>('SELECT id FROM customers WHERE id = ?', [id]);
-  if (!row) throw new ValidationError('Client introuvable');
-  return id;
+  return (await assertCustomerInStore(id, storeId)).id;
 }
 
 async function writeItems(requestId: number, serviceIds: unknown, storeId: number) {
@@ -266,7 +266,7 @@ export async function createServiceRequest(input: {
 }): Promise<ServiceRequestRow> {
   return withTransaction(async () => {
     if (!input.storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
-    const customerId = await assertCustomer(input.customerId);
+    const customerId = await assertCustomer(input.customerId, input.storeId);
     const need = String(input.need ?? '').trim();
     if (!need) throw new ValidationError('Décrivez le besoin du client.');
 
@@ -322,7 +322,9 @@ export async function updateServiceRequest(
       throw new ConflictError('Cette demande est déjà convertie en chantier : elle ne se modifie plus.');
     }
     const values: Record<string, unknown> = { updatedAt: new Date() };
-    if (patch.customerId !== undefined) values.customerId = await assertCustomer(patch.customerId);
+    if (patch.customerId !== undefined && Number(patch.customerId) !== current.customerId) {
+      values.customerId = await assertCustomer(patch.customerId, storeId);
+    }
     if (patch.need !== undefined) {
       const need = String(patch.need ?? '').trim();
       if (!need) throw new ValidationError('Décrivez le besoin du client.');

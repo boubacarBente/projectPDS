@@ -158,6 +158,9 @@ export async function getAccessibleStoreIds(
           WHERE us.user_id = ? AND us.is_active = 1 AND us.deleted_at IS NULL
             AND s.deleted_at IS NULL AND s.status <> 'archived'
             AND (us.ends_at IS NULL OR us.ends_at >= date('now'))
+            -- « À partir du » était enregistré mais jamais lu : un remplaçant
+            -- affecté pour plus tard avait accès dès le jour de la saisie.
+            AND (us.starts_at IS NULL OR us.starts_at = '' OR us.starts_at <= date('now'))
           ORDER BY s.id`,
         [user.id],
       );
@@ -181,11 +184,36 @@ export async function resolveStoreContext(
   user: { id: number; role: string },
   sessionStoreId: number | null,
   viewAll: boolean,
+  /** Permission `stores.switch` (l'administrateur l'a toujours). */
+  canSwitch = true,
 ): Promise<StoreContext> {
   const { ids, allStores } = await getAccessibleStoreIds(user, viewAll);
+  // Sans le droit de changer de magasin, le magasin actif est **toujours** le
+  // magasin principal, quoi que contienne la session (README §28.6).
+  if (!canSwitch && user.role !== 'admin') {
+    return { storeIds: ids, activeStoreId: await getHomeStoreId(user.id, ids), allStores };
+  }
   const activeStoreId =
     sessionStoreId !== null && ids.includes(sessionStoreId) ? sessionStoreId : (ids[0] ?? null);
   return { storeIds: ids, activeStoreId, allStores };
+}
+
+/**
+ * Magasin **principal** d'un compte, parmi ses magasins accessibles : celui
+ * dont il est gérant, sinon sa plus ancienne affectation active, sinon le
+ * premier magasin accessible. C'est là que travaille un compte qui n'a pas
+ * le droit de changer de magasin.
+ */
+export async function getHomeStoreId(userId: number, accessible: number[]): Promise<number | null> {
+  if (accessible.length === 0) return null;
+  const row = await rawGet<{ store_id: number }>(
+    `SELECT us.store_id FROM user_stores us
+      WHERE us.user_id = ? AND us.is_active = 1 AND us.deleted_at IS NULL
+        AND us.store_id IN (${accessible.map((id) => Number(id)).join(',')})
+      ORDER BY us.is_manager DESC, us.id ASC LIMIT 1`,
+    [userId],
+  );
+  return row ? Number(row.store_id) : accessible[0];
 }
 
 /**
@@ -238,6 +266,12 @@ export type StoreInput = {
   receiptFooter?: string | null;
   settings?: Record<string, unknown> | null;
   notes?: string | null;
+  /**
+   * Création seulement : magasin dont on recopie l'**assortiment** (la liste
+   * des produits proposés, sans stock ni prix local). Absent = assortiment vide,
+   * le magasin ajoute ses produits lui-même.
+   */
+  copyAssortmentFrom?: number | null;
 };
 
 function cleanCode(value: unknown): string {
@@ -334,14 +368,24 @@ export async function createStore(
 
     const storeId = Number(created.id);
 
-    // Chaque produit du catalogue existe dans le nouveau magasin, à stock nul.
-    await rawAll(
-      `INSERT INTO product_stocks (store_id, product_id, quantity, created_at, sync_id, updated_at)
-       SELECT s.id, p.id, 0, unixepoch(), 'ps-' || s.sync_id || '-' || p.sync_id, unixepoch()
-         FROM products p, stores s
-        WHERE s.id = ? AND NOT EXISTS (SELECT 1 FROM product_stocks ps WHERE ps.store_id = s.id AND ps.product_id = p.id)`,
-      [storeId],
-    );
+    /*
+     * Assortiment de départ (README §28.5) : chaque magasin a ses propres
+     * produits. Avant, le nouveau magasin recevait tout le catalogue ; il part
+     * désormais vide, ou de la liste d'un magasin existant.
+     */
+    const sourceId = Number(input.copyAssortmentFrom ?? 0);
+    if (sourceId > 0) {
+      await rawAll(
+        `INSERT INTO product_stocks (store_id, product_id, quantity, is_listed, created_at, sync_id, updated_at)
+         SELECT s.id, src.product_id, 0, 1, unixepoch(), 'ps-' || s.sync_id || '-' || p.sync_id, unixepoch()
+           FROM product_stocks src
+           JOIN products p ON p.id = src.product_id AND p.is_active = 1
+           JOIN stores s ON s.id = ?
+          WHERE src.store_id = ? AND src.is_listed = 1
+            AND NOT EXISTS (SELECT 1 FROM product_stocks ps WHERE ps.store_id = s.id AND ps.product_id = p.id)`,
+        [storeId, sourceId],
+      );
+    }
 
     if (input.managerUserId) await ensureManagerAssignment(storeId, input.managerUserId);
 
@@ -600,7 +644,7 @@ export async function getStoreIndicators(storeId: number, from: string, to: stri
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices WHERE store_id = ? AND status = 'active') AS payables,
        (SELECT COALESCE(SUM(ps.quantity * p.purchase_price), 0) FROM product_stocks ps JOIN products p ON p.id = ps.product_id WHERE ps.store_id = ? AND p.is_active = 1) AS stock_value,
        (SELECT COUNT(*) FROM product_stocks ps JOIN products p ON p.id = ps.product_id
-          WHERE ps.store_id = ? AND p.is_active = 1 AND ps.quantity <= COALESCE(ps.stock_min, p.stock_min) AND COALESCE(ps.stock_min, p.stock_min) > 0) AS low_stock,
+          WHERE ps.store_id = ? AND p.is_active = 1 AND ps.is_listed = 1 AND ps.quantity <= COALESCE(ps.stock_min, p.stock_min) AND COALESCE(ps.stock_min, p.stock_min) > 0) AS low_stock,
        (SELECT COUNT(*) FROM users u JOIN user_stores us ON us.user_id = u.id WHERE us.store_id = ? AND us.is_active = 1 AND u.is_active = 1) AS users`,
     [
       storeId, from, to,

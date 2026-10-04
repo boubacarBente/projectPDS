@@ -11,6 +11,7 @@ import { useEffect, useId, useState } from 'react';
 import { Modal } from '@/components/modal';
 import { Badge, FormField, type BadgeTone } from '@/components/design-system';
 import { DatePicker } from '@/components/date-picker';
+import { useAuth } from '@/components/auth-provider';
 import type { StoreRow, StoreStatus, StoreKind, getStoreIndicators } from '@/lib/stores';
 
 /** `createdAt` arrive sérialisé en chaîne ISO par `NextResponse.json`. */
@@ -71,6 +72,8 @@ type FormValues = {
   openingHours: string;
   receiptFooter: string;
   notes: string;
+  /** Création seulement : magasin dont on recopie la liste des produits. */
+  copyAssortmentFrom: string;
 };
 
 function initialValues(store: StoreRecord | null | undefined): FormValues {
@@ -86,6 +89,7 @@ function initialValues(store: StoreRecord | null | undefined): FormValues {
     openingHours: store?.openingHours ?? '',
     receiptFooter: store?.receiptFooter ?? '',
     notes: store?.notes ?? '',
+    copyAssortmentFrom: '',
   };
 }
 
@@ -107,6 +111,7 @@ export function StoreFormModal({
   const idPrefix = useId();
   const fieldId = (name: string) => `${idPrefix}-${name}`;
   const isEdit = Boolean(store);
+  const { stores: knownStores } = useAuth();
 
   const [values, setValues] = useState<FormValues>(() => initialValues(store));
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -200,6 +205,9 @@ export function StoreFormModal({
         receiptFooter: values.receiptFooter.trim() || null,
         notes: values.notes.trim() || null,
       };
+      // Chaque magasin a ses propres produits (README §28.5) : à la création,
+      // on peut partir de la liste d'un magasin existant plutôt que de zéro.
+      if (!isEdit && values.copyAssortmentFrom) body.copyAssortmentFrom = Number(values.copyAssortmentFrom);
       // Champ masqué = gérant inchangé : surtout ne pas l'effacer.
       if (!managerFieldHidden && userOptions !== null) {
         body.managerUserId = values.managerUserId ? Number(values.managerUserId) : null;
@@ -412,6 +420,31 @@ export function StoreFormModal({
               placeholder="Notes internes"
             />
           </FormField>
+
+          {!isEdit && (
+            <FormField
+              label="Produits de départ"
+              htmlFor={fieldId('assortment')}
+              hint="Chaque magasin a sa propre liste de produits. Vous pouvez reprendre celle d’un magasin existant (sans son stock ni ses prix locaux), ou partir d’une liste vide."
+              className="sm:col-span-2"
+            >
+              <select
+                id={fieldId('assortment')}
+                className="select select-bordered w-full"
+                value={values.copyAssortmentFrom}
+                onChange={(event) => setField('copyAssortmentFrom', event.target.value)}
+              >
+                <option value="">Aucun produit (liste vide)</option>
+                {knownStores
+                  .filter((s) => s.status !== 'archived')
+                  .map((s) => (
+                    <option key={s.id} value={String(s.id)}>
+                      Mêmes produits que {s.name}
+                    </option>
+                  ))}
+              </select>
+            </FormField>
+          )}
         </div>
       </form>
     </Modal>

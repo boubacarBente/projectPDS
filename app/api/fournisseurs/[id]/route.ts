@@ -10,6 +10,7 @@ import {
   scopeFromRequest,
 } from '@/lib/api';
 import {
+  assertSupplierVisible,
   deactivateSupplier,
   getSupplier,
   getSupplierStats,
@@ -25,6 +26,8 @@ export async function GET(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('suppliers.view');
     const { id } = await params;
+    // Chaque magasin a ses propres fournisseurs : la fiche d'un autre magasin est refusée (403).
+    await assertSupplierVisible(user, parseId(id));
 
     const stats = await getSupplierStats(parseId(id), scopeFromRequest(user, request));
     if (!stats) throw new NotFoundError('Fournisseur introuvable');
@@ -47,6 +50,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // serveur. C'est donc à la route de rendre un 404 lisible.
     const existing = await getSupplier(supplierId);
     if (!existing) throw new NotFoundError('Fournisseur introuvable');
+    await assertSupplierVisible(user, supplierId);
 
     const body = await readJson<any>(request);
 
@@ -88,6 +92,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const user = await requireAction('suppliers.delete');
     const { id } = await params;
     const supplierId = parseId(id);
+    await assertSupplierVisible(user, supplierId);
 
     const reactivate = request.nextUrl.searchParams.get('reactivate') === 'true';
 

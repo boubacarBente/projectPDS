@@ -10,7 +10,13 @@ import {
   NotFoundError,
   scopeFromRequest,
 } from '@/lib/api';
-import { deactivateCustomer, getCustomerStats, reactivateCustomer, updateCustomer } from '@/lib/customers';
+import {
+  assertCustomerVisible,
+  deactivateCustomer,
+  getCustomerStats,
+  reactivateCustomer,
+  updateCustomer,
+} from '@/lib/customers';
 import { canViewSalesProfit, withoutSalesProfit } from '@/lib/sales';
 import { writeAudit } from '@/lib/audit';
 
@@ -27,6 +33,8 @@ export async function GET(request: NextRequest, { params }: Params) {
   try {
     const user = await requireAction('customers.view');
     const { id } = await params;
+    // Chaque magasin a ses propres clients : la fiche d'un autre magasin est refusée (403).
+    await assertCustomerVisible(user, parseId(id));
 
     const stats = await getCustomerStats(parseId(id), scopeFromRequest(user, request));
     if (!stats) throw new NotFoundError('Client introuvable');
@@ -45,6 +53,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const user = await requireAction('customers.update');
     const { id } = await params;
     const customerId = parseId(id);
+    await assertCustomerVisible(user, customerId);
     const body = await readJson<any>(request);
 
     const patch: Record<string, unknown> = {};
@@ -83,6 +92,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const user = await requireAction('customers.delete');
     const { id } = await params;
     const customerId = parseId(id);
+    await assertCustomerVisible(user, customerId);
 
     const reactivate = request.nextUrl.searchParams.get('reactivate') === 'true';
 

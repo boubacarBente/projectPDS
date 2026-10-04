@@ -10,17 +10,25 @@
  * **non annulés** — ce qui est exactement « Σ total − Σ paiements » (§15) :
  * `lib/payments.ts` recalcule `amount_paid` / `remaining_amount` depuis les
  * lignes de `payments`, il n'y a donc pas de double calcul à refaire ici.
+ *
+ * **Chaque magasin a ses propres fournisseurs** (README §28.5) : la portée
+ * filtre les fiches, et un achat ou une sous-traitance n'accepte qu'un
+ * fournisseur de son magasin (`assertSupplierInStore`).
  */
 
 import { db, rawAll, rawGet } from '@/db';
 import { suppliers } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { scopeSql, type StoreScope } from '@/lib/stores';
+import { assertStoreVisible, NotFoundError, ValidationError, type SessionUser } from '@/lib/api';
 import { listPayments, type PaymentRow } from '@/lib/payments';
 import { DEFAULT_LIST_SORT, sqlOrderBy, type ListSort } from '@/lib/list-sort';
 
 export type SupplierRow = {
   id: number;
+  /** Magasin propriétaire de la fiche. */
+  storeId: number | null;
+  storeName: string | null;
   name: string;
   phone: string | null;
   address: string | null;
@@ -124,6 +132,8 @@ export async function listSuppliers(
   if (options.inactiveOnly) where.push('s.is_active = 0');
   else if (!options.includeInactive) where.push('s.is_active = 1');
   if (options.subcontractorsOnly) where.push('s.is_subcontractor = 1');
+  // Fournisseurs **du** magasin : la portée filtre les fiches, pas seulement les dettes.
+  if (options.scope) where.push(scopeSql('s.store_id', options.scope));
 
   if (options.search) {
     where.push('(s.name LIKE ? OR s.phone LIKE ? OR s.address LIKE ? OR s.specialty LIKE ?)');
@@ -145,7 +155,7 @@ export async function listSuppliers(
   const debtorFilter = options.debtorsOnly ? 'WHERE balance > 0.001' : '';
 
   const innerSql = `
-    SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active, s.is_subcontractor, s.specialty,
+    SELECT s.id, s.store_id, st.name AS store_name, s.name, s.phone, s.address, s.notes, s.is_active, s.is_subcontractor, s.specialty,
            COALESCE(inv.purchase_count, 0)   AS purchase_count,
            COALESCE(inv.total_purchased, 0)  AS total_purchased,
            COALESCE(inv.total_paid, 0)       AS total_paid,
@@ -164,6 +174,7 @@ export async function listSuppliers(
       WHERE status = 'active' AND supplier_id IS NOT NULL ${storeFilter(options.scope)}
       GROUP BY supplier_id
     ) inv ON inv.supplier_id = s.id
+    LEFT JOIN stores st ON st.id = s.store_id
     ${whereSql}
   `;
 
@@ -206,6 +217,8 @@ export async function listSuppliers(
 function mapSupplierRow(row: any): SupplierRow {
   return {
     id: Number(row.id),
+    storeId: row.store_id == null ? null : Number(row.store_id),
+    storeName: row.store_name ?? null,
     name: row.name,
     phone: row.phone,
     address: row.address,
@@ -228,7 +241,7 @@ function storeFilter(scope: StoreScope | undefined, column = 'store_id'): string
 
 export async function getSupplier(id: number, scope?: StoreScope): Promise<SupplierRow | null> {
   const row = await rawGet<any>(
-    `SELECT s.id, s.name, s.phone, s.address, s.notes, s.is_active, s.is_subcontractor, s.specialty, s.created_at,
+    `SELECT s.id, s.store_id, st.name AS store_name, s.name, s.phone, s.address, s.notes, s.is_active, s.is_subcontractor, s.specialty, s.created_at,
             COALESCE(inv.purchase_count, 0)   AS purchase_count,
             COALESCE(inv.total_purchased, 0)  AS total_purchased,
             COALESCE(inv.total_paid, 0)       AS total_paid,
@@ -242,6 +255,7 @@ export async function getSupplier(id: number, scope?: StoreScope): Promise<Suppl
        FROM purchase_invoices WHERE status = 'active' AND supplier_id IS NOT NULL ${storeFilter(scope)}
        GROUP BY supplier_id
      ) inv ON inv.supplier_id = s.id
+     LEFT JOIN stores st ON st.id = s.store_id
      WHERE s.id = ?`,
     [id],
   );
@@ -249,10 +263,42 @@ export async function getSupplier(id: number, scope?: StoreScope): Promise<Suppl
   return row ? mapSupplierRow(row) : null;
 }
 
-export async function createSupplier(input: SupplierInput): Promise<SupplierRow> {
+/**
+ * Fournisseur utilisable par un document du magasin `storeId` : il doit
+ * exister et appartenir à ce magasin (une fiche sans magasin reste acceptée).
+ */
+export async function assertSupplierInStore(
+  supplierId: number,
+  storeId: number | null | undefined,
+  label = 'fournisseur',
+): Promise<{ id: number; name: string; isActive: boolean }> {
+  const row = await rawGet<{ id: number; name: string; is_active: number; store_id: number | null; store_name: string | null }>(
+    `SELECT f.id, f.name, f.is_active, f.store_id, s.name AS store_name
+       FROM suppliers f LEFT JOIN stores s ON s.id = f.store_id WHERE f.id = ?`,
+    [supplierId],
+  );
+  if (!row) throw new ValidationError(`${label.charAt(0).toUpperCase()}${label.slice(1)} introuvable`);
+  if (storeId && row.store_id != null && Number(row.store_id) !== Number(storeId)) {
+    throw new ValidationError(
+      `« ${row.name} » est un ${label} du magasin ${row.store_name ?? 'd’un autre magasin'} : chaque magasin a ses propres fournisseurs. Créez la fiche dans ce magasin.`,
+    );
+  }
+  return { id: Number(row.id), name: String(row.name), isActive: Boolean(row.is_active) };
+}
+
+/** La fiche doit appartenir à un magasin du périmètre de l'utilisateur (404 / 403 sinon). */
+export async function assertSupplierVisible(user: SessionUser, id: number): Promise<void> {
+  const row = await rawGet<{ store_id: number | null }>('SELECT store_id FROM suppliers WHERE id = ?', [id]);
+  if (!row) throw new NotFoundError('Fournisseur introuvable');
+  assertStoreVisible(user, row.store_id);
+}
+
+/** Création dans le magasin actif (`storeId`), jamais dans un magasin reçu du navigateur. */
+export async function createSupplier(input: SupplierInput, storeId: number): Promise<SupplierRow> {
   const inserted = await db
     .insert(suppliers)
     .values({
+      storeId,
       name: input.name.trim(),
       phone: input.phone?.trim() || null,
       address: input.address?.trim() || null,
@@ -407,8 +453,8 @@ export async function getSupplierStats(id: number, scope?: StoreScope): Promise<
 export async function getSuppliersSummary(scope?: StoreScope): Promise<SuppliersSummary> {
   const row = await rawGet<any>(
     `SELECT
-       (SELECT COUNT(*) FROM suppliers) AS total_suppliers,
-       (SELECT COUNT(*) FROM suppliers WHERE is_active = 1) AS active_suppliers,
+       (SELECT COUNT(*) FROM suppliers WHERE 1 = 1 ${storeFilter(scope)}) AS total_suppliers,
+       (SELECT COUNT(*) FROM suppliers WHERE is_active = 1 ${storeFilter(scope)}) AS active_suppliers,
        (SELECT COUNT(DISTINCT supplier_id) FROM purchase_invoices
          WHERE status = 'active' AND remaining_amount > 0.001 AND supplier_id IS NOT NULL ${storeFilter(scope)}) AS debtors_count,
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices
