@@ -179,6 +179,14 @@ table .tabular,
   outline-offset: 2px;
 }
 
+/* Champ en erreur : l'anneau ci-dessus (hors couche, donc plus fort que les
+   classes `input-error`) le laissait vert alors que le message dit « erreur ». */
+[aria-invalid='true'],
+[aria-invalid='true']:focus-visible {
+  border-color: var(--color-error);
+  outline-color: var(--color-error);
+}
+
 /* ------------------------------------------------------------------
  * Mode sombre
  * ------------------------------------------------------------------ */

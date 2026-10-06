@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
+import { documentPhoneLine } from '@/lib/letterhead';
 import { ExportDropdown } from '@/components/export-dropdown';
 import { ResponsiveTable, type Column } from '@/components/responsive-table';
 import {
@@ -164,7 +165,8 @@ export default function RecuPage() {
     () => applyStoreLetterhead(settings, (data as { store?: StoreLetterheadView } | null)?.store),
     [settings, data],
   );
-  const company = docSettings;
+  // Jusqu'à 3 numéros (magasin, sinon entreprise) — `lib/letterhead.ts`.
+  const company = useMemo(() => ({ ...docSettings, companyPhone: documentPhoneLine(docSettings) }), [docSettings]);
   const currency = company.currency || 'GNF';
 
   /*

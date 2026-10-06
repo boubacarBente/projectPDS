@@ -10,7 +10,7 @@ import {
   toBool,
   requireCentralEdit,
 } from '@/lib/api';
-import { assertAssignableRole, assertCanManageUser } from '@/lib/user-scope';
+import { assertAssignableRole, assertCanManageUser, assertNotOwnPrivileges } from '@/lib/user-scope';
 import { deactivateUser, getUserWithStores, reactivateUser, updateUser, type UserPatch } from '@/lib/users';
 import { writeAudit } from '@/lib/audit';
 import { isRole } from '@/lib/permissions';
@@ -47,8 +47,15 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const { id } = await params;
     const userId = parseId(id);
     await requireCentralEdit();
-    await assertCanManageUser(user, userId);
+    const target = await assertCanManageUser(user, userId);
     const body = await readJson<any>(request);
+    // Renvoyer son rôle ou son statut inchangés (formulaire complet) reste permis.
+    if (
+      (body.role !== undefined && body.role !== target.role) ||
+      (body.isActive !== undefined && toBool(body.isActive, true) !== target.isActive)
+    ) {
+      assertNotOwnPrivileges(user, userId);
+    }
 
     const patch: UserPatch = {};
     if (body.name !== undefined) patch.name = String(body.name);
@@ -63,7 +70,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.phone !== undefined) patch.phone = body.phone === null ? null : String(body.phone);
     if (body.isActive !== undefined) patch.isActive = toBool(body.isActive, true);
 
-    const updated = await updateUser(userId, patch);
+    const updated = await updateUser(userId, patch, user);
 
     await writeAudit({
       user,
@@ -107,7 +114,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     if (reactivate) {
       await reactivateUser(userId);
     } else {
-      await deactivateUser(userId);
+      await deactivateUser(userId, user);
     }
 
     await writeAudit({

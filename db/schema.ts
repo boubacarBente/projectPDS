@@ -47,10 +47,19 @@ export const users = sqliteTable('users', {
   role: text('role').notNull().default('seller'),
   phone: text('phone'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  /**
+   * Super administrateur (README §17.2) : un administrateur qui commande les
+   * autres — lui seul peut désactiver, rétrograder ou réinitialiser un
+   * administrateur, et personne ne peut le désactiver. **Un seul** compte
+   * (index unique partiel) : le premier créé par l'installation.
+   */
+  isSuperAdmin: integer('is_super_admin', { mode: 'boolean' }).notNull().default(false),
   lastLoginAt: integer('last_login_at', { mode: 'timestamp' }),
   createdAt: createdAt(),
   ...syncCols(),
-});
+}, (t) => [
+  uniqueIndex('users_single_super_admin').on(t.isSuperAdmin).where(sql`${t.isSuperAdmin} = 1`),
+]);
 
 /** Journal des actions importantes (§12, §14, README §17.3). */
 export const auditLogs = sqliteTable('audit_logs', {
@@ -141,6 +150,12 @@ export const stores = sqliteTable('stores', {
   openingHours: text('opening_hours'),
   /** Mentions affichées en pied de facture / reçu pour ce magasin. */
   receiptFooter: text('receipt_footer'),
+  /**
+   * Numéros de l'en-tête des documents de ce magasin, 3 au plus, séparés par
+   * des virgules (`+224 629 585 035|whatsapp`). Vide : ceux de l'entreprise
+   * (Paramètres). Voir `lib/letterhead.ts`.
+   */
+  documentPhones: text('document_phones'),
   /** Paramètres locaux (JSON) : remplacent les paramètres globaux autorisés. */
   settings: text('settings'),
   notes: text('notes'),

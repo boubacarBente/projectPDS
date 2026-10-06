@@ -110,6 +110,7 @@ export async function listUsers() {
         role: users.role,
         phone: users.phone,
         isActive: users.isActive,
+        isSuperAdmin: users.isSuperAdmin,
         lastLoginAt: users.lastLoginAt,
         createdAt: users.createdAt,
       })
@@ -127,6 +128,8 @@ export async function createUser(input: {
   password: string;
   role: Role;
   phone?: string | null;
+  /** Réservé à l'installation (`POST /api/auth/setup`) : le premier compte. */
+  isSuperAdmin?: boolean;
 }) {
   const result = await db
     .insert(users)
@@ -136,6 +139,7 @@ export async function createUser(input: {
       passwordHash: hashPassword(input.password),
       role: input.role,
       phone: input.phone ?? null,
+      isSuperAdmin: input.isSuperAdmin === true,
     })
     .returning();
   return result[0];

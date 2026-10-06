@@ -29,6 +29,7 @@
  * l'affichage passe par `lib/date-format.ts`.
  */
 
+import { documentPhoneLine } from '@/lib/letterhead';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Modal } from '@/components/modal';
@@ -277,7 +278,7 @@ export function toDocumentItems(items: PurchaseInvoiceItemRow[]): PurchaseDocume
 }
 
 /** En-tête d'entreprise du document imprimable, depuis `settings` (§9.2). */
-export function companyFromSettings(settings: {
+export function companyFromSettings(settings: Parameters<typeof documentPhoneLine>[0] & {
   companyName: string;
   companyBranch: string;
   companyAddress: string;
@@ -292,7 +293,8 @@ export function companyFromSettings(settings: {
     companyName: settings.companyName || 'Planète Déco Sarlu',
     companyBranch: settings.companyBranch || '',
     companyAddress: settings.companyAddress || '',
-    companyPhone: settings.companyPhone || '',
+    // Jusqu'à 3 numéros (magasin, sinon entreprise) — `lib/letterhead.ts`.
+    companyPhone: documentPhoneLine(settings),
     companyEmail: settings.companyEmail || '',
     companyTaxId: settings.companyTaxId || '',
     companyLogo: settings.companyLogo || '',

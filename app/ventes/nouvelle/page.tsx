@@ -1580,10 +1580,16 @@ function NouvelleVenteForm() {
             )}
 
             {/* Pied d'actions collant : « Enregistrer » reste atteignable sur un
-                long formulaire mobile (§5.5 règle 4). */}
-            <div className="sticky bottom-0 z-20 -mx-2 flex flex-wrap items-center justify-between gap-3 rounded-t-2xl border-t border-base-200 bg-base-100/95 px-3 py-3 backdrop-blur-sm sm:-mx-4 sm:px-4">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                long formulaire mobile (§5.5 règle 4).
+                Sur téléphone, grille de deux rangées : total + « Enregistrer », puis
+                « Annuler » + « Brouillon ». En `flex-wrap`, les trois boutons
+                s'empilaient sur trois lignes et le pied collant occupait près
+                d'un quart de l'écran (≈ 190 px à 400 px de large). Les boutons
+                sont réordonnés par `order` (le conteneur d'actions est en
+                `display: contents` sous `sm`) ; au-delà, mise en page d'origine. */}
+            <div className="sticky bottom-0 z-20 -mx-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-t-2xl border-t border-base-200 bg-base-100/95 px-3 py-3 backdrop-blur-sm sm:-mx-4 sm:flex sm:flex-wrap sm:justify-between sm:gap-3 sm:px-4">
+              <div className="order-1 flex min-w-0 items-center gap-2.5 sm:order-none">
+                <span className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary sm:flex">
                   <Icon d={ICONS.cube} className="h-5 w-5" />
                 </span>
                 <div className="min-w-0">
@@ -1593,10 +1599,10 @@ function NouvelleVenteForm() {
                   <MoneyText value={totals.totalToPay} bold className="text-lg" />
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="contents sm:flex sm:flex-wrap sm:items-center sm:gap-2">
                 <button
                   type="button"
-                  className="btn btn-ghost min-h-11 sm:min-h-0"
+                  className="btn btn-ghost order-3 min-h-11 justify-self-start sm:order-none sm:min-h-0"
                   onClick={() => router.push('/ventes')}
                   disabled={isSubmitting}
                 >
@@ -1619,7 +1625,7 @@ function NouvelleVenteForm() {
                 >
                   <button
                     type="button"
-                    className="btn btn-outline min-h-11 sm:min-h-0"
+                    className="btn btn-outline order-4 min-h-11 sm:order-none sm:min-h-0"
                     onClick={() => void submit('draft')}
                     disabled={isSubmitting || !canCreate}
                   >
@@ -1628,7 +1634,7 @@ function NouvelleVenteForm() {
                 </Tooltip>
                 <button
                   type="submit"
-                  className="btn btn-primary min-h-11 rounded-xl px-5 font-semibold sm:min-h-0"
+                  className="btn btn-primary order-2 min-h-11 rounded-xl px-5 font-semibold sm:order-none sm:min-h-0"
                   disabled={isSubmitting || !canCreate}
                 >
                   {isSubmitting ? (
@@ -1636,7 +1642,9 @@ function NouvelleVenteForm() {
                   ) : (
                     <>
                       <Icon d={ICONS.lock} className="h-4 w-4" strokeWidth={2} />
-                      Enregistrer la vente
+                      {/* Libellé court sur téléphone : il partage la rangée avec le total. */}
+                      <span className="sm:hidden">Enregistrer</span>
+                      <span className="hidden sm:inline">Enregistrer la vente</span>
                     </>
                   )}
                 </button>

@@ -40,6 +40,7 @@ import { useSettings } from '@/app/parametres/page';
 import { usePermission } from '@/components/role-gate';
 import { formatDateShort } from '@/lib/date-format';
 import { formatCurrency, formatNumber, today } from '@/lib/format';
+import { documentPhoneLine } from '@/lib/letterhead';
 import type {
   PaymentSchedule as LibPaymentSchedule,
   SalesInvoiceItemRow as LibSalesInvoiceItemRow,
@@ -258,7 +259,7 @@ export function toDocumentItems(items: SalesInvoiceItemRow[]): InvoiceDocumentIt
 }
 
 /** En-tête d'entreprise du document imprimable, depuis `settings` (§9.2). */
-export function companyFromSettings(settings: {
+export function companyFromSettings(settings: Parameters<typeof documentPhoneLine>[0] & {
   companyName: string;
   companyBranch: string;
   companyAddress: string;
@@ -273,7 +274,8 @@ export function companyFromSettings(settings: {
     companyName: settings.companyName || 'Planète Déco Sarlu',
     companyBranch: settings.companyBranch || '',
     companyAddress: settings.companyAddress || '',
-    companyPhone: settings.companyPhone || '',
+    // Jusqu'à 3 numéros (magasin, sinon entreprise) — `lib/letterhead.ts`.
+    companyPhone: documentPhoneLine(settings),
     companyEmail: settings.companyEmail || '',
     companyTaxId: settings.companyTaxId || '',
     companyLogo: settings.companyLogo || '',
@@ -752,7 +754,9 @@ export function SalePaymentModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    setAmount(remainingAmount > 0 ? String(remainingAmount) : '');
+    // Champ vide (demande client, 5 octobre 2026) : le client paie souvent par
+    // tranches ; pré-remplir le reste faisait encaisser le tout par mégarde.
+    setAmount('');
     setNotes('');
     setDate(today());
     setFormError(null);
@@ -769,6 +773,11 @@ export function SalePaymentModal({
 
   const paid = Number(amount);
   const remainingAfter = Math.max(remainingAmount - (Number.isFinite(paid) ? paid : 0), 0);
+  // Contrôle immédiat, à la saisie ; le serveur refuse aussi (`createPayment`).
+  const overpaid = amount !== '' && Number.isFinite(paid) && paid > remainingAmount + 0.01;
+  const amountError = overpaid
+    ? `Le montant dépasse ce que le client doit : ${formatNumber(remainingAmount)} GNF au maximum.`
+    : null;
 
   const submit = async () => {
     if (!canCreate) {
@@ -872,18 +881,23 @@ export function SalePaymentModal({
                 htmlFor="sale-payment-amount"
                 required
                 hint={`Reste après encaissement : ${formatNumber(remainingAfter)} GNF`}
-                error={formError}
+                error={amountError ?? formError}
               >
                 <input
                   id="sale-payment-amount"
                   type="number"
                   min={0}
+                  max={remainingAmount}
                   step={1000}
                   inputMode="numeric"
-                  className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
+                  className={`input input-bordered min-h-11 w-full tabular sm:min-h-0 ${overpaid ? 'input-error' : ''}`}
                   value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  placeholder="0"
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setFormError(null);
+                  }}
+                  placeholder="Montant versé par le client"
+                  aria-invalid={overpaid}
                 />
               </FormField>
 
@@ -921,10 +935,11 @@ export function SalePaymentModal({
 
             <div className="grid grid-cols-2 gap-3">
               <MiniStat label="Reste avant" value={<MoneyText value={remainingAmount} />} />
+              {/* Montant trop élevé : pas de « 0 GNF » vert, qui laisserait croire la facture soldée. */}
               <MiniStat
                 label="Reste après"
-                tone={remainingAfter > 0.001 ? 'warning' : 'success'}
-                value={<MoneyText value={remainingAfter} bold />}
+                tone={overpaid ? 'neutral' : remainingAfter > 0.001 ? 'warning' : 'success'}
+                value={overpaid ? '—' : <MoneyText value={remainingAfter} bold />}
               />
             </div>
           </>
@@ -944,7 +959,7 @@ export function SalePaymentModal({
               type="button"
               className="btn btn-primary min-h-11 sm:min-h-0"
               onClick={() => void submit()}
-              disabled={isSubmitting || !canCreate}
+              disabled={isSubmitting || !canCreate || overpaid}
             >
               {isSubmitting ? (
                 <span className="loading loading-spinner loading-sm" />

@@ -10,8 +10,13 @@
  * Le repli est volontairement tolérant : une statistique indisponible affiche
  * « — » plutôt que de faire tomber la page — la liste des ventes reste
  * exploitable même si l'agrégat échoue.
+ *
+ * Sur téléphone, les cartes passent en 2 × 2 et le détail (part non encaissée,
+ * produits les plus vendus) se replie derrière un bouton : déplié, il repoussait
+ * la première vente à plus de 1 100 px du haut de l'écran.
  */
 
+import { useState } from 'react';
 import { Card, MiniStat, MoneyText, SkeletonCards } from '@/components/design-system';
 import { formatCurrency, formatCurrencyCompact, formatNumber, formatPercent } from '@/lib/format';
 
@@ -77,6 +82,7 @@ export function VentesStatsCards({
   period: VentesStatsPeriod;
   onPeriodChange: (period: VentesStatsPeriod) => void;
 }) {
+  const [showDetailsOnMobile, setShowDetailsOnMobile] = useState(false);
   const periodLabel =
     VENTES_PERIODS.find((entry) => entry.key === period)?.label ?? 'Total';
 
@@ -104,7 +110,7 @@ export function VentesStatsCards({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <MiniStat
           label={`Chiffre d'affaires — ${periodLabel.toLowerCase()}`}
           tone="primary"
@@ -130,7 +136,33 @@ export function VentesStatsCards({
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm min-h-11 w-full justify-between border border-base-300 sm:hidden"
+        aria-expanded={showDetailsOnMobile}
+        aria-controls="ventes-stats-details"
+        onClick={() => setShowDetailsOnMobile((open) => !open)}
+      >
+        {showDetailsOnMobile ? 'Masquer le détail' : 'Détail : part non encaissée, meilleurs produits'}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className={`h-4 w-4 transition-transform ${showDetailsOnMobile ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* `lg:items-start` : la carte « Part non encaissée » gardait la hauteur du
+          classement des produits, avec un grand vide sous ses deux chiffres. */}
+      <div
+        id="ventes-stats-details"
+        className={`${showDetailsOnMobile ? 'grid' : 'hidden'} grid-cols-1 gap-4 sm:grid lg:grid-cols-2 lg:items-start`}
+      >
         <Card className="space-y-2">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-sm font-semibold">Part non encaissée</h3>

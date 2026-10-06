@@ -20,7 +20,11 @@ export async function GET() {
   }
 }
 
-/** POST /api/auth/setup — crée le premier administrateur, puis ouvre la session. */
+/**
+ * POST /api/auth/setup — crée le premier administrateur, puis ouvre la session.
+ * Ce premier compte est le **super administrateur** (README §17.2) : le seul
+ * qui commande les autres administrateurs, et que personne ne peut désactiver.
+ */
 export async function POST(request: Request) {
   try {
     if (await hasAdminUser()) {
@@ -56,7 +60,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await createUser({ name, username, password, role: 'admin' });
+    const user = await createUser({ name, username, password, role: 'admin', isSuperAdmin: true });
 
     // Les valeurs par défaut des paramètres sont écrites au premier lancement.
     await ensureDefaultSettings();
@@ -92,6 +96,7 @@ export async function POST(request: Request) {
       name: user.name,
       username: user.username,
       role: 'admin' as const,
+      isSuperAdmin: true,
     };
 
     await writeAudit({
@@ -99,7 +104,7 @@ export async function POST(request: Request) {
       action: 'create',
       entity: 'user',
       entityId: user.id,
-      details: { role: 'admin', raison: 'Premier administrateur' },
+      details: { role: 'admin', superAdmin: true, raison: 'Premier administrateur (super administrateur)' },
     });
 
     return await createSessionResponse(sessionUser, 201, { storeId: firstStore?.id ?? null });

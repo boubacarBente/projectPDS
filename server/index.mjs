@@ -11,7 +11,10 @@
  *  - un poste de magasin ne reçoit que les référentiels communs, les données de
  *    **son** magasin et les transferts qui le concernent ;
  *  - un poste de magasin ne peut **pas** écrire les données d'un autre magasin,
- *    ni les référentiels centraux (catalogue, comptes, paramètres, magasins) ;
+ *    ni les référentiels centraux (catalogue, comptes, paramètres, magasins) :
+ *    la portée d'une ligne est **recalculée par le serveur** (table des portées
+ *    `sync-scopes.mjs`, contenu de la ligne, document parent), jamais crue sur
+ *    parole ;
  *  - l'inscription d'un poste exige la clé maîtresse (siège) ou un code à usage
  *    unique généré par le siège (magasin), valable 7 jours ;
  *  - le service se place derrière un proxy HTTPS (voir `Caddyfile`).
@@ -24,6 +27,7 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import pg from 'pg';
+import { TABLE_SCOPES } from './sync-scopes.mjs';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/planete_deco';
@@ -34,17 +38,8 @@ const CODE_TTL_DAYS = 7;
 
 /** Tables que seul le siège peut écrire (référentiels centraux). */
 const HQ_ONLY = new Set(['users', 'stores', 'user_stores', 'user_permissions', 'settings', 'categories', 'products']);
-/** Tables enfants d'un transfert : visibles par les deux magasins. */
-const KNOWN_TABLES = new Set([
-  'users', 'stores', 'user_stores', 'user_permissions', 'settings', 'categories', 'products',
-  'customers', 'suppliers', 'workers', 'product_stocks', 'sales_invoices', 'sales_invoice_items',
-  'purchase_invoices', 'purchase_invoice_items', 'service_jobs', 'service_job_materials',
-  'service_job_workers', 'stock_transfers', 'stock_transfer_items', 'stock_transfer_events',
-  'inventories', 'inventory_items', 'payments', 'cash_sessions', 'cash_movements', 'stock_movements',
-  'expenses', 'report_deliveries', 'audit_logs',
-  'services', 'service_price_history', 'service_requests', 'service_request_items', 'quotes',
-  'quote_items', 'service_job_items', 'job_stages', 'job_subcontracts',
-]);
+/** Tables synchronisées, dans l'ordre d'application (parents avant enfants). */
+const TABLE_ORDER = new Map([...TABLE_SCOPES.keys()].map((name, index) => [name, index]));
 
 export function createPool(url = DATABASE_URL) {
   return new pg.Pool({ connectionString: url, max: 10 });
@@ -258,29 +253,90 @@ async function enroll(pool, body, ip) {
  * Envoi (push)
  * ------------------------------------------------------------------ */
 
-/** Le poste peut-il écrire cette ligne ? (portée entrante **et** portée existante) */
-function canWrite(device, change, existing) {
-  if (device.mode === 'hq') return true;
-  if (HQ_ONLY.has(change.table)) return false;
-  const mine = device.store_sync_id;
-  const inScope = (scope) =>
+/** La ligne (portée enregistrée) concerne-t-elle ce magasin ? */
+function inStoreScope(scope, mine) {
+  return Boolean(
     scope.is_global ||
-    (scope.store_sync_id && scope.store_sync_id === mine) ||
-    (scope.peer_store_sync_id && scope.peer_store_sync_id === mine);
-  const incoming = {
+      (scope.store_sync_id && scope.store_sync_id === mine) ||
+      (scope.peer_store_sync_id && scope.peer_store_sync_id === mine),
+  );
+}
+
+/**
+ * Portée sous laquelle la ligne est enregistrée, ou `null` si le poste n'a pas
+ * le droit de l'écrire.
+ *
+ * Le siège est cru sur parole. Pour un poste de magasin, la portée est
+ * **recalculée** (revue de sécurité du 4 octobre 2026) : avant, le serveur
+ * gardait la portée déclarée par le poste sans regarder la ligne, si bien
+ * qu'un poste pouvait déclarer son magasin (ou « global ») tout en écrivant
+ * `store_id` = un autre magasin — le siège l'enregistrait au nom de ce magasin.
+ */
+export async function authorizedScope(client, device, change, existing) {
+  const declared = {
     is_global: Boolean(change.isGlobal),
     store_sync_id: change.storeSyncId ?? null,
     peer_store_sync_id: change.peerStoreSyncId ?? null,
   };
-  // Une ligne supprimée n'a pas de portée : on se fie à la portée existante.
-  if (!change.deleted && !inScope(incoming)) return false;
-  if (existing && !inScope(existing)) return false;
-  if (!existing && change.deleted) return true;
-  return true;
+  if (device.mode === 'hq') return change.deleted && existing ? existing : declared;
+
+  const mine = device.store_sync_id;
+  const own = { is_global: false, store_sync_id: mine, peer_store_sync_id: null };
+  if (HQ_ONLY.has(change.table)) return null;
+  // Une ligne d'un autre magasin ne se modifie ni ne se supprime depuis ici.
+  if (existing && !inStoreScope(existing, mine)) return null;
+  // Une suppression garde la portée de la ligne pour être redistribuée aux bons postes.
+  if (change.deleted) return existing ?? own;
+
+  const scope = TABLE_SCOPES.get(change.table);
+  const payload = change.payload && typeof change.payload === 'object' ? change.payload : {};
+  switch (scope.kind) {
+    case 'store': {
+      // Colonne de magasin déclarée en clé étrangère : elle voyage en sync_id.
+      // Une colonne simple (entier local, `audit_logs`) est réécrite à la
+      // réception d'après cette portée (`applyChange`).
+      const value = payload[scope.column];
+      if (typeof value === 'string' && value !== mine) return null;
+      return own;
+    }
+    case 'transfer': {
+      const source = payload.source_store_id;
+      const destination = payload.destination_store_id;
+      if (typeof source !== 'string' || typeof destination !== 'string') return null;
+      if (source !== mine && destination !== mine) return null;
+      return { is_global: false, store_sync_id: source, peer_store_sync_id: destination };
+    }
+    case 'child': {
+      const parentSyncId = payload[scope.parentColumn];
+      if (typeof parentSyncId !== 'string' || !parentSyncId) return own;
+      const { rows } = await client.query(
+        `SELECT is_global, store_sync_id, peer_store_sync_id FROM sync_rows WHERE table_name = $1 AND sync_id = $2`,
+        [scope.parentTable, parentSyncId],
+      );
+      // Parent pas encore reçu (lot suivant) : la ligne reste dans le magasin du
+      // poste, elle ne peut atteindre aucun autre magasin.
+      if (rows.length === 0) return own;
+      if (!inStoreScope(rows[0], mine)) return null;
+      return { is_global: false, store_sync_id: rows[0].store_sync_id, peer_store_sync_id: rows[0].peer_store_sync_id };
+    }
+    default:
+      // Référentiel commun : réservé au siège.
+      return null;
+  }
 }
 
 export async function handlePush(pool, device, body) {
-  const changes = Array.isArray(body.changes) ? body.changes : [];
+  // Parents avant enfants : la portée d'une ligne enfant se lit sur son parent,
+  // qui doit donc être enregistré d'abord (tri stable : l'ordre du poste est
+  // gardé à l'intérieur d'une table).
+  const changes = (Array.isArray(body.changes) ? body.changes : [])
+    .map((change, index) => ({ change, index }))
+    .sort(
+      (a, b) =>
+        (TABLE_ORDER.get(a.change?.table) ?? Infinity) - (TABLE_ORDER.get(b.change?.table) ?? Infinity) ||
+        a.index - b.index,
+    )
+    .map(({ change }) => change);
   const accepted = [];
   const rejected = [];
 
@@ -291,7 +347,7 @@ export async function handlePush(pool, device, body) {
     await client.query('SELECT pg_advisory_xact_lock(424242)');
 
     for (const change of changes) {
-      if (!change || !KNOWN_TABLES.has(change.table) || typeof change.syncId !== 'string' || !change.syncId) {
+      if (!change || !TABLE_SCOPES.has(change.table) || typeof change.syncId !== 'string' || !change.syncId) {
         rejected.push({ table: change?.table, syncId: change?.syncId, reason: 'invalid' });
         continue;
       }
@@ -303,20 +359,13 @@ export async function handlePush(pool, device, body) {
       );
       const existing = existingRows[0] ?? null;
 
-      if (!canWrite(device, change, existing)) {
+      const scope = await authorizedScope(client, device, change, existing);
+      if (!scope) {
         rejected.push({ table: change.table, syncId: change.syncId, reason: 'forbidden' });
         continue;
       }
 
       const updatedAt = Math.max(0, Math.trunc(Number(change.updatedAt) || Date.now()));
-      // Une suppression garde la portée de la ligne pour être redistribuée aux bons postes.
-      const scope = change.deleted && existing
-        ? existing
-        : {
-            is_global: Boolean(change.isGlobal),
-            store_sync_id: change.storeSyncId ?? null,
-            peer_store_sync_id: change.peerStoreSyncId ?? null,
-          };
 
       const { rows } = await client.query(
         `INSERT INTO sync_rows (table_name, sync_id, is_global, store_sync_id, peer_store_sync_id, deleted, updated_at, payload, origin_device)

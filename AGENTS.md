@@ -32,6 +32,9 @@ npm run verify:routes  # découvre et appelle toutes les pages et routes d'API :
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
 npm run verify:chantiers  # prestations de chantier : cloisonnement magasins, prix figés, rentabilité
+npm run verify:comptes    # super administrateur, périmètre des gérants (failles de la revue du 4/10/2026)
+npm run sync:scopes       # régénère server/sync-scopes.mjs après tout ajout de table synchronisée
+(cd server && npm test)   # serveur de synchronisation : portée recalculée
 npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
 npm run verify:export-image # exporte de vrais documents en PNG (OUT=<dossier>) pour les regarder
 npm run verify:ui          # ouvre chaque écran dans Chrome (CDP 9333) : rendu, console, 404, débordement
@@ -148,8 +151,18 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 21. **Rôles = un niveau par domaine.** On ne modifie jamais la matrice `PERMISSIONS` à
     la main : on change `ROLE_LEVELS` (ou un niveau de `ACCESS_AREAS`) dans
     `lib/permissions.ts`. Toute nouvelle `Action` doit entrer dans **exactement un**
-    niveau d'un domaine, sinon aucun écran ne permet de l'accorder. Un administrateur
-    ne se désactive jamais (`assertNotAdministrator`).
+    niveau d'un domaine, sinon aucun écran ne permet de l'accorder.
+22. **Super administrateur : un seul, il commande les administrateurs** (README §17.2).
+    Lui seul attribue le rôle Administrateur et modifie, rétrograde, désactive ou
+    réinitialise un administrateur ; personne ne touche à son compte, il ne se
+    désactive jamais. Un **gérant** ne modifie jamais ses propres droits, ne gère que
+    les comptes entièrement dans ses magasins et pas mieux dotés que lui, et n'accorde
+    jamais `ADMIN_ONLY_ACTIONS` (`lib/user-scope.ts`). Toute route qui écrit sur un
+    compte passe par `assertCanManageUser` (+ `assertNotOwnPrivileges` si elle
+    touche aux droits).
+23. **Le serveur de synchronisation ne croit jamais la portée déclarée par un poste de
+    magasin** : il la recalcule (`authorizedScope`). Une nouvelle table synchronisée
+    impose `npm run sync:scopes`, sinon le serveur la refuse.
 
 ## Organisation
 

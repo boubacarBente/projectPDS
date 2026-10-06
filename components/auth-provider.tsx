@@ -30,6 +30,8 @@ export type AuthUser = {
   name: string;
   username: string;
   role: Role;
+  /** Super administrateur : seul à commander les administrateurs (README §17.2). */
+  isSuperAdmin?: boolean;
 };
 
 /** Magasin accessible à l'utilisateur sur ce poste. */

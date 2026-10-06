@@ -1,5 +1,6 @@
 'use client';
 
+import { documentPhoneLine } from '@/lib/letterhead';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { toast } from 'react-toastify';
@@ -1991,7 +1992,7 @@ export type DevisCompany = {
   footerNote: string;
 };
 
-export function companyFromSettings(settings: {
+export function companyFromSettings(settings: Parameters<typeof documentPhoneLine>[0] & {
   companyName: string;
   companyBranch: string;
   companyAddress: string;
@@ -2006,7 +2007,8 @@ export function companyFromSettings(settings: {
     name: settings.companyName || 'Planète Déco Sarlu',
     branch: settings.companyBranch || '',
     address: settings.companyAddress || '',
-    phone: settings.companyPhone || '',
+    // Jusqu'à 3 numéros (magasin, sinon entreprise) — `lib/letterhead.ts`.
+    phone: documentPhoneLine(settings),
     email: settings.companyEmail || '',
     taxId: settings.companyTaxId || '',
     logo: settings.companyLogo || DEFAULT_COMPANY_LOGO,

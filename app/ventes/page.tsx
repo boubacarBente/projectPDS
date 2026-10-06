@@ -119,7 +119,7 @@ export default function VentesPage() {
   /* ---------------------------- Statistiques ------------------------------ */
   const [stats, setStats] = useState<VentesStats | null>(null);
   const [isStatsLoading, setIsStatsLoading] = useState(true);
-  const [period, setPeriod] = useState<VentesStatsPeriod>('month');
+  const [period, setPeriod] = useState<VentesStatsPeriod>('total');
 
   /* ------------------------------- Clients -------------------------------- */
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
@@ -497,7 +497,8 @@ export default function VentesPage() {
               setScope(value);
               setPage(1);
             }}
-            className="min-h-11 w-full sm:w-52"
+            // 18 rem : « Magasin actif (Siège — Entrepôt central) » était coupé en w-52.
+            className="min-h-11 w-full sm:w-72"
           />
           <div className="w-full sm:w-52">
             <FilterSelect
@@ -517,7 +518,7 @@ export default function VentesPage() {
             <label className="flex w-full flex-col gap-1 sm:w-56">
               <span className="text-xs text-base-content/60">Client</span>
               <select
-                className="select select-bordered min-h-11 w-full sm:min-h-0"
+                className="select select-bordered select-sm h-10 min-h-11 w-full sm:min-h-0"
                 value={customerId}
                 onChange={(event) => {
                   setCustomerId(event.target.value);
@@ -542,6 +543,9 @@ export default function VentesPage() {
                   setPage(1);
                 }}
                 placeholder="jj mois aaaa"
+                // Même hauteur que la liste des clients : les champs « Du » et « Au »
+                // (input-sm, 32 px) étaient plus bas que leur voisin et trop petits au doigt.
+                className="h-10 min-h-11 sm:min-h-0"
               />
             </div>
 
@@ -554,6 +558,9 @@ export default function VentesPage() {
                   setPage(1);
                 }}
                 placeholder="jj mois aaaa"
+                // Même hauteur que la liste des clients : les champs « Du » et « Au »
+                // (input-sm, 32 px) étaient plus bas que leur voisin et trop petits au doigt.
+                className="h-10 min-h-11 sm:min-h-0"
               />
             </div>
           </>

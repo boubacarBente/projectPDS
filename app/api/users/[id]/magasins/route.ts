@@ -1,7 +1,12 @@
 import { NextRequest } from 'next/server';
 import { ValidationError, fail, ok, parseId, readJson, requireAction, requireCentralEdit } from '@/lib/api';
 import { listUserAssignments, setUserAssignments } from '@/lib/stores';
-import { assertAssignableStores, assertCanManageUser } from '@/lib/user-scope';
+import {
+  assertAssignableStores,
+  assertCanManageUser,
+  assertGrantableOverrides,
+  assertNotOwnPrivileges,
+} from '@/lib/user-scope';
 import { revokeUserSessions } from '@/lib/session';
 import { getUser } from '@/lib/users';
 import { getUserOverrides, setUserOverrides } from '@/lib/user-permissions';
@@ -42,6 +47,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const { id } = await params;
     const userId = parseId(id);
     await assertCanManageUser(actor, userId);
+    assertNotOwnPrivileges(actor, userId);
 
     const body = await readJson<any>(request);
     if (!Array.isArray(body.stores)) {
@@ -69,6 +75,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const result = await setUserAssignments(userId, wanted, { id: actor.id, name: actor.name });
 
     if (typeof body.canSwitchStore === 'boolean') {
+      if (body.canSwitchStore) assertGrantableOverrides(actor, [{ action: 'stores.switch', effect: 'allow' }]);
       const target = await getUser(userId);
       if (target && target.role !== 'admin') {
         const others = (await getUserOverrides(userId)).filter((o) => o.action !== 'stores.switch');

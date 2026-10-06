@@ -92,6 +92,11 @@
 
 ### ✅ Fait
 
+- **Super administrateur et correctifs de sécurité** (README §17.2, §28.1, revue du
+  4 octobre 2026) : un seul super administrateur (le compte de l'installation) qui
+  commande les administrateurs ; un gérant ne peut plus s'accorder de droits ni
+  reprendre un compte mieux doté ; le serveur de synchronisation recalcule la portée
+  des lignes d'un poste de magasin. Recette : `verify:comptes`, `cd server && npm test`.
 - **Refonte des comptes** (README §17.2) : rôles = un niveau par domaine, rôle Comptable,
   administrateur jamais désactivable ; `/utilisateurs` refait, assistant de création,
   page `/utilisateurs/[id]`. **Catégories** : seulement celles du magasin, un magasin

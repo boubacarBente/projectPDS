@@ -596,6 +596,44 @@ async function applyChange(change: PulledChange, ctx: ApplyContext): Promise<App
     values[poly.idColumn] = localId;
   }
 
+  /*
+   * Magasin de la ligne = portée validée par le serveur (revue de sécurité du
+   * 4 octobre 2026). Le serveur recalcule la portée d'une ligne envoyée par un
+   * poste de magasin ; une colonne de magasin qui la contredit est refusée.
+   * Une colonne simple (entier local, sans clé étrangère : `audit_logs`) ne
+   * se traduit pas d'un poste à l'autre : elle est réécrite d'après la portée.
+   */
+  const storeColumns: [string, string | null][] =
+    table.scope.kind === 'store'
+      ? [[table.scope.column, change.storeSyncId]]
+      : table.scope.kind === 'transfer'
+        ? [['source_store_id', change.storeSyncId], ['destination_store_id', change.peerStoreSyncId]]
+        : [];
+  for (const [column, scopeSyncId] of storeColumns) {
+    if (!meta.columns.includes(column) || !scopeSyncId) continue;
+    const scopeStoreId = await localIdOf('stores', scopeSyncId, ctx.idCache);
+    if (scopeStoreId === null) {
+      await quarantine(change, `stores:${scopeSyncId}`);
+      return 'pending';
+    }
+    const isForeignKey = meta.foreignKeys.some((fk) => fk.column === column);
+    if (!isForeignKey) {
+      values[column] = scopeStoreId;
+    } else if (values[column] !== null && values[column] !== undefined && Number(values[column]) !== scopeStoreId) {
+      await rawRun(
+        `INSERT INTO sync_conflicts (table_name, sync_id, local_payload, remote_payload, resolution, created_at)
+         VALUES (?, ?, ?, ?, 'pending', unixepoch())`,
+        [
+          table.name,
+          change.syncId,
+          JSON.stringify({ erreur: `Magasin de la ligne (${column}) différent de sa portée : ligne refusée` }),
+          JSON.stringify(change.payload),
+        ],
+      );
+      return 'conflict';
+    }
+  }
+
   // Fusion par clé naturelle : une ligne créée hors ligne sur ce poste adopte l'identité reçue.
   if (!existing && table.naturalKey) {
     const conditions = table.naturalKey.map((column) => `"${column}" IS ?`).join(' AND ');

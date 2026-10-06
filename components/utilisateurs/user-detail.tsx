@@ -88,7 +88,7 @@ export function UserDetail({
   /** Relecture du compte après une modification. */
   onChanged: () => void;
 }) {
-  const { user: me, allStores } = useAuth();
+  const { user: me } = useAuth();
   const { stores } = useAssignableStores(true);
   const setTab = onTabChange;
 
@@ -152,9 +152,14 @@ export function UserDetail({
   }, [user.id, loadMatrix]);
 
   const roleChoices = useMemo(() => choicesFromActions(matrix?.roleDefaults ?? []), [matrix]);
-  const roles = ROLES.filter((r) => r !== 'admin' || allStores);
+  // Le rôle Administrateur n'est attribuable que par le super administrateur (README §17.2).
+  const roles = ROLES.filter((r) => r !== 'admin' || me?.isSuperAdmin);
   const isAdmin = user.role === 'admin';
   const isMe = user.id === me?.id;
+  // Un non-administrateur ne modifie ni son rôle, ni ses magasins, ni ses droits (le serveur refuse).
+  const lockPrivileges = readOnly || (isMe && me?.role !== 'admin');
+  // Le super administrateur reste administrateur.
+  const lockRole = lockPrivileges || user.isSuperAdmin;
 
   const run = async (action: () => Promise<void>, success: string) => {
     setBusy(true);
@@ -175,7 +180,7 @@ export function UserDetail({
         name: name.trim(),
         username: username.trim().toLowerCase(),
         phone: phone.trim() || null,
-        role,
+        ...(role !== user.role ? { role } : {}),
       });
       await loadMatrix(user.id);
     }, 'Profil enregistré');
@@ -241,6 +246,7 @@ export function UserDetail({
               <p className="font-mono text-sm text-base-content/60">{user.username}</p>
               <div className="mt-1 flex flex-wrap gap-1.5">
                 <Badge tone={isAdmin ? 'primary' : 'neutral'}>{ROLE_LABELS[user.role]}</Badge>
+                {user.isSuperAdmin && <Badge tone="warning">Super administrateur</Badge>}
                 <Badge tone={user.isActive ? 'success' : 'neutral'}>{user.isActive ? 'Actif' : 'Désactivé'}</Badge>
                 {isMe && <Badge tone="info">C’est vous</Badge>}
               </div>
@@ -250,9 +256,11 @@ export function UserDetail({
 
           {readOnly && (
             <p className="rounded-xl border border-info/30 bg-info/10 px-3 py-2 text-sm">
-              Consultation seulement : {isAdmin && !allStores
-                ? 'seul un administrateur général modifie un compte administrateur.'
-                : 'les comptes se modifient sur le poste du siège.'}
+              Consultation seulement : {user.isSuperAdmin
+                ? 'le compte du super administrateur ne se modifie que par lui-même.'
+                : isAdmin
+                  ? 'seul le super administrateur modifie un compte administrateur.'
+                  : 'les comptes se modifient sur le poste du siège.'}
             </p>
           )}
           {loadError && <p className="rounded-xl border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">{loadError}</p>}
@@ -296,7 +304,7 @@ export function UserDetail({
               </div>
               <div>
                 <p className="mb-2 text-sm font-medium">Rôle</p>
-                <RoleChooser value={role} onChange={setRole} roles={roles.includes(role) ? roles : [role, ...roles]} disabled={readOnly || busy} />
+                <RoleChooser value={role} onChange={setRole} roles={roles.includes(role) ? roles : [role, ...roles]} disabled={lockRole || busy} />
                 {role !== user.role && (
                   <p className="mt-2 rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
                     Le compte sera déconnecté et repartira avec les droits du nouveau rôle (les ajustements
@@ -332,7 +340,7 @@ export function UserDetail({
               {assignments === null || stores === null ? (
                 <span className="loading loading-spinner loading-sm" />
               ) : (
-                <StoreAssignmentEditor stores={stores} value={assignments} onChange={setAssignments} disabled={readOnly || busy} />
+                <StoreAssignmentEditor stores={stores} value={assignments} onChange={setAssignments} disabled={lockPrivileges || busy} />
               )}
               {!isAdmin && (
                 <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-base-200 px-3 py-2.5">
@@ -340,7 +348,7 @@ export function UserDetail({
                     type="checkbox"
                     className="checkbox checkbox-sm checkbox-primary mt-0.5"
                     checked={canSwitch}
-                    disabled={readOnly || busy}
+                    disabled={lockPrivileges || busy}
                     onChange={(e) => setCanSwitch(e.target.checked)}
                   />
                   <span className="text-sm">
@@ -352,7 +360,7 @@ export function UserDetail({
                   </span>
                 </label>
               )}
-              {!readOnly && (
+              {!lockPrivileges && (
                 <div className="flex justify-end">
                   <button type="button" className="btn btn-primary min-h-11 sm:min-h-0" disabled={busy || assignments === null} onClick={() => void saveStores()}>
                     Enregistrer les magasins
@@ -379,8 +387,8 @@ export function UserDetail({
                     domaine seulement si cette personne a besoin d’un accès différent de ses collègues ; les
                     domaines modifiés sont encadrés.
                   </p>
-                  <AccessEditor choices={choices} roleChoices={roleChoices} onChange={setChoices} disabled={readOnly || busy} />
-                  {!readOnly && (
+                  <AccessEditor choices={choices} roleChoices={roleChoices} onChange={setChoices} disabled={lockPrivileges || busy} />
+                  {!lockPrivileges && (
                     <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t border-base-200 bg-base-100 pt-3">
                       {customizedNow && (
                         <button type="button" className="btn btn-ghost min-h-11 sm:min-h-0" disabled={busy} onClick={() => void resetRights()}>
@@ -429,10 +437,14 @@ export function UserDetail({
 
               <section className="rounded-xl border border-base-200 p-3">
                 <h3 className="text-sm font-semibold">{user.isActive ? 'Désactiver le compte' : 'Réactiver le compte'}</h3>
-                {isAdmin ? (
+                {user.isSuperAdmin ? (
                   <p className="mt-1 text-sm text-base-content/70">
-                    🔒 Un administrateur <strong>ne peut pas être désactivé</strong>. Pour lui retirer l’accès,
-                    changez d’abord son rôle dans « Profil » (il doit rester un autre administrateur).
+                    🔒 Le super administrateur <strong>ne peut pas être désactivé</strong> : il commande les
+                    administrateurs, l’application garde ainsi toujours quelqu’un capable de tout gérer.
+                  </p>
+                ) : isAdmin && !me?.isSuperAdmin ? (
+                  <p className="mt-1 text-sm text-base-content/70">
+                    🔒 Seul le <strong>super administrateur</strong> peut désactiver un administrateur.
                   </p>
                 ) : (
                   <>

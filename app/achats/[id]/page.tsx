@@ -731,13 +731,15 @@ export default function AchatDetailPage() {
         <Card padded={false} className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-base-200 bg-base-200/60 px-4 py-2.5">
             <h2 className="text-sm font-semibold">Traçabilité</h2>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-              onClick={() => setShowDetailModal(true)}
-            >
-              Détail des lignes et règlements
-            </button>
+            <Tooltip label="Ouvre un résumé du bon d’achat dans une fenêtre : les articles reçus (quantités, prix d’achat), les totaux et les paiements déjà versés au fournisseur, sans quitter cette page.">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+                onClick={() => setShowDetailModal(true)}
+              >
+                Détail des lignes et règlements
+              </button>
+            </Tooltip>
           </div>
           <div className="px-4 py-2">
             <InfoRow label="Saisi par">

@@ -1244,6 +1244,8 @@ Depuis `/ventes/[id]` ou `/clients/[id]/paiements` : modale **« Enregistrer un 
 
 Le paiement n'est possible que sur une vente **validée** (`status = active`) : le bouton « Enregistrer un paiement » est masqué pour un brouillon, une vente annulée ou une facture soldée, et `createPayment()` refuse l'appel direct. Un brouillon se **valide** d'abord (§10.6).
 
+**Montant reçu laissé vide** *(demande client, 5 octobre 2026)* : le client paie souvent par tranches ; pré-remplir le reste à payer faisait encaisser le tout par mégarde. Un montant supérieur au reste affiche **aussitôt** un message sous le champ (cadre rouge, bouton d'enregistrement désactivé) — mêmes règles dans la modale de la fiche client. Le serveur refuse aussi le dépassement (`createPayment`, 400).
+
 Dans la carte **« Historique des paiements »** de `/ventes/[id]`, chaque **ligne est cliquable** et ouvre le reçu du paiement (`/recus/[id]`) : curseur « main » et survol, portés par `ResponsiveTable` dès qu'un `onRowClick` est fourni — le curseur annonce donc une action réelle, pas un décor.
 
 ---
@@ -1513,9 +1515,41 @@ l'entreprise sans les modifier (ils valent pour tout le réseau) ; le magasinier
 gère plus les ouvriers ; personne d'autre que l'administrateur ne change de magasin
 d'office (§28.6) ; nouveau rôle **Comptable** (consulte tout, approuve les dépenses).
 
-**L'administrateur ne se désactive jamais** (`assertNotAdministrator`, `lib/users.ts`) :
-pour retirer l'accès à un administrateur, on change d'abord son rôle — ce qui reste
-refusé s'il est le dernier administrateur actif. Personne ne désactive son propre compte.
+**Super administrateur** *(demande client, 4 octobre 2026)* : **un seul** compte
+(colonne `users.is_super_admin`, index unique partiel), le **premier** créé par
+l'installation sur la page de connexion (`POST /api/auth/setup`). Sur une base
+existante, la migration `0010` désigne le plus ancien administrateur (un poste
+**magasin** ne désigne personne : il reçoit le drapeau du siège). Il garde le rôle
+`admin` — tout ce qui vaut pour un administrateur vaut pour lui — et, en plus,
+il **commande les administrateurs** (`lib/user-scope.ts`, `lib/users.ts`) :
+
+| Action | Super administrateur | Administrateur | Gérant (`users.manage`) |
+|---|---|---|---|
+| Attribuer le rôle Administrateur | ✅ | — | — |
+| Modifier, rétrograder, désactiver, réinitialiser un administrateur | ✅ | lui-même seulement (sauf désactivation) | — |
+| Toucher au compte du super administrateur | lui-même | — | — |
+| Gérer les comptes non administrateurs | ✅ | ✅ | ceux de **ses** magasins, sans droits qu'il n'a pas |
+
+Le super administrateur **ne se désactive jamais et reste administrateur** ;
+personne ne désactive son propre compte. *Changement* : avant, aucun administrateur
+ne pouvait être désactivé (`assertNotAdministrator`), mais un administrateur pouvait
+en rétrograder un autre, puis le désactiver.
+
+**Périmètre d'un gérant** *(correctif de sécurité, revue du 4 octobre 2026)* : depuis la
+refonte, le gérant détient `users.manage` ; il pouvait s'accorder la vue consolidée
+sur son propre compte, devenir « tous magasins » puis se nommer administrateur, ou
+réinitialiser le mot de passe d'un compte mieux doté que lui. Désormais (serveur) :
+
+- il ne modifie ni son rôle, ni ses droits, ni ses magasins, ni son statut
+  (`assertNotOwnPrivileges`) — son nom et son mot de passe, oui ;
+- il ne gère un compte que si **toutes** ses affectations sont dans ses magasins et
+  si ses droits ne dépassent pas les siens (`assertCanManageUser`) ;
+- il n'accorde que des droits qu'il détient, et **jamais** `stores.viewAll`,
+  `stores.manage`, `users.manage`, `settings.critical`, `backup.manage`,
+  `sync.manage` (`ADMIN_ONLY_ACTIONS`, `assertGrantableOverrides`) ; il n'attribue
+  qu'un rôle dont il détient tous les droits.
+
+Recette : `npm run verify:comptes` (36 contrôles, base de recette).
 
 **Écran `/utilisateurs`** : trois chiffres, répartition par rôle cliquable (filtre),
 liste « une ligne = un clic ». Création par un **assistant en 4 étapes** (Qui → Rôle,
@@ -2348,6 +2382,7 @@ npm run verify:routes      # Découvre et appelle les pages et les routes d'API 
 npm run verify:purchases   # Parcours d'achat de bout en bout (21 contrôles) : stock, caisse, dette, numérotation
 npm run verify:draft       # Politique du brouillon de vente (23 contrôles) : ni stock, ni caisse, ni sync, puis validation
 npm run verify:chantiers   # Prestations de chantier multi-magasins (critères 2 à 11 du cahier) : isolation, prix figés, rentabilité
+npm run verify:comptes     # Super administrateur et périmètre des gérants (36 contrôles) — base vierge ou APP_USER = super administrateur
 npm run verify:export      # Export PDF / image / WhatsApp dans un navigateur réel (CDP sur le port 9222)
 npm run verify:brick       # Briqueterie, 58 contrôles : dépenses rattachées, coût/unité, stock unique, canal de vente, commande → acompte → facture, seed/reset, refus attendus
 npm run verify:brick:ui    # Rend chaque écran du module (dont /parametres) dans Chrome (CDP port 9333) et vérifie le texte rendu + zéro erreur console
@@ -2389,6 +2424,20 @@ changements entre postes : push / pull via `lib/sync-engine.ts`. Trois modes de
 poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siège**
 (voit tous les magasins, seul à modifier les données centrales) et **magasin**
 (son magasin + le référentiel commun). Schéma complet : guide §1.
+
+**Portée recalculée par le serveur** *(correctif de sécurité, revue du 4 octobre
+2026)* : le serveur gardait la portée **déclarée** par le poste ; un poste de
+magasin pouvait écrire un paiement, un mouvement de caisse ou de stock au nom d'un
+autre magasin. Désormais `authorizedScope` (`server/index.mjs`) la recalcule pour
+un poste de magasin : colonne de magasin de la ligne, magasins d'un transfert,
+document parent d'une ligne enfant (parents traités avant les enfants ; parent
+inconnu → magasin du poste). La table des portées `server/sync-scopes.mjs` est
+**générée** depuis `db/sync-registry.ts` : `npm run sync:scopes` après tout ajout de
+table synchronisée (`node scripts/sync-scopes.mjs --check` détecte un oubli). À la
+réception, `applyChange` refuse une ligne dont la colonne de magasin contredit sa
+portée, et réécrit d'après elle une colonne de magasin sans clé étrangère
+(`audit_logs.store_id`, qui arrivait avec l'identifiant local d'un autre poste).
+Tests : `cd server && npm test`.
 
 ### 28.2 Règles à ne jamais casser (en plus de AGENTS.md)
 
@@ -2448,6 +2497,7 @@ poste (`lib/device.ts`) : **autonome** (un seul magasin, pas de serveur), **siè
 | **Données propres à chaque magasin** (demande client du 4 octobre 2026) : clients, fournisseurs, sous-traitants, ouvriers et **assortiment de produits** par magasin ; un nouveau magasin part **vide** (aucun produit, stock, client, fournisseur, ouvrier). Migrations `0007` (colonnes), `0008` (reprise clients / fournisseurs / assortiment), `0009` (ouvriers). Essais API : 16 contrôles (cloisonnement, vente et achat refusés hors magasin, création / reprise / retrait de produit, nouveau magasin vide) | ✅ | §28.5 |
 | **Changer de magasin actif** : permission `stores.switch` (administrateur d'office, sinon accordée par compte), magasin principal imposé sans elle, case « Peut changer de magasin » à la création et dans « Magasins » | ✅ | §28.6 |
 | **Refonte des comptes** : rôles par domaine (Aucun accès / Consulter / Saisir / Gérer), rôle Comptable, administrateur jamais désactivable, `/utilisateurs` refait (assistant de création en 4 étapes, page `/utilisateurs/[id]` à onglets), période d'affectation repliée (« Remplacement temporaire »). Catégories : seulement celles du magasin, création par un magasin. Essais API : 19 contrôles ; écrans vérifiés à 1366 et 400 px | ✅ | §17.2, §28.5 |
+| **Super administrateur et correctifs de sécurité** (revue du 4 octobre 2026) : un seul super administrateur (compte de l'installation, migration `0010`) qui commande les administrateurs ; gérant borné à ses magasins et à ses propres droits (§17.2) ; portée des lignes d'un poste de magasin recalculée par le serveur de synchronisation (§28.1). `npm run verify:comptes` (36 contrôles), `cd server && npm test` (8 tests) | ✅ | `lib/user-scope.ts`, `lib/users.ts`, `server/index.mjs`, `server/sync-scopes.mjs` |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette

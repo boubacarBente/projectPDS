@@ -65,7 +65,7 @@ export default function UtilisateursPage() {
 }
 
 function UtilisateursContent() {
-  const { device, allStores } = useAuth();
+  const { device, user: me } = useAuth();
   const router = useRouter();
   // Les comptes sont centraux : un poste de magasin les consulte seulement.
   const canEditCentral = device?.mode !== 'store';
@@ -159,8 +159,14 @@ function UtilisateursContent() {
     writeViewState(VIEW_STATE_KEY, { search, role, status, page });
   }, [rehydrated, search, role, status, page]);
 
-  /** Fiche en lecture seule : poste de magasin, ou compte administrateur vu par un gérant. */
-  const readOnlyFor = (target: UserListItem) => !canEditCentral || (!allStores && target.role === 'admin');
+  /**
+   * Fiche en lecture seule : poste de magasin, compte du super administrateur
+   * vu par un autre, ou compte administrateur vu par qui n'est pas le super
+   * administrateur (README §17.2).
+   */
+  const readOnlyFor = (target: UserListItem) =>
+    !canEditCentral ||
+    (target.id !== me?.id && (target.isSuperAdmin || (target.role === 'admin' && !me?.isSuperAdmin)));
 
   const roleCounts = useMemo(() => new Map((stats?.byRole ?? []).map((r) => [r.role, r.count])), [stats]);
 
@@ -192,6 +198,7 @@ function UtilisateursContent() {
       render: (u) => (
         <span className="flex flex-wrap items-center gap-1">
           <Badge tone={u.role === 'admin' ? 'primary' : 'neutral'}>{ROLE_LABELS[u.role]}</Badge>
+          {u.isSuperAdmin && <Badge tone="warning">super administrateur</Badge>}
           {u.customized && <Badge tone="info">droits ajustés</Badge>}
         </span>
       ),

@@ -28,6 +28,16 @@ interface ResponsiveTableProps<T> {
   tableClassName?: string;
   /** Keeps the desktop actions column at a predictable width */
   actionsClassName?: string;
+  /**
+   * Corps de carte mobile sur mesure, à la place de la grille « libellé / valeur ».
+   * Le titre (colonne `primary`) et les actions restent rendus par la carte.
+   *
+   * Pourquoi : la grille générique empile une ligne par colonne. Pour une liste
+   * riche (ventes : date, client, total, payé, reste, bénéfice, statut), la carte
+   * faisait sept lignes aux alignements mêlés (textes à gauche, montants à
+   * droite) ; un corps dédié regroupe les montants et divise la hauteur par deux.
+   */
+  renderCard?: (item: T) => ReactNode;
 }
 
 function CardView<T>({
@@ -37,6 +47,7 @@ function CardView<T>({
   actions,
   emptyMessage,
   onRowClick,
+  renderCard,
 }: ResponsiveTableProps<T>) {
   if (data.length === 0) {
     return (
@@ -68,17 +79,21 @@ function CardView<T>({
               <div className="font-semibold text-base mb-2">{primaryCol.render(item)}</div>
             )}
 
-            {/* Other fields as label-value grid */}
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-              {visibleCols
-                .filter((c) => !c.primary)
-                .map((col) => (
-                  <div key={col.key} className="contents">
-                    <span className="text-base-content/50 text-xs">{col.label}</span>
-                    <span className={col.className}>{col.render(item)}</span>
-                  </div>
-                ))}
-            </div>
+            {/* Other fields as label-value grid (or the list's own card body) */}
+            {renderCard ? (
+              renderCard(item)
+            ) : (
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                {visibleCols
+                  .filter((c) => !c.primary)
+                  .map((col) => (
+                    <div key={col.key} className="contents">
+                      <span className="text-base-content/50 text-xs">{col.label}</span>
+                      <span className={col.className}>{col.render(item)}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
 
             {/* Actions at bottom */}
             {actions && (

@@ -62,6 +62,8 @@ export type SessionUser = {
   name: string;
   username: string;
   role: Role;
+  /** Super administrateur : seul à commander les administrateurs (README §17.2). */
+  isSuperAdmin: boolean;
   sessionId: string;
   storeId: number | null;
   storeIds: number[];
@@ -97,6 +99,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       name: session.name,
       username: session.username,
       role: session.role,
+      isSuperAdmin: session.isSuperAdmin === true,
       sessionId: session.sessionId,
       storeId: context.activeStoreId,
       storeIds: context.storeIds,

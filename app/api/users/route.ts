@@ -10,7 +10,7 @@ import {
   toBool,
   requireCentralEdit,
 } from '@/lib/api';
-import { assertAssignableRole, assertAssignableStores } from '@/lib/user-scope';
+import { assertAssignableRole, assertAssignableStores, assertGrantableOverrides } from '@/lib/user-scope';
 import { setUserAssignments } from '@/lib/stores';
 import { withTransaction } from '@/db';
 import { createUser, getUserStats, listUsersPage } from '@/lib/users';
@@ -127,6 +127,9 @@ export async function POST(request: NextRequest) {
         ? [{ storeId: user.storeId, isManager: false }]
         : [];
     assertAssignableStores(user, requested.map((s) => s.storeId));
+    if (body.canSwitchStore === true && body.role !== 'admin') {
+      assertGrantableOverrides(user, [{ action: 'stores.switch', effect: 'allow' }]);
+    }
     if (body.role !== 'admin' && requested.length === 0) {
       throw new ValidationError('Affectez ce compte à au moins un magasin.');
     }

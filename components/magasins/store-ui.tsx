@@ -12,6 +12,8 @@ import { Modal } from '@/components/modal';
 import { Badge, FormField, type BadgeTone } from '@/components/design-system';
 import { DatePicker } from '@/components/date-picker';
 import { useAuth } from '@/components/auth-provider';
+import { DocumentPhonesEditor, phonesToRows, rowsToPhones } from '@/components/document-phones-editor';
+import type { DocumentPhone } from '@/lib/settings-schema';
 import type { StoreRow, StoreStatus, StoreKind, getStoreIndicators } from '@/lib/stores';
 
 /** `createdAt` arrive sérialisé en chaîne ISO par `NextResponse.json`. */
@@ -114,6 +116,7 @@ export function StoreFormModal({
   const { stores: knownStores } = useAuth();
 
   const [values, setValues] = useState<FormValues>(() => initialValues(store));
+  const [phones, setPhones] = useState<DocumentPhone[]>(() => phonesToRows(store?.documentPhones));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [codeError, setCodeError] = useState<string | null>(null);
@@ -132,6 +135,7 @@ export function StoreFormModal({
   useEffect(() => {
     if (!isOpen) return;
     setValues(initialValues(store));
+    setPhones(phonesToRows(store?.documentPhones));
     setFormError(null);
     setCodeError(null);
     setNameError(null);
@@ -203,6 +207,7 @@ export function StoreFormModal({
         openingDate: values.openingDate || null,
         openingHours: values.openingHours.trim() || null,
         receiptFooter: values.receiptFooter.trim() || null,
+        documentPhones: rowsToPhones(phones),
         notes: values.notes.trim() || null,
       };
       // Chaque magasin a ses propres produits (README §28.5) : à la création,
@@ -392,6 +397,14 @@ export function StoreFormModal({
               placeholder="Ex. Lun–Sam 8h–19h"
               autoComplete="off"
             />
+          </FormField>
+
+          <FormField
+            label="Téléphones des factures et reçus"
+            hint="3 au plus, cochez WhatsApp pour l’icône verte. Laissés vides : ceux de l’entreprise (Paramètres)."
+            className="sm:col-span-2"
+          >
+            <DocumentPhonesEditor idPrefix={fieldId('doc-phone')} rows={phones} onChange={setPhones} />
           </FormField>
 
           <FormField

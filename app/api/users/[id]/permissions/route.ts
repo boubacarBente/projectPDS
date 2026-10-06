@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, parseId, readJson, requireAction, requireCentralEdit, ValidationError } from '@/lib/api';
-import { assertCanManageUser } from '@/lib/user-scope';
+import { assertCanManageUser, assertGrantableOverrides, assertNotOwnPrivileges } from '@/lib/user-scope';
 import {
   clearUserOverrides,
   getPermissionMatrix,
@@ -41,8 +41,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const actor = await requireAction('users.manage');
     const { id } = await params;
     await requireCentralEdit();
-    await assertCanManageUser(actor, parseId(id));
     const userId = parseId(id);
+    await assertCanManageUser(actor, userId);
+    assertNotOwnPrivileges(actor, userId);
     const body = await readJson<any>(request);
 
     const raw = Array.isArray(body?.overrides) ? body.overrides : null;
@@ -70,6 +71,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       entries.push({ action, effect });
     }
 
+    assertGrantableOverrides(actor, entries);
     const effective = await setUserOverrides(userId, entries, { id: actor.id, name: actor.name });
 
     return ok({ success: true, effective });
@@ -89,6 +91,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
     const { id } = await params;
     await requireCentralEdit();
     await assertCanManageUser(actor, parseId(id));
+    assertNotOwnPrivileges(actor, parseId(id));
 
     const effective = await clearUserOverrides(parseId(id), { id: actor.id, name: actor.name });
 

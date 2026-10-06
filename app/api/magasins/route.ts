@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
         openingDate: body.openingDate ?? null,
         openingHours: body.openingHours ?? null,
         receiptFooter: body.receiptFooter ?? null,
+        documentPhones: body.documentPhones,
         notes: body.notes ?? null,
         copyAssortmentFrom: body.copyAssortmentFrom ? Number(body.copyAssortmentFrom) : null,
       },

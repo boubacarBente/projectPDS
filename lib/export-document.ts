@@ -32,6 +32,7 @@
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { DEFAULT_COMPANY_LOGO } from '@/lib/settings-schema';
+import { documentPhoneLine } from '@/lib/letterhead';
 
 /* ------------------------------------------------------------------ *
  * Palette — hexadécimal uniquement, jamais de fonction moderne
@@ -627,7 +628,7 @@ export function exportFileName(prefix: string, reference: string | null | undefi
  * couleur principale est prise dans les réglages — **en hexadécimal**, ce qui
  * est justement ce qui rend la capture possible.
  */
-export function exportCompanyFromSettings(settings: {
+export function exportCompanyFromSettings(settings: Parameters<typeof documentPhoneLine>[0] & {
   companyName?: string | null;
   companyBranch?: string | null;
   companyAddress?: string | null;
@@ -643,7 +644,8 @@ export function exportCompanyFromSettings(settings: {
     name: settings.companyName?.trim() || 'Planète Déco Sarlu',
     branch: settings.companyBranch ?? null,
     address: settings.companyAddress ?? null,
-    phone: settings.companyPhone ?? null,
+    // Jusqu'à 3 numéros (magasin, sinon entreprise) — `lib/letterhead.ts`.
+    phone: documentPhoneLine(settings) || null,
     email: settings.companyEmail ?? null,
     taxId: settings.companyTaxId ?? null,
     logo: settings.companyLogo?.trim() || DEFAULT_COMPANY_LOGO,

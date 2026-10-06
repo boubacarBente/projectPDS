@@ -31,6 +31,8 @@ export type SessionPayload = {
   name: string;
   username: string;
   role: Role;
+  /** Super administrateur (README §17.2), relu en base à chaque requête. */
+  isSuperAdmin?: boolean;
 };
 
 export type SessionRecord = SessionPayload & {
@@ -111,6 +113,7 @@ export async function loadSession(token: string | undefined | null): Promise<Ses
         name: string;
         username: string;
         role: string;
+        is_super_admin: number | null;
         is_active: number;
         deleted_at: number | null;
       }
@@ -119,7 +122,7 @@ export async function loadSession(token: string | undefined | null): Promise<Ses
   try {
     row = await rawGet(
       `SELECT s.user_id, s.store_id, s.expires_at, s.last_seen_at,
-              u.name, u.username, u.role, u.is_active, u.deleted_at
+              u.name, u.username, u.role, u.is_super_admin, u.is_active, u.deleted_at
          FROM sessions s
          JOIN users u ON u.id = s.user_id
         WHERE s.id = ? AND s.revoked_at IS NULL`,
@@ -149,6 +152,9 @@ export async function loadSession(token: string | undefined | null): Promise<Ses
     name: String(row.name),
     username: String(row.username),
     role: row.role as Role,
+    // Le drapeau ne vaut que pour un administrateur : un compte rétrogradé ne
+    // garde pas le pouvoir sur les administrateurs.
+    isSuperAdmin: row.role === 'admin' && Boolean(row.is_super_admin),
     storeId: row.store_id === null || row.store_id === undefined ? null : Number(row.store_id),
   };
 }

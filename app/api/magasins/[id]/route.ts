@@ -63,6 +63,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       'openingDate',
       'openingHours',
       'receiptFooter',
+      'documentPhones',
       'notes',
     ] as const) {
       if (body[key] !== undefined) (patch as any)[key] = body[key];

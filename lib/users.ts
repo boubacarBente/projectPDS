@@ -50,6 +50,8 @@ export type UserRow = {
   name: string;
   username: string;
   role: Role;
+  /** Super administrateur : un seul compte, qui commande les administrateurs (§17.2). */
+  isSuperAdmin: boolean;
   phone: string | null;
   isActive: boolean;
   lastLoginAt: Date | null;
@@ -116,14 +118,17 @@ export function toUserRow(row: {
   role: string;
   phone: string | null;
   isActive: boolean;
+  isSuperAdmin?: boolean | null;
   lastLoginAt: Date | null;
   createdAt?: Date | null;
 }): UserRow {
+  const role = (isRole(row.role) ? row.role : 'seller') as Role;
   return {
     id: row.id,
     name: row.name,
     username: row.username,
-    role: (isRole(row.role) ? row.role : 'seller') as Role,
+    role,
+    isSuperAdmin: role === 'admin' && Boolean(row.isSuperAdmin),
     phone: row.phone,
     isActive: Boolean(row.isActive),
     lastLoginAt: row.lastLoginAt ?? null,
@@ -335,19 +340,40 @@ async function assertNotLastActiveAdmin(
   );
 }
 
+/** Auteur d'une modification de compte, pour les règles du super administrateur. */
+export type UserActor = { id: number; isSuperAdmin: boolean };
+
 /**
- * **Un administrateur ne se désactive jamais** (demande client, 4 octobre
- * 2026). Avant, seul le *dernier* administrateur actif était protégé : un
- * administrateur pouvait en désactiver un autre, ou se désactiver lui-même
- * s'il en restait un. Pour retirer l'accès à un administrateur, on change
- * d'abord son rôle — ce qui reste soumis à la règle du dernier administrateur.
+ * **Le super administrateur commande les administrateurs** (demande client,
+ * 4 octobre 2026, README §17.2) :
+ *  - le super administrateur ne se désactive jamais et reste administrateur ;
+ *  - un administrateur n'est désactivé ou rétrogradé **que** par le super
+ *    administrateur (avant : aucun administrateur ne pouvait être désactivé,
+ *    mais un administrateur pouvait en rétrograder un autre puis le désactiver).
+ *
+ * `reason` décrit l'opération : `deactivate` ou `demote`.
  */
-function assertNotAdministrator(target: { name: string; role: string }): void {
+function assertAdministratorChange(
+  actor: UserActor,
+  target: { id: number; name: string; role: string; isSuperAdmin: boolean },
+  reason: 'demote' | 'deactivate',
+): void {
+  if (target.isSuperAdmin) {
+    throw new ConflictError(
+      reason === 'deactivate'
+        ? `« ${target.name} » est le super administrateur : son compte ne peut pas être désactivé.`
+        : `« ${target.name} » est le super administrateur : il reste administrateur.`,
+    );
+  }
   if (target.role !== 'admin') return;
-  throw new ConflictError(
-    `« ${target.name} » est administrateur : un administrateur ne peut pas être désactivé. ` +
-      'Pour lui retirer l’accès, changez d’abord son rôle (il doit rester au moins un autre administrateur).',
-  );
+  if (reason === 'demote' && actor.id === target.id) return;
+  if (!actor.isSuperAdmin) {
+    throw new ConflictError(
+      reason === 'deactivate'
+        ? `« ${target.name} » est administrateur : seul le super administrateur peut le désactiver.`
+        : `« ${target.name} » est administrateur : seul le super administrateur peut changer son rôle.`,
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -417,7 +443,7 @@ export async function createUser(input: UserInput): Promise<UserRow> {
  * `PUT /api/users/[id]/password`), et l'empreinte ne figure dans aucun payload
  * de synchronisation.
  */
-export async function updateUser(id: number, patch: UserPatch): Promise<UserRow> {
+export async function updateUser(id: number, patch: UserPatch, actor: UserActor): Promise<UserRow> {
   const existing = await getUser(id);
   if (!existing) throw new NotFoundError('Utilisateur introuvable');
 
@@ -438,6 +464,7 @@ export async function updateUser(id: number, patch: UserPatch): Promise<UserRow>
   if (patch.role !== undefined) {
     if (!isRole(patch.role)) throw new ValidationError('Rôle invalide');
     if (patch.role !== existing.role) {
+      assertAdministratorChange(actor, existing, 'demote');
       // Retirer `admin` au dernier administrateur actif rendrait l'application
       // inadministrable : refusé, avec un message qui dit quoi faire.
       await assertNotLastActiveAdmin(id, existing, 'demote');
@@ -451,7 +478,8 @@ export async function updateUser(id: number, patch: UserPatch): Promise<UserRow>
     if (!patch.isActive) {
       // Rôle visé après ce même enregistrement : désactiver en retirant le rôle
       // d'un seul coup ne contourne pas la règle.
-      assertNotAdministrator({ name: existing.name, role: String(values.role ?? existing.role) });
+      if (actor.id === id) throw new ValidationError('Vous ne pouvez pas désactiver votre propre compte.');
+      assertAdministratorChange(actor, existing, 'deactivate');
       await assertNotLastActiveAdmin(id, existing, 'deactivate');
       values.isActive = false;
       values.deletedAt = new Date();
@@ -516,11 +544,11 @@ export async function changePassword(
  * Réutilise `deactivateUser` de `lib/auth.ts` après le garde-fou du dernier
  * administrateur actif.
  */
-export async function deactivateUser(id: number): Promise<void> {
+export async function deactivateUser(id: number, actor: UserActor): Promise<void> {
   const existing = await getUser(id);
   if (!existing) throw new NotFoundError('Utilisateur introuvable');
 
-  assertNotAdministrator(existing);
+  assertAdministratorChange(actor, existing, 'deactivate');
   await assertNotLastActiveAdmin(id, existing, 'deactivate');
 
   await deactivateUserFromAuth(id);

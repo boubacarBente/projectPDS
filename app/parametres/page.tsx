@@ -23,6 +23,8 @@ import { useTheme } from '@/components/theme-provider';
 import { applyThemeColors } from '@/lib/colors';
 import { DEFAULT_SETTINGS, renderDocumentNumber, type Settings } from '@/lib/settings-schema';
 import { RoleGate } from '@/components/role-gate';
+import { DocumentPhonesEditor, phonesToRows, rowsToPhones } from '@/components/document-phones-editor';
+import type { DocumentPhone } from '@/lib/settings-schema';
 import { formatNumber } from '@/lib/format';
 import { formatDateWithTime } from '@/lib/date-format';
 
@@ -241,6 +243,7 @@ export default function ParametresPage() {
   const [storage, setStorage] = useState<StorageInfo | null>(null);
 
   const [form, setForm] = useState<FormState>(() => toForm(settings));
+  const [documentPhones, setDocumentPhones] = useState<DocumentPhone[]>(() => phonesToRows(settings.companyPhones));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [showSeedModal, setShowSeedModal] = useState(false);
@@ -250,7 +253,10 @@ export default function ParametresPage() {
 
   // Les paramètres arrivent après le premier rendu : on réaligne le formulaire.
   useEffect(() => {
-    if (!isLoading) setForm(toForm(settings));
+    if (!isLoading) {
+      setForm(toForm(settings));
+      setDocumentPhones(phonesToRows(settings.companyPhones));
+    }
   }, [isLoading, settings]);
 
   // État du stockage (dernière sauvegarde) : non porté par le contexte global.
@@ -295,6 +301,7 @@ export default function ParametresPage() {
       companyEmail: form.companyEmail,
       companyTaxId: form.companyTaxId,
       companyLogo: form.companyLogo,
+      companyPhones: rowsToPhones(documentPhones),
       invoiceFooterNote: form.invoiceFooterNote,
     });
     setIsSubmitting(false);
@@ -618,6 +625,19 @@ export default function ParametresPage() {
                   </button>
                 )}
               </div>
+            </FormField>
+
+            <FormField
+              label="Téléphones des factures et reçus"
+              hint="3 au plus ; cochez WhatsApp pour le signaler. Un magasin peut avoir les siens (fiche du magasin) ; sinon, ceux-ci s’affichent. Laissés vides : le champ « Téléphone » ci-dessus."
+              className="sm:col-span-2 lg:col-span-3"
+            >
+              <DocumentPhonesEditor
+                idPrefix="settings-doc-phone"
+                rows={documentPhones}
+                onChange={setDocumentPhones}
+                disabled={!canEditCentral}
+              />
             </FormField>
 
             <FormField

@@ -3,9 +3,10 @@
  *
  * Composant **purement présentationnel** : aucun état, aucun hook, aucune
  * requête. Tout ce qui s'affiche arrive par les props — ce qui le rend
- * réutilisable tel quel par `/ventes/[id]`, par la modale de détail et par les
- * exports PDF / image (`lib/export-document.ts`, qui capturent ce même nœud DOM
- * via son `id`).
+ * réutilisable tel quel par `/ventes/[id]` (écran et impression). Les exports
+ * PDF / image / WhatsApp ne capturent **pas** ce nœud : ils rendent leur propre
+ * document HTML (`lib/export-document.ts`, invariant 5 d'AGENTS.md) — d'où la
+ * liste d'articles propre au téléphone ci-dessous, sans effet sur les fichiers.
  *
  * Structure imposée par le README §11 :
  *   en-tête (logo, entreprise, filiale, adresse, téléphone, email, NIF)
@@ -228,20 +229,54 @@ export function InvoiceDocument({
           </p>
         ) : (
           <>
-            {/* Une seule mise en page, du mobile à l'impression : la largeur est
-                répartie en pourcentages, donc jamais de défilement horizontal à
-                360 px (§5.5 règle 1) — et le document capturé par les exports est
-                identique à celui de l'écran, sans variante responsive. */}
-            <table className="table table-xs w-full table-fixed">
+            {/* Téléphone (sous `sm`) : une ligne par article, montant à droite et
+                « quantité × prix » dessous. Le tableau à sept colonnes ne laissait
+                qu'une trentaine de pixels à « Unité » (« pi/è/ce » sur trois lignes),
+                ses en-têtes se chevauchaient et le total débordait du cadre.
+                Sans effet sur les exports : PDF, image et WhatsApp rendent leur
+                propre document HTML (`lib/export-document.ts`, invariant 5), et
+                l'impression (A4, ≥ `sm`) garde le tableau. */}
+            <ul className="divide-y divide-base-200/70 border-y border-base-200 sm:hidden print:hidden">
+              {items.map((item, index) => (
+                <li key={item.id ?? index} className="flex items-start justify-between gap-3 py-2">
+                  <div className="min-w-0">
+                    <p className="break-words font-medium">
+                      <span className="tabular text-base-content/60">{index + 1}. </span>
+                      {item.productName}
+                    </p>
+                    <p className="tabular text-xs text-base-content/60">
+                      {formatQuantity(item.quantity)} {item.unit} × {formatCurrency(item.unitPrice, currency)}
+                      {item.discount > 0 ? ` · remise ${formatCurrency(item.discount, currency)}` : ''}
+                    </p>
+                  </div>
+                  <span className="tabular shrink-0 text-right font-medium">
+                    {formatCurrency(item.amount, currency)}
+                  </span>
+                </li>
+              ))}
+              <li className="flex items-start justify-between gap-3 py-2 text-xs font-semibold">
+                <span>
+                  Total général · {formatQuantity(totalQuantity)} · {items.length} ligne(s)
+                </span>
+                <span className="tabular shrink-0">{formatCurrency(invoice.subTotal, currency)}</span>
+              </li>
+            </ul>
+
+            {/* Ordinateur et impression : la largeur est répartie en pourcentages,
+                donc jamais de défilement horizontal.
+                Une `<col>` par colonne affichée (7) : il en restait 8 depuis la
+                suppression de la colonne « Code », toutes décalées d'un cran — la
+                désignation ne recevait que 12 % (un mot par lettre à 400 px) et
+                « Prix unit. » 9 %, son en-tête chevauchant « Remise ». */}
+            <table className="table table-xs w-full table-fixed max-sm:hidden print:table">
               <colgroup>
-                <col style={{ width: '4%' }} />
+                <col style={{ width: '5%' }} />
+                <col style={{ width: '33%' }} />
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '9%' }} />
+                <col style={{ width: '17%' }} />
                 <col style={{ width: '12%' }} />
-                <col style={{ width: '26%' }} />
-                <col style={{ width: '9%' }} />
-                <col style={{ width: '9%' }} />
-                <col style={{ width: '15%' }} />
-                <col style={{ width: '11%' }} />
-                <col style={{ width: '14%' }} />
+                <col style={{ width: '16%' }} />
               </colgroup>
               <thead>
                 <tr className="border-base-200">
@@ -276,7 +311,8 @@ export function InvoiceDocument({
               </tbody>
               <tfoot>
                 <tr className="border-base-200">
-                  <td colSpan={3} className="text-left text-xs font-semibold">
+                  {/* 2 + 1 + 2 + 1 + 1 = 7 colonnes : la quantité totale tombe sous « Qté ». */}
+                  <td colSpan={2} className="text-left text-xs font-semibold">
                     Total général
                   </td>
                   <td className="tabular text-right text-xs font-semibold">

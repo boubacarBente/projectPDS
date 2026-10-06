@@ -29,7 +29,7 @@ export default function UtilisateurPage() {
   const allowed = usePermission('users.manage');
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { device, allStores } = useAuth();
+  const { device, user: me } = useAuth();
   const userId = Number(params.id);
 
   const [user, setUser] = useState<UserListItem | null>(null);
@@ -102,8 +102,12 @@ export default function UtilisateurPage() {
       ) : (
         <UserDetail
           user={user}
-          // Poste de magasin, ou compte administrateur vu par un gérant : consultation.
-          readOnly={device?.mode === 'store' || (!allStores && user.role === 'admin')}
+          // Poste de magasin, compte du super administrateur vu par un autre, ou
+          // administrateur vu par qui n'est pas super administrateur : consultation.
+          readOnly={
+            device?.mode === 'store' ||
+            (user.id !== me?.id && (user.isSuperAdmin || (user.role === 'admin' && !me?.isSuperAdmin)))
+          }
           tab={tab}
           onTabChange={changeTab}
           onChanged={() => void load()}

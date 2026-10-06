@@ -17,6 +17,7 @@ import { stores, userStores } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getDeviceConfig } from '@/lib/device';
 import { writeAudit } from '@/lib/audit';
+import { normalizeDocumentPhones } from '@/lib/settings-schema';
 
 export type StoreStatus = 'active' | 'suspended' | 'archived';
 export type StoreKind = 'store' | 'headquarters';
@@ -36,6 +37,8 @@ export type StoreRow = {
   status: StoreStatus;
   openingHours: string | null;
   receiptFooter: string | null;
+  /** Numéros de l'en-tête des documents (format stocké), 3 au plus. */
+  documentPhones: string[];
   settings: Record<string, unknown>;
   notes: string | null;
   createdAt: Date | null;
@@ -76,6 +79,10 @@ function mapStore(row: any): StoreRow {
     status: (['active', 'suspended', 'archived'].includes(row.status) ? row.status : 'active') as StoreStatus,
     openingHours: row.opening_hours ?? null,
     receiptFooter: row.receipt_footer ?? null,
+    documentPhones: String(row.document_phones ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean),
     settings: parseSettings(row.settings),
     notes: row.notes ?? null,
     createdAt: row.created_at ? new Date(Number(row.created_at) * 1000) : null,
@@ -264,6 +271,7 @@ export type StoreInput = {
   openingDate?: string | null;
   openingHours?: string | null;
   receiptFooter?: string | null;
+  documentPhones?: unknown;
   settings?: Record<string, unknown> | null;
   notes?: string | null;
   /**
@@ -360,6 +368,7 @@ export async function createStore(
         openingDate: cleanText(input.openingDate),
         openingHours: cleanText(input.openingHours),
         receiptFooter: cleanText(input.receiptFooter),
+        documentPhones: normalizeDocumentPhones(input.documentPhones).join(',') || null,
         settings: input.settings ? JSON.stringify(input.settings) : null,
         notes: cleanText(input.notes),
         status: 'active',
@@ -430,6 +439,9 @@ export async function updateStore(
     }
     if (input.settings !== undefined) {
       updates.settings = input.settings ? JSON.stringify(input.settings) : null;
+    }
+    if (input.documentPhones !== undefined) {
+      updates.documentPhones = normalizeDocumentPhones(input.documentPhones).join(',') || null;
     }
     if (input.managerUserId !== undefined) {
       await assertManager(input.managerUserId);
@@ -690,6 +702,7 @@ export type StoreLetterhead = {
   phone: string | null;
   email: string | null;
   receiptFooter: string | null;
+  documentPhones: string[];
 };
 
 export async function getStoreLetterhead(storeId: number | null | undefined): Promise<StoreLetterhead | null> {
@@ -703,5 +716,6 @@ export async function getStoreLetterhead(storeId: number | null | undefined): Pr
     phone: store.phone,
     email: store.email,
     receiptFooter: store.receiptFooter,
+    documentPhones: store.documentPhones,
   };
 }

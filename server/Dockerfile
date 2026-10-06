@@ -3,7 +3,7 @@ FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
-COPY index.mjs ./
+COPY index.mjs sync-scopes.mjs ./
 ENV NODE_ENV=production PORT=8080
 EXPOSE 8080
 USER node

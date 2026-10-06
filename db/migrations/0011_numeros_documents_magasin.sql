@@ -1,0 +1,1 @@
+ALTER TABLE `stores` ADD `document_phones` text;

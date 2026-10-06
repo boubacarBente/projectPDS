@@ -18,6 +18,13 @@ export type Settings = {
   companyEmail: string;
   companyLogo: string;
   companyTaxId: string;
+  /**
+   * Numéros affichés sur les documents, **3 au plus** (demande client), chacun
+   * avec l'icône téléphone ou WhatsApp. Format stocké : `+224 621 496 406` ou
+   * `+224 629 585 035|whatsapp` — lu par `parseDocumentPhone`. Liste vide :
+   * le téléphone du magasin, à défaut celui de l'entreprise.
+   */
+  companyPhones: string[];
   /* Devise et format */
   currency: string;
   currencySymbol: string;
@@ -94,6 +101,7 @@ export const DEFAULT_SETTINGS: Settings = {
   companyEmail: '',
   companyLogo: '',
   companyTaxId: '',
+  companyPhones: [],
   currency: 'GNF',
   currencySymbol: 'GNF',
   dateFormat: 'DD/MM/YYYY',
@@ -174,6 +182,7 @@ export const SETTINGS_KEY_LABELS: Partial<Record<keyof Settings, string>> = {
   companyEmail: 'Email',
   companyLogo: 'Logo',
   companyTaxId: 'NIF',
+  companyPhones: 'Téléphones des documents',
 };
 
 /**
@@ -187,6 +196,38 @@ export const SETTINGS_KEY_LABELS: Partial<Record<keyof Settings, string>> = {
  */
 export const DEFAULT_COMPANY_LOGO = '/logo.jpg';
 
+/** Nombre maximal de numéros sur l'en-tête des documents (demande client). */
+export const MAX_DOCUMENT_PHONES = 3;
+
+export type DocumentPhone = { number: string; whatsapp: boolean };
+
+/** `+224 629 585 035|whatsapp` → `{ number, whatsapp: true }`. */
+export function parseDocumentPhone(raw: string): DocumentPhone {
+  const [number, kind] = String(raw ?? '').split('|');
+  return { number: number.trim(), whatsapp: kind?.trim() === 'whatsapp' };
+}
+
+export function serializeDocumentPhone(phone: DocumentPhone): string {
+  const number = phone.number.replace(/[,|]/g, ' ').trim();
+  return phone.whatsapp ? `${number}|whatsapp` : number;
+}
+
+/**
+ * Liste de numéros reçue d'un formulaire (chaînes ou `{ number, whatsapp }`) →
+ * format stocké, vides retirés, **3 au plus**.
+ */
+export function normalizeDocumentPhones(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) =>
+      typeof entry === 'string'
+        ? serializeDocumentPhone(parseDocumentPhone(entry))
+        : serializeDocumentPhone({ number: String(entry?.number ?? ''), whatsapp: Boolean(entry?.whatsapp) }),
+    )
+    .filter((entry) => parseDocumentPhone(entry).number)
+    .slice(0, MAX_DOCUMENT_PHONES);
+}
+
 /** camelCase (application) → snake_case (base). */
 export function toDbKey(key: string): string {
   return key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
@@ -198,6 +239,7 @@ export function fromDbKey(key: string): string {
 }
 
 export const ARRAY_SETTINGS_KEYS: (keyof Settings)[] = [
+  'companyPhones',
   'paymentMethods',
   'units',
   'expenseCategories',
@@ -294,6 +336,8 @@ export type StoreLetterheadView = {
   phone: string | null;
   email: string | null;
   receiptFooter: string | null;
+  /** Numéros propres au magasin (format stocké) ; vide = ceux de l'entreprise. */
+  documentPhones?: string[];
 } | null;
 
 /**
@@ -318,6 +362,8 @@ export function applyStoreLetterhead<
   if (!store) return settings;
   return {
     ...settings,
+    // Numéros propres au magasin pour l'en-tête des documents (`lib/letterhead.ts`).
+    letterheadPhones: store.documentPhones ?? [],
     companyBranch: settings.companyBranch ? `${settings.companyBranch} — ${store.name}` : store.name,
     companyAddress: store.address || settings.companyAddress,
     companyPhone: store.phone || settings.companyPhone,

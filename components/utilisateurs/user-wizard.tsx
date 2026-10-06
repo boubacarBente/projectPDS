@@ -51,10 +51,10 @@ export function UserWizard({
   /** Reçoit l'identifiant du compte créé (la liste ouvre alors sa fiche). */
   onCreated: (id: number) => void;
 }) {
-  const { allStores, activeStoreId } = useAuth();
+  const { user: me, activeStoreId } = useAuth();
   const { stores, error: storesError } = useAssignableStores(isOpen);
-  // Le rôle Administrateur n'est attribuable que par un administrateur général.
-  const roles = ROLES.filter((r) => r !== 'admin' || allStores);
+  // Le rôle Administrateur n'est attribuable que par le super administrateur (README §17.2).
+  const roles = ROLES.filter((r) => r !== 'admin' || me?.isSuperAdmin);
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');

@@ -715,8 +715,9 @@ export default function VenteDetailPage() {
           <MiniStat label="Payé" tone="success" value={<MoneyText value={schedule.paid} />} />
           <MiniStat
             label="Reste"
-            tone={schedule.remaining > 0.001 ? 'error' : 'success'}
-            /* Rouge dès qu'il reste à encaisser, neutre à zéro. */
+            /* Rouge dès qu'il reste à encaisser (facture active), neutre sinon —
+               invariant 9 : un « 0 GNF » n'a pas à être vert. */
+            tone={schedule.remaining > 0.001 && invoice.status === 'active' ? 'error' : 'neutral'}
             value={
               <MoneyText
                 value={schedule.remaining}
@@ -859,13 +860,15 @@ export default function VenteDetailPage() {
         <Card padded={false} className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-base-200 bg-base-200/60 px-4 py-2.5">
             <h2 className="text-sm font-semibold">Traçabilité</h2>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
-              onClick={() => setShowDetailModal(true)}
-            >
-              Détail des lignes et règlements
-            </button>
+            <Tooltip label="Ouvre un résumé de la facture dans une fenêtre : les articles vendus (quantités, prix, remises), les totaux et les paiements déjà reçus, sans quitter cette page.">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm min-h-11 sm:min-h-0"
+                onClick={() => setShowDetailModal(true)}
+              >
+                Détail des lignes et règlements
+              </button>
+            </Tooltip>
           </div>
           <div className="px-4 py-2">
             <InfoRow label="Vendeur">

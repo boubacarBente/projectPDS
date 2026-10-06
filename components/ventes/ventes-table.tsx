@@ -5,7 +5,11 @@
  *
  * Toute liste passe par `ResponsiveTable` : cartes empilées sous `sm`, tableau
  * au-dessus. La colonne **Reste** est la colonne clé du module : `MoneyText
- * colored` (rouge tant qu'il reste quelque chose à encaisser).
+ * remaining` (rouge tant qu'il reste quelque chose à encaisser, neutre sinon).
+ *
+ * Sur téléphone, la carte a un corps dédié (`renderCard`) : n° de facture en
+ * titre, client et date, puis les quatre montants regroupés en grille 2 × 2.
+ * La grille générique empilait sept lignes par vente aux alignements mêlés.
  *
  * La colonne **Bénéfice** n'apparaît que pour un utilisateur qui détient
  * `balances.view` — et le serveur ne lui envoie `cost`/`profit` que dans ce cas
@@ -175,6 +179,65 @@ export function VentesTable({
     },
   ] satisfies Column<SalesInvoiceRow>[];
 
+  /* Corps de carte mobile : identité de la vente, puis les montants en 2 × 2. */
+  const renderCard = (invoice: SalesInvoiceRow) => (
+    <div className="space-y-3 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-medium">
+            {invoice.customerName?.trim() ? invoice.customerName : 'Client comptoir'}
+          </p>
+          <p className="tabular text-xs text-base-content/60">{formatDateShort(invoice.date)}</p>
+        </div>
+        <span className="shrink-0">
+          <StatusBadge status={invoice.paymentStatus} kind="payment" />
+        </span>
+      </div>
+
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-lg bg-base-200/50 px-3 py-2.5">
+        <div className="min-w-0">
+          <dt className="text-xs text-base-content/55">Total</dt>
+          <dd className="truncate">
+            <MoneyText value={invoice.total} bold />
+          </dd>
+        </div>
+        <div className="min-w-0 text-right">
+          <dt className="text-xs text-base-content/55">Reste</dt>
+          <dd className="truncate">
+            <MoneyText value={invoice.remainingAmount} remaining={invoice.status === 'active'} bold />
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-base-content/55">Payé</dt>
+          <dd className="truncate">
+            <MoneyText value={invoice.amountPaid} />
+          </dd>
+        </div>
+        {canViewProfit && (
+          <div className="min-w-0 text-right">
+            <dt className="text-xs text-base-content/55">Bénéfice</dt>
+            <dd className="truncate">
+              {invoice.profit === null ? (
+                <span className="text-base-content/40">—</span>
+              ) : (
+                <MoneyText value={invoice.profit} colored />
+              )}
+            </dd>
+          </div>
+        )}
+      </dl>
+    </div>
+  );
+
+  /*
+   * Emplacement vide de la taille d'un bouton-icône, **sur ordinateur seulement** :
+   * les actions sont alignées à droite, donc une ligne sans « Payer » décalait
+   * l'œil et le reçu d'un cran — les icônes ne formaient plus de colonnes.
+   * « Payer » (vente active) et « Valider » (brouillon) s'excluent : ils
+   * partagent le même emplacement.
+   */
+  const slot = <span aria-hidden className="hidden h-8 w-8 shrink-0 sm:inline-block" />;
+
   return (
     <ResponsiveTable
       columns={columns}
@@ -182,6 +245,7 @@ export function VentesTable({
       getRowKey={(invoice) => invoice.id}
       tableClassName="table-sm"
       actionsClassName="w-40"
+      renderCard={renderCard}
       actions={(invoice) => (
         <RowActions>
           <IconAction icon="view" label="Voir le détail de la facture" onClick={() => onOpenDetail(invoice)} />
@@ -206,6 +270,10 @@ export function VentesTable({
               onClick={() => onOpenValidate(invoice)}
             />
           )}
+          {(canPay || canValidate) &&
+            !canCollect(invoice, canPay) &&
+            !(canValidate && invoice.status === 'draft') &&
+            slot}
           {canCancel && invoice.status !== 'cancelled' && (
             <IconAction
               icon="cancel"
@@ -214,6 +282,7 @@ export function VentesTable({
               onClick={() => onOpenCancel(invoice)}
             />
           )}
+          {canCancel && invoice.status === 'cancelled' && slot}
         </RowActions>
       )}
     />

@@ -463,6 +463,11 @@ export default function MagasinFichePage() {
             <InfoRow label="Gérant principal">{store.managerName || '—'}</InfoRow>
             <InfoRow label="Date d’ouverture">{store.openingDate ? formatDateShort(store.openingDate) : '—'}</InfoRow>
             <InfoRow label="Horaires">{store.openingHours || '—'}</InfoRow>
+            <InfoRow label="Téléphones des documents">
+              {store.documentPhones?.length
+                ? store.documentPhones.map((p) => (p.endsWith('|whatsapp') ? `${p.slice(0, -9)} (WhatsApp)` : p)).join(' · ')
+                : 'Ceux de l’entreprise'}
+            </InfoRow>
             <InfoRow label="Pied de ticket">{store.receiptFooter || '—'}</InfoRow>
             <InfoRow label="Créé le">{store.createdAt ? formatDateWithTime(store.createdAt) : '—'}</InfoRow>
           </Card>

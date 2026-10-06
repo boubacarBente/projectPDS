@@ -747,10 +747,9 @@ export function PaymentModal({
       try {
         const result = await fetchUnpaidInvoices(customer.id, controller.signal);
         setInvoicesState(result);
-        if (Array.isArray(result) && result.length > 0) {
-          setInvoiceId(result[0].id);
-          setAmount(String(result[0].remainingAmount));
-        }
+        // Montant laissé vide (demande client, 5 octobre 2026) : le client paie
+        // souvent par tranches ; pré-remplir le reste faisait tout encaisser.
+        if (Array.isArray(result) && result.length > 0) setInvoiceId(result[0].id);
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') return;
         setInvoicesState('Les factures du client n’ont pas pu être chargées.');
@@ -768,10 +767,7 @@ export function PaymentModal({
   const selectInvoice = (id: number) => {
     setInvoiceId(id);
     const invoice = unpaidInvoices.find((entry) => entry.id === id);
-    if (invoice) {
-      setAmount(String(invoice.remainingAmount));
-      setAmountError(null);
-    }
+    if (invoice) setAmountError(null);
   };
 
   const submit = async () => {
@@ -838,7 +834,15 @@ export function PaymentModal({
   const salesRouteMissing = invoicesState === SALES_ROUTE_UNAVAILABLE;
   const invoicesFailed = typeof invoicesState === 'string' && invoicesState !== SALES_ROUTE_UNAVAILABLE;
   const isLoadingInvoices = invoicesState === null;
-  const canSubmit = canCreate && (salesRouteMissing ? false : Boolean(selectedInvoice)) && !receipt;
+  // Contrôle immédiat, à la saisie ; le serveur refuse aussi (`createPayment`).
+  const typed = Number(amount);
+  const overpaid =
+    amount !== '' && Boolean(selectedInvoice) && Number.isFinite(typed) && typed > (selectedInvoice?.remainingAmount ?? 0) + 0.01;
+  const liveAmountError = overpaid
+    ? `Le montant dépasse ce que le client doit sur cette facture : ${formatNumber(selectedInvoice?.remainingAmount ?? 0)} GNF au maximum.`
+    : null;
+  const canSubmit =
+    canCreate && (salesRouteMissing ? false : Boolean(selectedInvoice)) && !receipt && !overpaid;
 
   return (
     <Modal
@@ -913,17 +917,22 @@ export function PaymentModal({
             </FormField>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FormField label="Montant reçu (GNF)" htmlFor="payment-amount" required error={amountError}>
+              <FormField label="Montant reçu (GNF)" htmlFor="payment-amount" required error={liveAmountError ?? amountError}>
                 <input
                   id="payment-amount"
                   type="number"
                   min={0}
+                  max={selectedInvoice?.remainingAmount}
                   step={1000}
                   inputMode="numeric"
-                  className="input input-bordered min-h-11 w-full tabular sm:min-h-0"
+                  className={`input input-bordered min-h-11 w-full tabular sm:min-h-0 ${overpaid ? 'input-error' : ''}`}
                   value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                  placeholder="0"
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setAmountError(null);
+                  }}
+                  placeholder="Montant versé par le client"
+                  aria-invalid={overpaid}
                 />
               </FormField>
 

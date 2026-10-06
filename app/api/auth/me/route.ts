@@ -18,7 +18,7 @@ export async function GET() {
   const [stores, device] = await Promise.all([listStores({ ids: user.storeIds }), getDeviceConfig()]);
 
   return NextResponse.json({
-    user: { id: user.id, name: user.name, username: user.username, role: user.role },
+    user: { id: user.id, name: user.name, username: user.username, role: user.role, isSuperAdmin: user.isSuperAdmin },
     permissions: user.permissions,
     activeStoreId: user.storeId,
     allStores: user.allStores,
