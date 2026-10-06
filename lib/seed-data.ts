@@ -9,9 +9,15 @@
  * qu'il produit suit exactement les règles de l'application.
  *
  * Contenu :
- *  - 3 établissements : le siège (charges centrales, entrepôt), Kaloum, Matoto ;
+ *  - le siège (entrepôt central, charges centrales) et **3 magasins
+ *    spécialisés**, chacun avec son assortiment, ses clients, ses fournisseurs,
+ *    ses ouvriers, ses ventes et ses chantiers (README §28.5) :
+ *      · Kaloum — décoration et finitions (Alucobond, staff, placo, peinture) ;
+ *      · Matoto — matériaux et gros œuvre (ciment, fer, carrelage) ;
+ *      · Ratoma — meubles : showroom et atelier (meubles finis, bois,
+ *        quincaillerie d'ameublement, mousse et tissu ; cuisines, dressings,
+ *        agencement, tapisserie en prestations) ;
  *  - comptes : gérants et vendeurs par magasin (mot de passe `demo1234`) ;
- *  - catalogue commun, clients, fournisseurs, ouvriers ;
  *  - **13 mois d'activité** (l'année précédente comprise) pour que chaque
  *    filtre de période — jour, semaine, mois, année, mois ou année passés —
  *    ait quelque chose à montrer : activité dense sur les 60 derniers jours,
@@ -72,6 +78,9 @@ export type SeedReport = {
  * Référentiels
  * ------------------------------------------------------------------ */
 
+/** Codes des établissements de la démonstration. */
+type StoreCode = 'SIEGE' | 'KAL' | 'MAT' | 'MEU';
+
 const CATEGORIES: { name: string; kind: 'finished' | 'raw_material' | 'service'; description: string }[] = [
   { name: 'Meuble', kind: 'finished', description: 'Meubles finis vendus en magasin' },
   { name: 'Alucobond', kind: 'raw_material', description: 'Panneaux composites pour façades' },
@@ -80,37 +89,71 @@ const CATEGORIES: { name: string; kind: 'finished' | 'raw_material' | 'service';
   { name: 'Peinture', kind: 'raw_material', description: 'Peintures, vernis et enduits' },
   { name: 'Bois', kind: 'raw_material', description: 'Planches, chevrons et panneaux' },
   { name: 'Quincaillerie', kind: 'raw_material', description: 'Clous, vis, colle, poignées, charnières' },
+  { name: 'Matériaux de construction', kind: 'raw_material', description: 'Ciment, fer à béton, carrelage et colles' },
+  { name: 'Mousse et tissu', kind: 'raw_material', description: 'Garnissage et tissus d’ameublement' },
 ];
 
-type ProductSeed = { name: string; category: string; unit: string; purchasePrice: number; salePrice: number; stock: number; stockMin: number };
+/**
+ * `stores` : l'**assortiment** — les magasins qui vendent le produit. Le siège
+ * (entrepôt central) les a tous ; chaque magasin n'a que ceux de son métier.
+ * `supplier` : le fournisseur habituel (un achat regroupe ses produits).
+ */
+type ProductSeed = {
+  name: string;
+  category: string;
+  unit: string;
+  purchasePrice: number;
+  salePrice: number;
+  stock: number;
+  stockMin: number;
+  stores: StoreCode[];
+  supplier: string;
+};
+
+const ALL: StoreCode[] = ['SIEGE', 'KAL', 'MAT', 'MEU'];
 
 const PRODUCTS: ProductSeed[] = [
-  { name: 'Armoire 2 portes standard', category: 'Meuble', unit: 'pièce', purchasePrice: 1_450_000, salePrice: 2_100_000, stock: 6, stockMin: 2 },
-  { name: 'Lit 2 places avec tête de lit', category: 'Meuble', unit: 'pièce', purchasePrice: 1_900_000, salePrice: 2_750_000, stock: 5, stockMin: 2 },
-  { name: 'Table à manger 6 places', category: 'Meuble', unit: 'pièce', purchasePrice: 1_200_000, salePrice: 1_850_000, stock: 6, stockMin: 2 },
-  { name: 'Buffet bas 4 portes', category: 'Meuble', unit: 'pièce', purchasePrice: 980_000, salePrice: 1_500_000, stock: 6, stockMin: 2 },
-  { name: 'Ensemble salon complet', category: 'Meuble', unit: 'ensemble', purchasePrice: 4_200_000, salePrice: 6_300_000, stock: 3, stockMin: 1 },
-  { name: 'Bureau de direction', category: 'Meuble', unit: 'pièce', purchasePrice: 1_650_000, salePrice: 2_450_000, stock: 4, stockMin: 1 },
-  { name: 'Chaise bois massif', category: 'Meuble', unit: 'pièce', purchasePrice: 185_000, salePrice: 295_000, stock: 40, stockMin: 8 },
-  { name: 'Panneau Alucobond 4 mm rouge', category: 'Alucobond', unit: 'm²', purchasePrice: 145_000, salePrice: 210_000, stock: 120, stockMin: 20 },
-  { name: 'Panneau Alucobond 4 mm argent', category: 'Alucobond', unit: 'm²', purchasePrice: 148_000, salePrice: 215_000, stock: 90, stockMin: 20 },
-  { name: 'Panneau Alucobond 3 mm bleu', category: 'Alucobond', unit: 'm²', purchasePrice: 125_000, salePrice: 185_000, stock: 30, stockMin: 20 },
-  { name: 'Staff décoratif en poudre', category: 'Staff', unit: 'sac', purchasePrice: 78_000, salePrice: 115_000, stock: 60, stockMin: 10 },
-  { name: 'Corniche staff 2 m', category: 'Staff', unit: 'pièce', purchasePrice: 42_000, salePrice: 68_000, stock: 80, stockMin: 15 },
-  { name: 'Plaque BA13 1,20 x 2,60 m', category: 'Placo', unit: 'pièce', purchasePrice: 68_000, salePrice: 98_000, stock: 160, stockMin: 30 },
-  { name: 'Rail R48', category: 'Placo', unit: 'pièce', purchasePrice: 22_000, salePrice: 34_000, stock: 220, stockMin: 40 },
-  { name: 'Montant M48', category: 'Placo', unit: 'pièce', purchasePrice: 24_000, salePrice: 36_000, stock: 200, stockMin: 40 },
-  { name: 'Peinture acrylique blanche 20 L', category: 'Peinture', unit: 'litre', purchasePrice: 8_500, salePrice: 13_500, stock: 300, stockMin: 60 },
-  { name: 'Vernis bois brillant 5 L', category: 'Peinture', unit: 'litre', purchasePrice: 12_000, salePrice: 19_500, stock: 80, stockMin: 20 },
-  { name: 'Enduit de lissage 25 kg', category: 'Peinture', unit: 'sac', purchasePrice: 65_000, salePrice: 92_000, stock: 40, stockMin: 10 },
-  { name: 'Planche bois rouge 2,5 m', category: 'Bois', unit: 'pièce', purchasePrice: 95_000, salePrice: 140_000, stock: 110, stockMin: 25 },
-  { name: 'Chevron 7 x 7 cm — 3 m', category: 'Bois', unit: 'pièce', purchasePrice: 55_000, salePrice: 82_000, stock: 150, stockMin: 30 },
-  { name: 'Contreplaqué 15 mm — 2,44 x 1,22 m', category: 'Bois', unit: 'pièce', purchasePrice: 320_000, salePrice: 445_000, stock: 30, stockMin: 8 },
-  { name: 'Charnière invisible', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 3_500, salePrice: 6_000, stock: 600, stockMin: 100 },
-  { name: 'Colle à bois 1 kg', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 28_000, salePrice: 42_000, stock: 60, stockMin: 12 },
-  { name: 'Vis à bois 5 x 60 mm (boîte de 200)', category: 'Quincaillerie', unit: 'carton', purchasePrice: 32_000, salePrice: 48_000, stock: 50, stockMin: 10 },
-  { name: 'Poignée aluminium brossé', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 9_500, salePrice: 16_000, stock: 200, stockMin: 40 },
-  { name: 'Clous 50 mm (1 kg)', category: 'Quincaillerie', unit: 'kg', purchasePrice: 12_000, salePrice: 19_000, stock: 80, stockMin: 15 },
+  // Meubles : le showroom de Ratoma (et le stock tampon du siège).
+  { name: 'Armoire 2 portes standard', category: 'Meuble', unit: 'pièce', purchasePrice: 1_450_000, salePrice: 2_100_000, stock: 6, stockMin: 2, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Lit 2 places avec tête de lit', category: 'Meuble', unit: 'pièce', purchasePrice: 1_900_000, salePrice: 2_750_000, stock: 5, stockMin: 2, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Table à manger 6 places', category: 'Meuble', unit: 'pièce', purchasePrice: 1_200_000, salePrice: 1_850_000, stock: 6, stockMin: 2, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Buffet bas 4 portes', category: 'Meuble', unit: 'pièce', purchasePrice: 980_000, salePrice: 1_500_000, stock: 6, stockMin: 2, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Ensemble salon complet', category: 'Meuble', unit: 'ensemble', purchasePrice: 4_200_000, salePrice: 6_300_000, stock: 3, stockMin: 1, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Bureau de direction', category: 'Meuble', unit: 'pièce', purchasePrice: 1_650_000, salePrice: 2_450_000, stock: 4, stockMin: 1, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Chaise bois massif', category: 'Meuble', unit: 'pièce', purchasePrice: 185_000, salePrice: 295_000, stock: 40, stockMin: 8, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Canapé 3 places tissu', category: 'Meuble', unit: 'pièce', purchasePrice: 2_300_000, salePrice: 3_400_000, stock: 4, stockMin: 1, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  { name: 'Commode 5 tiroirs', category: 'Meuble', unit: 'pièce', purchasePrice: 750_000, salePrice: 1_150_000, stock: 6, stockMin: 2, stores: ['SIEGE', 'MEU'], supplier: 'Meubles Import Dakar' },
+  // Décoration et finitions : Kaloum.
+  { name: 'Panneau Alucobond 4 mm rouge', category: 'Alucobond', unit: 'm²', purchasePrice: 145_000, salePrice: 210_000, stock: 120, stockMin: 20, stores: ['SIEGE', 'KAL'], supplier: 'Alucobond Afrique de l’Ouest' },
+  { name: 'Panneau Alucobond 4 mm argent', category: 'Alucobond', unit: 'm²', purchasePrice: 148_000, salePrice: 215_000, stock: 90, stockMin: 20, stores: ['SIEGE', 'KAL'], supplier: 'Alucobond Afrique de l’Ouest' },
+  { name: 'Panneau Alucobond 3 mm bleu', category: 'Alucobond', unit: 'm²', purchasePrice: 125_000, salePrice: 185_000, stock: 30, stockMin: 20, stores: ['SIEGE', 'KAL'], supplier: 'Alucobond Afrique de l’Ouest' },
+  { name: 'Staff décoratif en poudre', category: 'Staff', unit: 'sac', purchasePrice: 78_000, salePrice: 115_000, stock: 60, stockMin: 10, stores: ['SIEGE', 'KAL'], supplier: 'Quincaillerie du Port' },
+  { name: 'Corniche staff 2 m', category: 'Staff', unit: 'pièce', purchasePrice: 42_000, salePrice: 68_000, stock: 80, stockMin: 15, stores: ['SIEGE', 'KAL'], supplier: 'Quincaillerie du Port' },
+  { name: 'Plaque BA13 1,20 x 2,60 m', category: 'Placo', unit: 'pièce', purchasePrice: 68_000, salePrice: 98_000, stock: 160, stockMin: 30, stores: ['SIEGE', 'KAL'], supplier: 'Quincaillerie du Port' },
+  { name: 'Rail R48', category: 'Placo', unit: 'pièce', purchasePrice: 22_000, salePrice: 34_000, stock: 220, stockMin: 40, stores: ['SIEGE', 'KAL'], supplier: 'Quincaillerie du Port' },
+  { name: 'Montant M48', category: 'Placo', unit: 'pièce', purchasePrice: 24_000, salePrice: 36_000, stock: 200, stockMin: 40, stores: ['SIEGE', 'KAL'], supplier: 'Quincaillerie du Port' },
+  { name: 'Peinture acrylique blanche 20 L', category: 'Peinture', unit: 'litre', purchasePrice: 8_500, salePrice: 13_500, stock: 300, stockMin: 60, stores: ['SIEGE', 'KAL', 'MAT'], supplier: 'Quincaillerie du Port' },
+  { name: 'Vernis bois brillant 5 L', category: 'Peinture', unit: 'litre', purchasePrice: 12_000, salePrice: 19_500, stock: 80, stockMin: 20, stores: ['SIEGE', 'MEU'], supplier: 'Quincaillerie du Port' },
+  { name: 'Enduit de lissage 25 kg', category: 'Peinture', unit: 'sac', purchasePrice: 65_000, salePrice: 92_000, stock: 40, stockMin: 10, stores: ['SIEGE', 'KAL', 'MAT'], supplier: 'Quincaillerie du Port' },
+  // Bois : l'atelier de Ratoma, et Matoto pour les coffrages.
+  { name: 'Planche bois rouge 2,5 m', category: 'Bois', unit: 'pièce', purchasePrice: 95_000, salePrice: 140_000, stock: 110, stockMin: 25, stores: ['SIEGE', 'MEU', 'MAT'], supplier: 'Scierie Kindia Bois' },
+  { name: 'Chevron 7 x 7 cm — 3 m', category: 'Bois', unit: 'pièce', purchasePrice: 55_000, salePrice: 82_000, stock: 150, stockMin: 30, stores: ['SIEGE', 'MEU', 'MAT'], supplier: 'Scierie Kindia Bois' },
+  { name: 'Contreplaqué 15 mm — 2,44 x 1,22 m', category: 'Bois', unit: 'pièce', purchasePrice: 320_000, salePrice: 445_000, stock: 30, stockMin: 8, stores: ['SIEGE', 'MEU'], supplier: 'Scierie Kindia Bois' },
+  // Quincaillerie.
+  { name: 'Charnière invisible', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 3_500, salePrice: 6_000, stock: 600, stockMin: 100, stores: ['SIEGE', 'KAL', 'MEU'], supplier: 'Quincaillerie du Port' },
+  { name: 'Colle à bois 1 kg', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 28_000, salePrice: 42_000, stock: 60, stockMin: 12, stores: ['SIEGE', 'MEU'], supplier: 'Quincaillerie du Port' },
+  { name: 'Vis à bois 5 x 60 mm (boîte de 200)', category: 'Quincaillerie', unit: 'carton', purchasePrice: 32_000, salePrice: 48_000, stock: 50, stockMin: 10, stores: ALL, supplier: 'Quincaillerie du Port' },
+  { name: 'Poignée aluminium brossé', category: 'Quincaillerie', unit: 'pièce', purchasePrice: 9_500, salePrice: 16_000, stock: 200, stockMin: 40, stores: ['SIEGE', 'KAL', 'MEU'], supplier: 'Quincaillerie du Port' },
+  { name: 'Clous 50 mm (1 kg)', category: 'Quincaillerie', unit: 'kg', purchasePrice: 12_000, salePrice: 19_000, stock: 80, stockMin: 15, stores: ['SIEGE', 'MAT', 'MEU'], supplier: 'Quincaillerie du Port' },
+  // Matériaux de construction : Matoto.
+  { name: 'Ciment 42,5 — sac de 50 kg', category: 'Matériaux de construction', unit: 'sac', purchasePrice: 85_000, salePrice: 98_000, stock: 400, stockMin: 80, stores: ['SIEGE', 'MAT'], supplier: 'Matériaux Kagbelen' },
+  { name: 'Fer à béton 10 mm (barre de 12 m)', category: 'Matériaux de construction', unit: 'pièce', purchasePrice: 62_000, salePrice: 75_000, stock: 300, stockMin: 60, stores: ['SIEGE', 'MAT'], supplier: 'Matériaux Kagbelen' },
+  { name: 'Carreau grès 60 x 60', category: 'Matériaux de construction', unit: 'm²', purchasePrice: 95_000, salePrice: 135_000, stock: 250, stockMin: 40, stores: ['SIEGE', 'MAT'], supplier: 'Matériaux Kagbelen' },
+  { name: 'Faïence murale 25 x 40', category: 'Matériaux de construction', unit: 'm²', purchasePrice: 70_000, salePrice: 105_000, stock: 150, stockMin: 30, stores: ['SIEGE', 'MAT'], supplier: 'Matériaux Kagbelen' },
+  { name: 'Colle carrelage 25 kg', category: 'Matériaux de construction', unit: 'sac', purchasePrice: 55_000, salePrice: 78_000, stock: 120, stockMin: 20, stores: ['SIEGE', 'MAT'], supplier: 'Matériaux Kagbelen' },
+  // Garnissage : l'atelier de tapisserie de Ratoma.
+  { name: 'Plaque de mousse 10 cm', category: 'Mousse et tissu', unit: 'pièce', purchasePrice: 210_000, salePrice: 290_000, stock: 30, stockMin: 6, stores: ['SIEGE', 'MEU'], supplier: 'Mousses et Tissus Madina' },
+  { name: 'Tissu d’ameublement', category: 'Mousse et tissu', unit: 'm²', purchasePrice: 45_000, salePrice: 72_000, stock: 120, stockMin: 20, stores: ['SIEGE', 'MEU'], supplier: 'Mousses et Tissus Madina' },
 ];
 
 const CUSTOMERS = [
@@ -122,12 +165,33 @@ const CUSTOMERS = [
   { name: 'Bureaux Nimba Services', phone: '+224 620 98 76 54', address: 'Taouyah, Conakry', creditLimit: 15_000_000 },
 ];
 
-const SUPPLIERS = [
-  { name: 'Scierie Kindia Bois', phone: '+224 655 10 20 30', address: 'Kindia' },
-  { name: 'Quincaillerie du Port', phone: '+224 622 40 50 60', address: 'Port de Conakry' },
-  { name: 'Alucobond Afrique de l’Ouest', phone: '+224 628 11 33 55', address: 'Conakry' },
-  { name: 'Meubles Import Dakar', phone: '+221 77 123 45 67', address: 'Dakar' },
+/**
+ * Clientèle du magasin de meubles : particuliers qui meublent ou font faire une
+ * cuisine, commerces et bureaux à agencer. L'hôtel est aussi client de Kaloum :
+ * il a donc deux fiches (une par magasin, README §28.5).
+ */
+const FURNITURE_CUSTOMERS = [
+  { name: 'Hôtel Kaloum Plaza', phone: '+224 621 44 55 66', address: 'Kaloum, Conakry', creditLimit: 80_000_000 },
+  { name: 'M. Alpha Oumar Bah — Villa Kipé', phone: '+224 622 70 80 90', address: 'Kipé, Conakry', creditLimit: 30_000_000 },
+  { name: 'Boutique Élégance Taouyah', phone: '+224 627 31 41 51', address: 'Taouyah, Conakry', creditLimit: 20_000_000 },
+  { name: 'Mme Aïcha Sylla', phone: '+224 669 24 68 10', address: 'Lambanyi, Conakry', creditLimit: 6_000_000 },
+  { name: 'Restaurant Le Damier', phone: '+224 655 19 28 37', address: 'Ratoma, Conakry', creditLimit: 15_000_000 },
+  { name: 'Cabinet Diallo & Associés', phone: '+224 620 45 67 89', address: 'Kaloum, Conakry', creditLimit: 12_000_000 },
 ];
+
+const SUPPLIER_DIRECTORY: Record<string, { phone: string; address: string }> = {
+  'Scierie Kindia Bois': { phone: '+224 655 10 20 30', address: 'Kindia' },
+  'Quincaillerie du Port': { phone: '+224 622 40 50 60', address: 'Port de Conakry' },
+  'Alucobond Afrique de l’Ouest': { phone: '+224 628 11 33 55', address: 'Conakry' },
+  'Meubles Import Dakar': { phone: '+221 77 123 45 67', address: 'Dakar' },
+  'Matériaux Kagbelen': { phone: '+224 624 50 60 70', address: 'Kagbelen, Dubréka' },
+  'Mousses et Tissus Madina': { phone: '+224 661 80 90 10', address: 'Marché Madina, Conakry' },
+};
+
+/** Les fournisseurs de chaque établissement : ceux de son assortiment. */
+function suppliersOf(code: StoreCode): string[] {
+  return [...new Set(PRODUCTS.filter((p) => p.stores.includes(code)).map((p) => p.supplier))];
+}
 
 const WORKERS = [
   { name: 'Sékou Touré', role: 'foreman' as const, dailyRate: 150_000, specialty: 'Chef d’équipe chantier' },
@@ -208,9 +272,16 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     return store;
   };
   const hq = await ensureStore('SIEGE', 'Siège — Entrepôt central', 'headquarters', 'Yattaya, Conakry', '+224 620 00 00 01');
-  const kaloum = await ensureStore('KAL', 'Magasin Kaloum', 'store', 'Avenue de la République, Kaloum', '+224 620 00 00 02');
-  const matoto = await ensureStore('MAT', 'Magasin Matoto', 'store', 'Marché de Matoto', '+224 620 00 00 03');
+  const kaloum = await ensureStore('KAL', 'Magasin Kaloum — Décoration et finitions', 'store', 'Avenue de la République, Kaloum', '+224 620 00 00 02');
+  const matoto = await ensureStore('MAT', 'Magasin Matoto — Matériaux et gros œuvre', 'store', 'Marché de Matoto', '+224 620 00 00 03');
+  const meubles = await ensureStore('MEU', 'Planète Meubles Ratoma — Showroom et atelier', 'store', 'Route Le Prince, Ratoma', '+224 620 00 00 04');
   stores = await listStores();
+  const byCode: Record<StoreCode, typeof hq> = { SIEGE: hq, KAL: kaloum, MAT: matoto, MEU: meubles };
+  const allStores = [hq, kaloum, matoto, meubles];
+  const shops = [kaloum, matoto, meubles];
+  const codeOf = (storeId: number) => (Object.keys(byCode) as StoreCode[]).find((code) => byCode[code].id === storeId)!;
+  /** Produits de l'assortiment d'un établissement. */
+  const assortment = (storeId: number) => PRODUCTS.filter((p) => p.stores.includes(codeOf(storeId)));
 
   /* ----------------------------- Comptes ------------------------------- */
   const makeUser = async (name: string, username: string, role: 'manager' | 'seller' | 'storekeeper') => {
@@ -224,12 +295,16 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   const vendeurKal = await makeUser('Moussa Keïta', 'vendeur.kaloum', 'seller');
   const gerantMat = await makeUser('Thierno Diallo', 'gerant.matoto', 'manager');
   const vendeurMat = await makeUser('Hawa Camara', 'vendeur.matoto', 'seller');
+  const gerantMeu = await makeUser('Lansana Kourouma', 'gerant.meubles', 'manager');
+  const vendeurMeu = await makeUser('Djénabou Bah', 'vendeur.meubles', 'seller');
   const magasinier = await makeUser('Abdoulaye Sow', 'magasinier.siege', 'storekeeper');
   await setUserAssignments(gerantKal, [{ storeId: kaloum.id, isManager: true }], adminRef);
   await setUserAssignments(vendeurKal, [{ storeId: kaloum.id }], adminRef);
   await setUserAssignments(gerantMat, [{ storeId: matoto.id, isManager: true }], adminRef);
   await setUserAssignments(vendeurMat, [{ storeId: matoto.id }], adminRef);
-  await setUserAssignments(magasinier, [{ storeId: hq.id }, { storeId: kaloum.id }, { storeId: matoto.id }], adminRef);
+  await setUserAssignments(gerantMeu, [{ storeId: meubles.id, isManager: true }], adminRef);
+  await setUserAssignments(vendeurMeu, [{ storeId: meubles.id }], adminRef);
+  await setUserAssignments(magasinier, allStores.map((s) => ({ storeId: s.id })), adminRef);
   // L'administrateur est affecté à tous les magasins (il les voit de toute façon).
   await setUserAssignments(
     adminRef.id,
@@ -258,22 +333,25 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     report.products += 1;
   }
   /*
-   * Chaque magasin a ses propres clients et fournisseurs (README §28.5) : la
-   * démonstration crée la même liste dans chaque magasin (même ordre, donc
-   * mêmes indices), ce qui montre aussi qu'un client des deux magasins a deux
-   * fiches.
+   * Chaque magasin a ses propres clients et fournisseurs (README §28.5). Le
+   * siège, Kaloum et Matoto reçoivent la même liste de clients (même ordre,
+   * donc mêmes indices dans lib/seed-jobs.ts), ce qui montre qu'un client de
+   * deux magasins a deux fiches ; le magasin de meubles a sa propre clientèle.
+   * Les fournisseurs d'un établissement sont ceux de son assortiment.
    */
   const customersByStore: Record<number, number[]> = {};
-  const suppliersByStore: Record<number, number[]> = {};
-  for (const store of [hq, kaloum, matoto]) {
+  const suppliersByStore: Record<number, Map<string, number>> = {};
+  for (const store of allStores) {
+    const code = codeOf(store.id);
     customersByStore[store.id] = [];
-    for (const customer of CUSTOMERS) {
+    for (const customer of code === 'MEU' ? FURNITURE_CUSTOMERS : CUSTOMERS) {
       customersByStore[store.id].push((await createCustomer(customer, store.id)).id);
       report.customers += 1;
     }
-    suppliersByStore[store.id] = [];
-    for (const supplier of SUPPLIERS) {
-      suppliersByStore[store.id].push((await createSupplier(supplier, store.id)).id);
+    suppliersByStore[store.id] = new Map();
+    for (const name of suppliersOf(code)) {
+      const created = await createSupplier({ name, ...SUPPLIER_DIRECTORY[name] }, store.id);
+      suppliersByStore[store.id].set(name, created.id);
       report.suppliers += 1;
     }
   }
@@ -294,21 +372,24 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     [hq, 400_000_000, 400_000_000],
     [kaloum, 120_000_000, 180_000_000],
     [matoto, 100_000_000, 160_000_000],
+    [meubles, 110_000_000, 170_000_000],
   ] as const) {
     await addCashMovement({ storeId: store.id, type: 'income', amount: cash, paymentMethod: 'Espèces', motif: 'Apport initial — fonds de caisse', date: start, userId: adminRef.id });
     await addCashMovement({ storeId: store.id, type: 'income', amount: bank, paymentMethod: 'Virement', motif: 'Apport initial — compte bancaire', date: start, userId: adminRef.id });
   }
 
   /* ----------------------- Approvisionnement initial ------------------- */
+  // Stock cible de chaque établissement, en part du stock de référence du produit.
   const shares: [typeof hq, number][] = [
     [hq, 1],
     [kaloum, 0.8],
-    [matoto, 0.6],
+    [matoto, 0.8],
+    [meubles, 0.8],
   ];
   for (const [store, share] of shares) {
-    const supplierIds = suppliersByStore[store.id];
-    for (const [index, supplierId] of supplierIds.entries()) {
-      const lines = PRODUCTS.filter((_, i) => i % supplierIds.length === index).map((product) => ({
+    // Un achat par fournisseur, regroupant les produits qu'il livre à ce magasin.
+    for (const [index, [supplierName, supplierId]] of [...suppliersByStore[store.id]].entries()) {
+      const lines = assortment(store.id).filter((product) => product.supplier === supplierName).map((product) => ({
         productId: productIds.get(product.name)!,
         quantity: Math.max(1, Math.round(product.stock * share)),
         unitPrice: product.purchasePrice,
@@ -330,8 +411,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   }
 
   /* ------------------------------ Ventes ------------------------------- */
-  const sellers: Record<number, number> = { [hq.id]: magasinier, [kaloum.id]: vendeurKal, [matoto.id]: vendeurMat };
-  const sellable = PRODUCTS.filter((p) => p.salePrice > 0);
+  const sellers: Record<number, number> = { [hq.id]: magasinier, [kaloum.id]: vendeurKal, [matoto.id]: vendeurMat, [meubles.id]: vendeurMeu };
   for (let d = 0; d <= days; d += 1) {
     const date = addDays(start, d);
     const dense = days - d <= DENSE_DAYS;
@@ -344,29 +424,35 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
      */
     if (d > 0 && date.endsWith('-01')) {
       for (const [store, share] of shares) {
-        const lines: { productId: number; quantity: number; unitPrice: number }[] = [];
-        for (const product of PRODUCTS) {
+        // Un achat par fournisseur : chacun livre les produits qui manquent.
+        const bySupplier = new Map<string, { productId: number; quantity: number; unitPrice: number }[]>();
+        for (const product of assortment(store.id)) {
           const productId = productIds.get(product.name)!;
           const target = Math.max(1, Math.round(product.stock * share));
           const current = await getStoreStock(store.id, productId);
-          if (current < target) lines.push({ productId, quantity: Math.ceil(target - current), unitPrice: product.purchasePrice });
+          if (current >= target) continue;
+          const lines = bySupplier.get(product.supplier) ?? [];
+          lines.push({ productId, quantity: Math.ceil(target - current), unitPrice: product.purchasePrice });
+          bySupplier.set(product.supplier, lines);
         }
-        if (lines.length === 0) continue;
-        const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
-        await createPurchaseInvoice({
-          storeId: store.id,
-          supplierId: pick(suppliersByStore[store.id]),
-          date,
-          paymentMethod: random() < 0.5 ? 'Virement' : 'Espèces',
-          amountPaid: random() < 0.7 ? total : Math.round(total * 0.5),
-          lines,
-          userId: adminRef.id,
-        });
-        report.purchases += 1;
+        for (const [supplierName, lines] of bySupplier) {
+          const total = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
+          await createPurchaseInvoice({
+            storeId: store.id,
+            supplierId: suppliersByStore[store.id].get(supplierName)!,
+            date,
+            paymentMethod: random() < 0.5 ? 'Virement' : 'Espèces',
+            amountPaid: random() < 0.7 ? total : Math.round(total * 0.5),
+            lines,
+            userId: adminRef.id,
+          });
+          report.purchases += 1;
+        }
       }
     }
 
-    for (const store of [kaloum, matoto, hq]) {
+    for (const store of [...shops, hq]) {
+      const sellable = assortment(store.id);
       const salesToday = !dense
         ? random() < (store.kind === 'headquarters' ? 0.1 : 0.4)
           ? 1
@@ -416,7 +502,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
 
     // Dépenses locales (hebdomadaires) et charges centrales (mensuelles).
     if (d % 7 === 3) {
-      for (const store of [kaloum, matoto]) {
+      for (const store of shops) {
         await createExpense({
           storeId: store.id,
           category: pick(['Transport', 'Électricité', 'Carburant']),
@@ -478,6 +564,8 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     allStores: true,
   });
   const chairs = productIds.get('Chaise bois massif')!;
+  const sofa = productIds.get('Canapé 3 places tissu')!;
+  const chest = productIds.get('Commode 5 tiroirs')!;
   const ba13 = productIds.get('Plaque BA13 1,20 x 2,60 m')!;
   const paint = productIds.get('Peinture acrylique blanche 20 L')!;
 
@@ -488,8 +576,8 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
       destinationStoreId: kaloum.id,
       reason: 'Réassort hebdomadaire',
       items: [
-        { productId: chairs, quantity: 6 },
         { productId: ba13, quantity: 20 },
+        { productId: paint, quantity: 30 },
       ],
       submit: true,
     },
@@ -521,16 +609,40 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   await shipTransfer(t2.transfer.id, asUser(magasinier, 'Abdoulaye Sow', hq.id));
   report.transfers += 1;
 
-  // 3. Matoto → Kaloum : en attente de validation.
+  // 3. Siège → Ratoma (meubles) : en attente de validation.
   await createTransfer(
     {
-      sourceStoreId: matoto.id,
-      destinationStoreId: kaloum.id,
-      reason: 'Rupture de chaises à Kaloum',
-      items: [{ productId: chairs, quantity: 4 }],
+      sourceStoreId: hq.id,
+      destinationStoreId: meubles.id,
+      reason: 'Rupture de chaises au showroom',
+      items: [{ productId: chairs, quantity: 8 }],
       submit: true,
     },
-    asUser(gerantKal, 'Mariama Bangoura', kaloum.id),
+    asUser(gerantMeu, 'Lansana Kourouma', meubles.id),
+  );
+  report.transfers += 1;
+
+  // 4. Siège → Ratoma : canapés et commodes reçus au showroom.
+  const tMeu = await createTransfer(
+    {
+      sourceStoreId: hq.id,
+      destinationStoreId: meubles.id,
+      reason: 'Réassort du showroom',
+      items: [
+        { productId: sofa, quantity: 2 },
+        { productId: chest, quantity: 2 },
+      ],
+      submit: true,
+    },
+    asUser(gerantMeu, 'Lansana Kourouma', meubles.id),
+  );
+  await approveTransfer(tMeu.transfer.id, 'approve', asUser(adminRef.id, adminRef.name, hq.id));
+  await shipTransfer(tMeu.transfer.id, asUser(magasinier, 'Abdoulaye Sow', hq.id));
+  const tMeuShipped = await t1Detail(tMeu.transfer.id);
+  await receiveTransfer(
+    tMeu.transfer.id,
+    asUser(gerantMeu, 'Lansana Kourouma', meubles.id),
+    { quantities: Object.fromEntries(tMeuShipped!.items.map((i) => [i.id, i.quantityShipped])), close: true },
   );
   report.transfers += 1;
 
@@ -561,6 +673,8 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     admin: adminRef,
     gerantKal: { id: gerantKal, name: 'Mariama Bangoura' },
     gerantMat: { id: gerantMat, name: 'Thierno Diallo' },
+    meubles: { id: meubles.id, name: meubles.name },
+    gerantMeu: { id: gerantMeu, name: 'Lansana Kourouma' },
     customersByStore,
     productIds,
   });
@@ -590,7 +704,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     close: true,
   });
   const t6 = await createTransfer(
-    { sourceStoreId: kaloum.id, destinationStoreId: matoto.id, reason: 'Demande exceptionnelle', items: [{ productId: chairs, quantity: 10 }], submit: true },
+    { sourceStoreId: kaloum.id, destinationStoreId: matoto.id, reason: 'Demande exceptionnelle', items: [{ productId: paint, quantity: 60 }], submit: true },
     asUser(gerantMat, 'Thierno Diallo', matoto.id),
   );
   await approveTransfer(t6.transfer.id, 'refuse', asUser(gerantKal, 'Mariama Bangoura', kaloum.id), 'Stock insuffisant à Kaloum');
@@ -616,9 +730,13 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   }
   report.inventories += 1;
 
-  // Ventes : deux brouillons (ni stock ni caisse) et trois annulations.
-  for (const [store, seller] of [[kaloum, vendeurKal], [matoto, vendeurMat]] as const) {
-    const product = PRODUCTS[6];
+  // Ventes : un brouillon par magasin (ni stock ni caisse) et des annulations.
+  for (const [store, seller, productName] of [
+    [kaloum, vendeurKal, 'Plaque BA13 1,20 x 2,60 m'],
+    [matoto, vendeurMat, 'Ciment 42,5 — sac de 50 kg'],
+    [meubles, vendeurMeu, 'Chaise bois massif'],
+  ] as const) {
+    const product = PRODUCTS.find((p) => p.name === productName)!;
     await createSalesInvoice({
       storeId: store.id,
       customerId: customersByStore[store.id][2],
@@ -633,9 +751,9 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     report.sales += 1;
   }
   const toCancel = await rawAll<{ id: number; store_id: number }>(
-    `SELECT id, store_id FROM sales_invoices WHERE status = 'active' AND store_id IN (?, ?)
-      ORDER BY date DESC LIMIT 3 OFFSET 5`,
-    [kaloum.id, matoto.id],
+    `SELECT id, store_id FROM sales_invoices WHERE status = 'active' AND store_id IN (?, ?, ?)
+      ORDER BY date DESC LIMIT 4 OFFSET 5`,
+    shops.map((s) => s.id),
   );
   for (const sale of toCancel) {
     await cancelSalesInvoice(Number(sale.id), 'Erreur de caisse, vente ressaisie', {
@@ -683,14 +801,15 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   const bigExpense = (storeId: number, userId: number, category: string, amount: number, description: string) =>
     createExpense({ storeId, category, amount, date: today(), description, userId, canSkipApproval: false });
   await bigExpense(kaloum.id, vendeurKal, 'Transport', 2_800_000, 'Location d’un camion pour une livraison');
+  await bigExpense(meubles.id, vendeurMeu, 'Autre', 2_600_000, 'Révision de la scie à format de l’atelier');
   const toPay = await bigExpense(matoto.id, vendeurMat, 'Électricité', 3_400_000, 'Réparation du groupe électrogène');
   await decideExpense(toPay.id, 'approve', { userId: gerantMat, payNow: false, activeStoreId: matoto.id });
   const rejected = await bigExpense(kaloum.id, vendeurKal, 'Autre', 4_500_000, 'Achat d’un climatiseur');
   await decideExpense(rejected.id, 'reject', { userId: gerantKal, reason: 'Non prévu au budget', activeStoreId: kaloum.id });
-  report.expenses += 3;
+  report.expenses += 4;
 
   /* ---------------- Clôture des caisses des magasins ------------------ */
-  for (const store of [kaloum, matoto]) {
+  for (const store of shops) {
     const session = await getOpenSession(store.id);
     if (!session) continue;
     const theoretical = await getSessionTheoreticalByMethod(session.id);

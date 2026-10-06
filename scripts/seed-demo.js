@@ -3,9 +3,10 @@
  *
  *  1. Base vierge : installe le premier administrateur et le magasin « SIEGE »
  *     (type siège) par l'écran de première installation (`POST /api/auth/setup`).
- *  2. Se connecte puis appelle `POST /api/parametres/seed-data` : magasins
- *     SIEGE / KAL / MAT, comptes (mot de passe « demo1234 »), catalogue et
- *     13 mois d'activité dans tous les statuts (voir `lib/seed-data.ts`).
+ *  2. Se connecte puis appelle `POST /api/parametres/seed-data` : siège et
+ *     magasins spécialisés KAL / MAT / MEU (meubles), comptes (mot de passe
+ *     « demo1234 »), catalogue et 13 mois d'activité dans tous les statuts
+ *     (voir `lib/seed-data.ts`).
  *
  * À lancer sur une **base de recette**, jamais sur la base de travail : rien de
  * ce qui est créé ne se supprime (README §28.4).

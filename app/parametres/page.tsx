@@ -1435,7 +1435,7 @@ export default function ParametresPage() {
         tone="warning"
         confirmLabel="Préremplir"
         isSubmitting={isWorking}
-        message="Un réseau de démonstration sera créé : le siège, les magasins Kaloum et Matoto, leurs comptes (mot de passe demo1234), un catalogue commun et 60 jours d’activité (ventes, achats, dépenses, transferts, inventaire, chantiers). Rien n’est créé si le catalogue contient déjà des produits."
+        message="Un réseau de démonstration sera créé : le siège et trois magasins spécialisés (Kaloum : décoration, Matoto : matériaux, Ratoma : meubles), leurs comptes (mot de passe demo1234) et 13 mois d’activité propres à chaque magasin (ventes, achats, dépenses, transferts, inventaires, prestations et chantiers). Rien n’est créé si le catalogue contient déjà des produits : réinitialisez d’abord."
       />
 
       <ConfirmDialog

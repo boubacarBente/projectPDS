@@ -15,7 +15,10 @@
  *  - des **chantiers** en préparation, planifiés, en cours, **en retard**,
  *    suspendus, terminés et annulés, avec prestations, étapes, équipe,
  *    matériaux, sous-traitance, dépenses et acomptes ;
- *  - des chantiers terminés sur les **12 derniers mois** (graphique du pilotage).
+ *  - des chantiers terminés sur les **12 derniers mois** (graphique du pilotage) ;
+ *  - le **magasin de meubles** (Ratoma) a un catalogue de menuisier : cuisines
+ *    et dressings sur mesure, agencement, tapisserie, pose — et ses chantiers
+ *    consomment le bois et la quincaillerie de **son** stock.
  */
 
 import { rawGet } from '@/db';
@@ -52,6 +55,8 @@ export type JobsSeedContext = {
   admin: UserRef;
   gerantKal: UserRef;
   gerantMat: UserRef;
+  meubles: StoreRef;
+  gerantMeu: UserRef;
   /** Clients de chaque magasin (README §28.5 : chaque magasin a les siens), même ordre partout. */
   customersByStore: Record<number, number[]>;
   productIds: Map<string, number>;
@@ -59,7 +64,7 @@ export type JobsSeedContext = {
 
 export type JobsSeedReport = { services: number; requests: number; quotes: number; jobs: number; subcontractors: number };
 
-const CATALOG: Record<'KAL' | 'MAT' | 'SIEGE', { name: string; category: string; unit: string; price: number; description?: string }[]> = {
+const CATALOG: Record<'KAL' | 'MAT' | 'MEU', { name: string; category: string; unit: string; price: number; description?: string }[]> = {
   KAL: [
     { name: 'Habillage de façade Alucobond', category: 'Alucobond / façade', unit: 'm²', price: 180_000, description: 'Ossature aluminium, pose et joints. Panneaux fournis à part.' },
     { name: 'Peinture intérieure deux couches', category: 'Peinture', unit: 'm²', price: 23_000, description: 'Préparation, sous-couche et deux couches de finition.' },
@@ -75,22 +80,33 @@ const CATALOG: Record<'KAL' | 'MAT' | 'SIEGE', { name: string; category: string;
     { name: 'Élévation de murs en agglos', category: 'Gros œuvre / maçonnerie', unit: 'm²', price: 120_000 },
     { name: 'Terrassement et fouilles', category: 'Gros œuvre / maçonnerie', unit: 'm³', price: 60_000 },
     { name: 'Point lumineux', category: 'Électricité', unit: 'point', price: 150_000 },
-    { name: 'Porte intérieure posée', category: 'Menuiserie / meubles', unit: 'unité', price: 850_000 },
+    { name: 'Pose de faïence murale', category: 'Carrelage', unit: 'm²', price: 35_000 },
     { name: 'Crépissage extérieur', category: 'Gros œuvre / maçonnerie', unit: 'm²', price: 18_000 },
   ],
-  SIEGE: [
-    { name: 'Cuisine sur mesure', category: 'Menuiserie / meubles', unit: 'forfait', price: 12_000_000 },
-    { name: 'Pose de meubles', category: 'Menuiserie / meubles', unit: 'jour', price: 350_000 },
+  MEU: [
+    { name: 'Cuisine équipée sur mesure', category: 'Cuisine et dressing', unit: 'mètre linéaire', price: 1_800_000, description: 'Caissons, façades, plan de travail et pose. Électroménager non compris.' },
+    { name: 'Dressing sur mesure', category: 'Cuisine et dressing', unit: 'm²', price: 950_000, description: 'Caissons en contreplaqué, portes battantes ou coulissantes, penderies et étagères.' },
+    { name: 'Placard intégré', category: 'Cuisine et dressing', unit: 'm²', price: 650_000 },
+    { name: 'Fabrication de meuble sur mesure', category: 'Menuiserie / meubles', unit: 'forfait', price: 2_500_000, description: 'Bibliothèque, buffet, meuble TV… selon le plan validé par le client.' },
+    { name: 'Porte intérieure bois posée', category: 'Menuiserie / meubles', unit: 'unité', price: 900_000 },
+    { name: 'Agencement de bureau ou boutique', category: 'Agencement', unit: 'm²', price: 420_000, description: 'Comptoirs, rayonnages, cloisons basses et mobilier fixe.' },
+    { name: 'Montage et pose de meubles', category: 'Menuiserie / meubles', unit: 'jour', price: 350_000 },
+    { name: 'Retapissage de canapé', category: 'Tapisserie / rénovation', unit: 'place', price: 280_000, description: 'Dépose, mousse neuve, tissu fourni par l’atelier.' },
+    { name: 'Rénovation et vernissage de meuble', category: 'Tapisserie / rénovation', unit: 'pièce', price: 450_000 },
+    { name: 'Livraison et installation', category: 'Menuiserie / meubles', unit: 'forfait', price: 150_000 },
   ],
 };
 
+/** Types de chantier du métier de l'ameublement (liste commune, README §19.1). */
+const FURNITURE_JOB_CATEGORIES = ['Cuisine et dressing', 'Agencement', 'Tapisserie / rénovation'];
+
 export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedReport> {
   const report: JobsSeedReport = { services: 0, requests: 0, quotes: 0, jobs: 0, subcontractors: 0 };
-  const { kaloum, matoto, hq, gerantKal, gerantMat, admin, productIds } = ctx;
+  const { kaloum, matoto, meubles, gerantKal, gerantMat, gerantMeu, productIds } = ctx;
   const customersOf = (store: StoreRef) => ctx.customersByStore[store.id] ?? [];
   const K = customersOf(kaloum);
   const M = customersOf(matoto);
-  const H = customersOf(hq);
+  const R = customersOf(meubles);
   const userIn = (user: UserRef, store: StoreRef) => ({ id: user.id, name: user.name, storeId: store.id });
   const audit = (user: UserRef, store: StoreRef, entity: string, entityId: number, action: 'create' | 'update' | 'validate' | 'cancel', details: Record<string, unknown>) =>
     writeAudit({ user: userIn(user, store), storeId: store.id, action, entity, entityId, details });
@@ -100,13 +116,19 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const wanted = ['Sous-traitance', 'Location', 'Fournitures', 'Main-d’œuvre'];
   const missing = wanted.filter((c) => !settings.expenseCategories.includes(c));
   if (missing.length) await updateSettings({ expenseCategories: [...settings.expenseCategories, ...missing] });
+  const missingJobCategories = FURNITURE_JOB_CATEGORIES.filter((c) => !settings.jobCategories.includes(c));
+  if (missingJobCategories.length) {
+    // Avant « Autre », qui reste le dernier choix de la liste.
+    const list = settings.jobCategories.filter((c) => c !== 'Autre');
+    await updateSettings({ jobCategories: [...list, ...missingJobCategories, ...(settings.jobCategories.includes('Autre') ? ['Autre'] : [])] });
+  }
 
   /* ---------------------------- Catalogues ---------------------------- */
   const svc = new Map<string, number>();
   const stores: [keyof typeof CATALOG, StoreRef, UserRef][] = [
     ['KAL', kaloum, gerantKal],
     ['MAT', matoto, gerantMat],
-    ['SIEGE', hq, admin],
+    ['MEU', meubles, gerantMeu],
   ];
   for (const [code, store, user] of stores) {
     for (const def of CATALOG[code]) {
@@ -423,10 +445,16 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     [kaloum, gerantKal, 'KAL', 1, 'Faux plafond bureaux', 'Placo / faux plafond', [['Faux plafond placo', 120]], 130],
     [kaloum, gerantKal, 'KAL', 4, 'Salle de bain complète', 'Plomberie', [['Plomberie salle de bain', 1], ['Pose de carrelage', 18]], 200],
     [kaloum, gerantKal, 'KAL', 0, 'Carrelage restaurant', 'Carrelage', [['Pose de carrelage', 160]], 280],
-    [matoto, gerantMat, 'MAT', 3, 'Terrassement et fondations — maison R+1', 'Gros œuvre / maçonnerie', [['Terrassement et fouilles', 90]], 120],
-    [matoto, gerantMat, 'MAT', 2, 'Murs de clôture', 'Gros œuvre / maçonnerie', [['Élévation de murs en agglos', 75]], 190],
-    [matoto, gerantMat, 'MAT', 5, 'Carrelage boutique', 'Carrelage', [['Pose de carrelage', 70]], 240],
-    [matoto, gerantMat, 'MAT', 0, 'Portes et peinture — duplex', 'Menuiserie / meubles', [['Porte intérieure posée', 6], ['Peinture intérieure deux couches', 300]], 320],
+    [matoto, gerantMat, 'MAT', 3, 'Terrassement et fondations — maison R+1', 'Gros œuvre / maçonnerie', [['Terrassement et fouilles', 90]], 120, 'Ciment 42,5 — sac de 50 kg'],
+    [matoto, gerantMat, 'MAT', 2, 'Murs de clôture', 'Gros œuvre / maçonnerie', [['Élévation de murs en agglos', 75]], 190, 'Fer à béton 10 mm (barre de 12 m)'],
+    [matoto, gerantMat, 'MAT', 5, 'Carrelage boutique', 'Carrelage', [['Pose de carrelage', 70]], 240, 'Colle carrelage 25 kg'],
+    [matoto, gerantMat, 'MAT', 0, 'Faïence et peinture — duplex', 'Carrelage', [['Pose de faïence murale', 45], ['Peinture intérieure deux couches', 300]], 320, 'Faïence murale 25 x 40'],
+    [meubles, gerantMeu, 'MEU', 1, 'Dressing et placards — villa', 'Cuisine et dressing', [['Dressing sur mesure', 9], ['Placard intégré', 6]], 45, 'Contreplaqué 15 mm — 2,44 x 1,22 m'],
+    [meubles, gerantMeu, 'MEU', 4, 'Salon retapissé — 7 places', 'Tapisserie / rénovation', [['Retapissage de canapé', 7]], 90, 'Tissu d’ameublement'],
+    [meubles, gerantMeu, 'MEU', 2, 'Comptoir et rayonnages — boutique', 'Agencement', [['Agencement de bureau ou boutique', 22]], 150, 'Planche bois rouge 2,5 m'],
+    [meubles, gerantMeu, 'MEU', 5, 'Bureaux du cabinet — mobilier sur mesure', 'Menuiserie / meubles', [['Fabrication de meuble sur mesure', 3], ['Livraison et installation', 1]], 210, 'Vernis bois brillant 5 L'],
+    [meubles, gerantMeu, 'MEU', 3, 'Portes intérieures — appartement', 'Menuiserie / meubles', [['Porte intérieure bois posée', 5]], 265, 'Chevron 7 x 7 cm — 3 m'],
+    [meubles, gerantMeu, 'MEU', 4, 'Meubles anciens rénovés', 'Tapisserie / rénovation', [['Rénovation et vernissage de meuble', 4]], 330, 'Vernis bois brillant 5 L'],
   ];
   for (const [store, user, code, customerIndex, title, category, lines, daysAgo, materialName] of history) {
     const job = await createServiceJob({
@@ -478,6 +506,8 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   const plombWork = await addJobSubcontract(m1.id, { supplierId: plomberie.id, work: 'Évacuations et arrivées d’eau', agreedAmount: 2_200_000, userId: gerantMat.id }, matoto.id);
   await expense(matoto, gerantMat, plombWork.id, 'Sous-traitance', 700_000, d(-5), 'Premier versement plombier', 'job_subcontract', plomberie.name);
   await material(matoto, gerantMat, m1.id, 'Clous 50 mm (1 kg)', 12);
+  await material(matoto, gerantMat, m1.id, 'Ciment 42,5 — sac de 50 kg', 60);
+  await material(matoto, gerantMat, m1.id, 'Carreau grès 60 x 60', 40);
   await stages(matoto, m1.id, [
     ['Fondations', 100, -8],
     ['Élévation des murs', 55, 5, 'MAT:Élévation de murs en agglos'],
@@ -513,12 +543,232 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await setQuoteStatus(qWaiting.id, 'accepted', matoto.id);
   await request(matoto, gerantMat, M[0], 'Terrassement pour une piscine.', [S('MAT', 'Terrassement et fouilles')], -2, 40, 'Kipé, Conakry');
 
-  // Siège — une cuisine sur mesure terminée.
-  const s1 = await createServiceJob({
-    storeId: hq.id,
-    userId: admin.id,
-    customerId: H[1],
+  /* ------------------ Ratoma — magasin de meubles ------------------ */
+
+  // Atelier : menuisiers, ébéniste, tapissier, apprenti ; une équipe de pose.
+  for (const worker of [
+    { name: 'Ibrahima Sory Conté', role: 'foreman' as const, dailyRate: 160_000, specialty: 'Chef d’atelier menuisier', team: 'Atelier menuiserie' },
+    { name: 'Mohamed Lamine Kaba', role: 'worker' as const, dailyRate: 95_000, specialty: 'Ébéniste', team: 'Atelier menuiserie' },
+    { name: 'Abdoulaye Fofana', role: 'apprentice' as const, dailyRate: 40_000, specialty: 'Apprenti menuisier', team: 'Atelier menuiserie' },
+    { name: 'Boubacar Diakité', role: 'worker' as const, dailyRate: 80_000, specialty: 'Poseur', team: 'Équipe pose' },
+    { name: 'Sékouba Kanté', role: 'worker' as const, dailyRate: 78_000, specialty: 'Poseur', team: 'Équipe pose' },
+    { name: 'Saliou Bangoura', role: 'worker' as const, dailyRate: 85_000, specialty: 'Tapissier', team: null },
+  ]) {
+    await createWorker({ ...worker, storeId: meubles.id });
+  }
+  const marbrerie = await createSupplier({
+    name: 'Marbrerie Granit Conakry',
+    phone: '+224 628 77 66 55',
+    address: 'Hamdallaye, Conakry',
+    isSubcontractor: true,
+    specialty: 'Plans de travail en granit',
+  }, meubles.id);
+  report.subcontractors += 1;
+  const tapissierId = (await rawGet<{ id: number }>("SELECT id FROM workers WHERE name = 'Saliou Bangoura'"))?.id ?? null;
+
+  // Demandes à chaque étape.
+  await request(meubles, gerantMeu, R[3], 'Retapisser le salon 7 places, tissu beige, mousse neuve.', [S('MEU', 'Retapissage de canapé')], -1, 20, 'Lambanyi, Conakry');
+  const rKitchen = await request(meubles, gerantMeu, R[0], 'Rénover la cuisine du restaurant de l’hôtel : caissons et plan de travail.', [S('MEU', 'Cuisine équipée sur mesure')], -5, 45, 'Hôtel Kaloum Plaza, Kaloum');
+  await setServiceRequestStatus(rKitchen.id, 'study', meubles.id);
+  const rDressing = await request(meubles, gerantMeu, R[5], 'Placards et bibliothèque pour la salle d’archives.', [S('MEU', 'Placard intégré'), S('MEU', 'Fabrication de meuble sur mesure')], -8, 30, 'Kaloum, Conakry');
+  await setServiceRequestStatus(rDressing.id, 'visit', meubles.id);
+
+  // Devis : envoyé, expiré, refusé, accepté en attente d'ouverture.
+  const qShop = await quote(meubles, gerantMeu, {
+    customer: R[2],
+    title: 'Agencement de la deuxième boutique',
+    category: 'Agencement',
+    site: 'Taouyah, Conakry',
+    dateOffset: -6,
+    items: [
+      { serviceId: S('MEU', 'Agencement de bureau ou boutique'), quantity: 30, discountPercent: 5 },
+      { serviceId: S('MEU', 'Livraison et installation'), quantity: 1 },
+    ],
+  });
+  await setQuoteStatus(qShop.id, 'sent', meubles.id);
+  const qOld = await quote(meubles, gerantMeu, {
+    customer: R[3],
+    title: 'Placards des chambres',
+    category: 'Cuisine et dressing',
+    site: 'Lambanyi, Conakry',
+    dateOffset: -48,
+    items: [{ serviceId: S('MEU', 'Placard intégré'), quantity: 8 }],
+  });
+  await setQuoteStatus(qOld.id, 'sent', meubles.id);
+  const qRestaurant = await quote(meubles, gerantMeu, {
+    customer: R[4],
+    title: 'Tables et banquettes du restaurant',
     category: 'Menuiserie / meubles',
+    site: 'Ratoma, Conakry',
+    dateOffset: -30,
+    items: [
+      { serviceId: S('MEU', 'Fabrication de meuble sur mesure'), quantity: 4 },
+      { serviceId: S('MEU', 'Retapissage de canapé'), quantity: 12 },
+    ],
+  });
+  await setQuoteStatus(qRestaurant.id, 'sent', meubles.id);
+  await setQuoteStatus(qRestaurant.id, 'refused', meubles.id);
+  const qDoors = await quote(meubles, gerantMeu, {
+    customer: R[5],
+    title: 'Portes des bureaux',
+    category: 'Menuiserie / meubles',
+    site: 'Kaloum, Conakry',
+    dateOffset: -2,
+    items: [{ serviceId: S('MEU', 'Porte intérieure bois posée'), quantity: 6 }],
+  });
+  await setQuoteStatus(qDoors.id, 'accepted', meubles.id);
+
+  // R1 — cuisine de la villa : demande → devis accepté → chantier en cours,
+  // atelier, matériaux sortis du stock du magasin, plan de travail sous-traité.
+  const rVilla = await request(meubles, gerantMeu, R[1], 'Cuisine en L avec îlot, façades laquées, plan de travail en granit.', [S('MEU', 'Cuisine équipée sur mesure')], -28, -10, 'Villa Kipé, Conakry');
+  const qVilla = await quote(meubles, gerantMeu, {
+    customer: R[1],
+    requestId: rVilla.id,
+    title: 'Cuisine équipée en L avec îlot',
+    category: 'Cuisine et dressing',
+    site: 'Villa Kipé, Conakry',
+    description: 'Caissons en contreplaqué, façades laquées blanches, poignées aluminium, plan de travail granit.',
+    dateOffset: -24,
+    items: [
+      { serviceId: S('MEU', 'Cuisine équipée sur mesure'), quantity: 6.5 },
+      { serviceId: S('MEU', 'Livraison et installation'), quantity: 1 },
+    ],
+  });
+  await setQuoteStatus(qVilla.id, 'sent', meubles.id);
+  await setQuoteStatus(qVilla.id, 'accepted', meubles.id);
+  const { job: r1 } = await convertQuoteToJob(qVilla.id, { storeId: meubles.id, userId: gerantMeu.id, startDate: d(-14), endDate: d(12), responsibleUserId: gerantMeu.id });
+  await updateStatus(r1.id, 'in_progress', meubles.id);
+  await updateServiceJob(r1.id, { actualStartDate: d(-13) }, meubles.id);
+  await addJobTeam(r1.id, 'Atelier menuiserie', 10, meubles.id);
+  await material(meubles, gerantMeu, r1.id, 'Contreplaqué 15 mm — 2,44 x 1,22 m', 12);
+  await material(meubles, gerantMeu, r1.id, 'Charnière invisible', 48);
+  await material(meubles, gerantMeu, r1.id, 'Poignée aluminium brossé', 24);
+  await material(meubles, gerantMeu, r1.id, 'Vernis bois brillant 5 L', 15);
+  await material(meubles, gerantMeu, r1.id, 'Vis à bois 5 x 60 mm (boîte de 200)', 3);
+  await stages(meubles, r1.id, [
+    ['Relevé sur site et plan validé', 100, -13],
+    ['Fabrication des caissons à l’atelier', 100, -6, 'MEU:Cuisine équipée sur mesure'],
+    ['Façades et laquage', 60, 2, 'MEU:Cuisine équipée sur mesure'],
+    ['Pose du plan de travail granit', 0, 8],
+    ['Pose sur site et réglages', 0, 12, 'MEU:Livraison et installation'],
+  ]);
+  const granit = await addJobSubcontract(r1.id, { supplierId: marbrerie.id, work: 'Plan de travail et îlot en granit', agreedAmount: 3_200_000, userId: gerantMeu.id }, meubles.id);
+  await expense(meubles, gerantMeu, granit.id, 'Sous-traitance', 1_600_000, d(-8), 'Acompte marbrier (50 %)', 'job_subcontract', marbrerie.name);
+  await expense(meubles, gerantMeu, r1.id, 'Transport', 180_000, d(-2), 'Camion pour livrer les caissons');
+  await pay(meubles, gerantMeu, r1.id, 0.5, d(-14));
+  await audit(gerantMeu, meubles, 'quote', qVilla.id, 'validate', { reference: qVilla.reference, convertedTo: r1.reference });
+  await jobAudit(gerantMeu, meubles, r1.id, { fromQuote: qVilla.reference });
+
+  // R2 — agencement de boutique EN RETARD (fin prévue dépassée).
+  const r2 = await createServiceJob({
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    customerId: R[2],
+    category: 'Agencement',
+    title: 'Agencement boutique — comptoir, rayonnages et cabine',
+    siteAddress: 'Boutique Élégance, Taouyah',
+    startDate: d(-25),
+    endDate: d(-4),
+    actualStartDate: d(-24),
+    status: 'in_progress',
+    responsibleUserId: gerantMeu.id,
+    items: [
+      { serviceId: S('MEU', 'Agencement de bureau ou boutique'), quantity: 18 },
+      { serviceId: S('MEU', 'Montage et pose de meubles'), quantity: 3 },
+    ],
+  });
+  await addJobTeam(r2.id, 'Équipe pose', 6, meubles.id);
+  await material(meubles, gerantMeu, r2.id, 'Planche bois rouge 2,5 m', 20);
+  await material(meubles, gerantMeu, r2.id, 'Colle à bois 1 kg', 4);
+  await stages(meubles, r2.id, [
+    ['Comptoir', 100, -15, 'MEU:Agencement de bureau ou boutique'],
+    ['Rayonnages muraux', 70, -8, 'MEU:Agencement de bureau ou boutique'],
+    ['Cabine d’essayage', 10, -4],
+  ]);
+  await pay(meubles, gerantMeu, r2.id, 0.4, d(-25));
+  await jobAudit(gerantMeu, meubles, r2.id, {});
+
+  // R3 — planifié ; R4 — suspendu ; R5 — annulé.
+  const r3 = await createServiceJob({
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    customerId: R[3],
+    category: 'Cuisine et dressing',
+    title: 'Dressing de la chambre parentale',
+    siteAddress: 'Lambanyi, Conakry',
+    startDate: d(10),
+    endDate: d(24),
+    status: 'planned',
+    responsibleUserId: gerantMeu.id,
+    items: [
+      { serviceId: S('MEU', 'Dressing sur mesure'), quantity: 7.5 },
+      { serviceId: S('MEU', 'Livraison et installation'), quantity: 1 },
+    ],
+  });
+  await pay(meubles, gerantMeu, r3.id, 0.3, d(-3));
+  await jobAudit(gerantMeu, meubles, r3.id, {});
+  const r4 = await createServiceJob({
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    customerId: R[5],
+    category: 'Menuiserie / meubles',
+    title: 'Bibliothèque murale en bois rouge',
+    siteAddress: 'Cabinet Diallo & Associés, Kaloum',
+    startDate: d(-18),
+    endDate: d(10),
+    actualStartDate: d(-18),
+    status: 'suspended',
+    progress: 25,
+    items: [{ serviceId: S('MEU', 'Fabrication de meuble sur mesure'), quantity: 2 }],
+    notes: 'Suspendu : planches de bois rouge en rupture chez le fournisseur, livraison attendue.',
+  });
+  await jobAudit(gerantMeu, meubles, r4.id, {});
+  const r5 = await createServiceJob({
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    customerId: R[4],
+    category: 'Tapisserie / rénovation',
+    title: 'Retapissage des banquettes',
+    siteAddress: 'Restaurant Le Damier, Ratoma',
+    startDate: d(-40),
+    endDate: d(-32),
+    items: [{ serviceId: S('MEU', 'Retapissage de canapé'), quantity: 10 }],
+  });
+  await cancelServiceJob(r5.id, 'Le restaurant a fermé pour travaux, commande reportée', { id: gerantMeu.id, name: gerantMeu.name, storeId: meubles.id });
+  await jobAudit(gerantMeu, meubles, r5.id, {});
+
+  // R6 — tapisserie en cours, confiée au tapissier seul.
+  const r6 = await createServiceJob({
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    customerId: R[3],
+    category: 'Tapisserie / rénovation',
+    title: 'Canapé d’angle retapissé',
+    siteAddress: 'Atelier de Ratoma',
+    startDate: d(-4),
+    endDate: d(6),
+    actualStartDate: d(-4),
+    status: 'in_progress',
+    responsibleUserId: gerantMeu.id,
+    items: [{ serviceId: S('MEU', 'Retapissage de canapé'), quantity: 5 }],
+  });
+  await addJobWorker(r6.id, { workerId: tapissierId, days: 5 }, meubles.id);
+  await material(meubles, gerantMeu, r6.id, 'Plaque de mousse 10 cm', 3);
+  await material(meubles, gerantMeu, r6.id, 'Tissu d’ameublement', 14);
+  await stages(meubles, r6.id, [
+    ['Dépose de l’ancien tissu', 100, -3],
+    ['Mousse et garnissage', 50, 2, 'MEU:Retapissage de canapé'],
+    ['Pose du tissu', 0, 6, 'MEU:Retapissage de canapé'],
+  ]);
+  await pay(meubles, gerantMeu, r6.id, 0.5, d(-4));
+  await jobAudit(gerantMeu, meubles, r6.id, {});
+
+  // Cuisine du restaurant de l'hôtel, terminée il y a cinq mois.
+  const r7 = await createServiceJob({
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    customerId: R[0],
+    category: 'Cuisine et dressing',
     title: 'Cuisine sur mesure — restaurant de l’hôtel',
     siteAddress: 'Kaloum, Conakry',
     startDate: d(-150),
@@ -526,15 +776,24 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     actualStartDate: d(-150),
     actualEndDate: d(-118),
     status: 'completed' as JobStatus,
+    responsibleUserId: gerantMeu.id,
     items: [
-      { serviceId: S('SIEGE', 'Cuisine sur mesure'), quantity: 1 },
-      { serviceId: S('SIEGE', 'Pose de meubles'), quantity: 4 },
+      { serviceId: S('MEU', 'Cuisine équipée sur mesure'), quantity: 9 },
+      { serviceId: S('MEU', 'Montage et pose de meubles'), quantity: 4 },
     ],
   });
-  await expense(hq, admin, s1.id, 'Fournitures', 6_200_000, d(-148), 'Plans de travail, quincaillerie et électroménager');
-  await expense(hq, admin, s1.id, 'Main-d’œuvre', 1_400_000, d(-120), 'Menuisiers et poseurs');
-  await pay(hq, admin, s1.id, 1, d(-118));
-  await jobAudit(admin, hq, s1.id, {});
+  await expense(meubles, gerantMeu, r7.id, 'Fournitures', 6_200_000, d(-148), 'Plans de travail, quincaillerie et électroménager');
+  await expense(meubles, gerantMeu, r7.id, 'Main-d’œuvre', 1_400_000, d(-120), 'Menuisiers et poseurs');
+  await pay(meubles, gerantMeu, r7.id, 1, d(-118));
+  await jobAudit(gerantMeu, meubles, r7.id, {});
+
+  // Le tissu a augmenté : les documents existants gardent l'ancien prix.
+  const retapissage = await updateService(S('MEU', 'Retapissage de canapé'), { unitPrice: 300_000 }, {
+    storeId: meubles.id,
+    userId: gerantMeu.id,
+    userName: gerantMeu.name,
+  });
+  await audit(gerantMeu, meubles, 'service', retapissage.service.id, 'update', { code: retapissage.service.code, name: retapissage.service.name, changes: retapissage.changes });
 
   return report;
 }
