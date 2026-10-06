@@ -2482,7 +2482,7 @@ Tests : `cd server && npm test`.
 | **`/produits`** : modale en deux niveaux (« Catalogue — tous les magasins » / « Réglages de ce magasin » : prix et seuil locaux), code-barres, mention « prix local », portée magasin, catalogue en consultation sur poste magasin, infobulles. **Défauts corrigés** : la modification recopiait le prix local dans le prix du catalogue ; « prix locaux désactivés » n'empêchait que la saisie (les prix déjà saisis s'appliquaient encore) | ✅ | guide §6.9 |
 | Portée magasin sur les listes restantes : `/soldes`, `/recus` (règle : `StoreScopeSelect` dans la barre d'outils, nom du magasin **sous l'identifiant** de la ligne avec `StoreTag` — pas de colonne de plus). **À corriger au passage** : tableaux trop larges en 1366 px sur `/rapports`, `/recus` — `verify:ui` le signale | ⏳ | guide §6.5 → §6.13 |
 | Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
-| **Jeu de démonstration** (`lib/seed-data.ts`, `npm run demo:seed`) : 3 magasins, 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |
+| **Jeu de démonstration** (`lib/seed-data.ts`, `npm run demo:seed`) : le siège et **3 magasins spécialisés** — Kaloum (décoration et finitions), Matoto (matériaux et gros œuvre), Ratoma `MEU` (meubles : showroom et atelier, avec cuisines, dressings, agencement et tapisserie en prestations) — chacun avec son assortiment, ses clients, fournisseurs, ouvriers, ventes et chantiers ; 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |
 | **Annulation d'achat** : refus si la marchandise est déjà vendue, dérogation explicite réservée à `stock.adjust` (§28.2 règle 6) | ✅ | `lib/purchases.ts` |
 | **En-tête des documents au nom du magasin émetteur** (facture, reçu, bon d'achat, devis ; écran, PDF, image, WhatsApp) : champ `store` des routes de détail (`getStoreLetterhead`) + `applyStoreLetterhead` | ✅ | §11.1, guide §6.4 |
 | **Exports** : texte décalé vers le bas corrigé (mesure des polices de html2canvas faussée par Tailwind), WhatsApp sur la capture commune, statut du document (annulée / brouillon) et reste payable cohérents, justificatif de paiement fournisseur, devis non accepté sans « reste à payer » ; `npm run verify:export-image` | ✅ | §11.1 |
@@ -2525,9 +2525,21 @@ Tests : `cd server && npm test`.
 - **Démonstration sur base vierge** — `npm run demo:seed` (`scripts/seed-demo.js`) :
   sur une instance démarrée avec une base **vide**, installe l'administrateur
   (`admin` / `admin1234` par défaut) et le magasin `SIEGE`, puis crée le réseau de
-  démonstration (≈ 30 s) : magasins `SIEGE`, `KAL`, `MAT` ; comptes `gerant.kaloum`,
-  `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege` (mot de passe
-  `demo1234`) ; 13 mois de ventes, achats, dépenses ; tous les statuts.
+  démonstration (≈ 40 s) ; mot de passe `demo1234` pour tous les comptes ci-dessous ;
+  13 mois de ventes, achats, dépenses ; tous les statuts. Chaque magasin a **son métier** :
+  son assortiment (le siège, entrepôt central, a tout le catalogue), ses fournisseurs,
+  ses clients, ses ouvriers, son catalogue de prestations et ses chantiers.
+
+  | Code | Magasin | Vend | Prestations et chantiers | Comptes |
+  |---|---|---|---|---|
+  | `SIEGE` | Siège — Entrepôt central | tout le catalogue (peu de ventes) ; charges centrales | — | `magasinier.siege` (tous les magasins) |
+  | `KAL` | Kaloum — Décoration et finitions | Alucobond, staff, placo, peinture, quincaillerie | façade, peinture, faux plafond, électricité, plomberie, carrelage | `gerant.kaloum`, `vendeur.kaloum` |
+  | `MAT` | Matoto — Matériaux et gros œuvre | ciment, fer, carreaux, faïence, colle, bois de coffrage | maçonnerie, terrassement, carrelage, faïence, points lumineux | `gerant.matoto`, `vendeur.matoto` |
+  | `MEU` | Planète Meubles Ratoma — Showroom et atelier | meubles finis, bois, contreplaqué, vernis, quincaillerie d'ameublement, mousse et tissu | cuisines et dressings sur mesure, placards, portes, agencement de boutique, tapisserie, rénovation, pose et livraison ; ouvriers « Atelier menuiserie » et « Équipe pose », tapissier, marbrier sous-traitant | `gerant.meubles`, `vendeur.meubles` |
+
+  Les chantiers du magasin de meubles consomment le bois et la quincaillerie de **son**
+  stock (onglet Matériaux). Les types de chantier « Cuisine et dressing », « Agencement »
+  et « Tapisserie / rénovation » sont ajoutés à la liste commune s'ils manquent.
   ```bash
   PDS_DB_PATH=demo.db NEXT_DIST_DIR=.next-recette npx next dev -H 127.0.0.1 -p 3100
   APP_URL=http://127.0.0.1:3100 npm run demo:seed

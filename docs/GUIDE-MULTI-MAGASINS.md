@@ -146,6 +146,10 @@
   (libellés recopiés de `lib/transfers.ts`). Cycle vérifié de bout en bout par l'API
   (demande, validation, expédition, réception partielle, litige, clôture, stocks).
 - **Jeu de démonstration** étendu (13 mois, tous les statuts) + `npm run demo:seed`.
+- **Démonstration par métier** : trois magasins spécialisés — Kaloum (décoration et
+  finitions), Matoto (matériaux et gros œuvre), Ratoma `MEU` (meubles : showroom et atelier,
+  prestations de cuisine, dressing, agencement et tapisserie) — chacun avec son assortiment,
+  ses fournisseurs, clients, ouvriers, ventes et chantiers (README §28.4).
 - **Règle corrigée** : annuler un achat déjà revendu est refusé par défaut ; dérogation
   explicite (`allowNegativeStock`, permission `stock.adjust`) proposée par la modale
   d'annulation et journalisée.
@@ -756,7 +760,7 @@ Dossier `server/` (Node 20+, `pg`). Fichiers : `index.mjs`, `Dockerfile`, `docke
    - magasin `PRINC` ;
    - stocks identiques (`product_stocks` = somme des mouvements) ;
    - factures rattachées.
-4. **Démonstration** : sur une base vierge, `npm run demo:seed` (ou Paramètres → données de démonstration en développement) : magasins SIEGE / KAL / MAT ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege`, mot de passe `demo1234` ; 13 mois d'activité, tous les statuts.
+4. **Démonstration** : sur une base vierge, `npm run demo:seed` (ou Paramètres → données de démonstration en développement) : siège SIEGE et trois magasins spécialisés — KAL (décoration et finitions), MAT (matériaux et gros œuvre), MEU (meubles : showroom et atelier) — chacun avec son assortiment, ses clients, ses prestations et ses chantiers ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `gerant.meubles`, `vendeur.meubles`, `magasinier.siege`, mot de passe `demo1234` ; 13 mois d'activité, tous les statuts (README §28.4).
 5. **Cloisonnement** :
    - connecté en `vendeur.kaloum`, `GET /api/ventes?store=<id MAT>` doit renvoyer 403 ;
    - une vente créée doit avoir `store_id` = KAL.
