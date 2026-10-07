@@ -150,6 +150,8 @@ const TABLE_LABELS: Record<string, string> = {
   cash_movements: 'Mouvements de caisse',
   workers: 'Ouvriers',
   service_jobs: 'Chantiers',
+  furniture_models: 'Modèles de meubles',
+  furniture_orders: 'Commandes d’atelier',
 };
 
 function tableLabel(name: string): string {

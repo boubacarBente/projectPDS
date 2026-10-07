@@ -32,6 +32,8 @@ npm run verify:routes  # découvre et appelle toutes les pages et routes d'API :
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
 npm run verify:chantiers  # prestations de chantier : cloisonnement magasins, prix figés, rentabilité
+npm run verify:atelier    # atelier de meubles : cloisonnement, matières et chutes, encaissements, mise en stock
+npm run verify:briqueterie # briqueterie : cloisonnement, coût des lots, mise en stock, commandes facturées
 npm run verify:comptes    # super administrateur, périmètre des gérants (failles de la revue du 4/10/2026)
 npm run sync:scopes       # régénère server/sync-scopes.mjs après tout ajout de table synchronisée
 (cd server && npm test)   # serveur de synchronisation : portée recalculée
@@ -163,6 +165,17 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 23. **Le serveur de synchronisation ne croit jamais la portée déclarée par un poste de
     magasin** : il la recalcule (`authorizedScope`). Une nouvelle table synchronisée
     impose `npm run sync:scopes`, sinon le serveur la refuse.
+24. **Atelier de meubles : une ligne de matière = une sortie de stock réelle.** La
+    nomenclature d'un modèle donne des *besoins* calculés, jamais des lignes ; les
+    chutes sortent du stock et comptent dans le coût. Seule une fabrication **pour le
+    stock** fait entrer un meuble fini ; une commande client s'encaisse par
+    `payments` (`furniture_order`), jamais par un acompte saisi (README §29).
+25. **Briqueterie : le coût d'un lot ne se stocke pas.** Équipe + dépenses rattachées
+    validées, calculées par `TOTAL_COST_SQL` (`lib/brick.ts`). Une dépense de lot passe
+    par `createExpense` (approbation, caisse). Une vente de briques porte
+    `channel = 'brick'` et n'apparaît jamais dans `/ventes` (README §30). Les lignes de
+    la v1 visant les anciennes tables sont des archives (`*_v1`, migration 0014) : ne
+    jamais les rattacher aux nouveaux lots ou commandes.
 
 ## Organisation
 
@@ -175,6 +188,8 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 | Design system (présentation pure) | `components/design-system.tsx` |
 | **Bénéfice d'une période** (CA, COGS, marge, dépenses, main-d'œuvre) — source unique du tableau de bord, de `/soldes` et de `/rapports` | `lib/profit.ts` |
 | **Magasins** (contexte, accès, indicateurs) | `lib/stores.ts`, `lib/api.ts` (portée), `lib/user-scope.ts` ; écrans `app/magasins/*`, `components/magasins/store-ui.tsx`, `components/store-scope.tsx` |
+| **Briqueterie** (types, lots, dépenses de production, commandes, ventes du canal `brick`) — README §30 | `lib/brick.ts`, `lib/brick-orders.ts`, `lib/brick-analytics.ts` ; écrans `app/briqueterie/*` (portée de magasins dans `components/briqueterie/brick-tabs.tsx`) ; `components/briqueterie/*` |
+| **Atelier de meubles** (modèles, commandes client ou pour le stock, matières, chutes, équipe) — README §29 | `lib/furniture.ts` (serveur), `lib/furniture-shared.ts` (constantes pour l'interface) ; écrans `app/atelier/*` ; `components/atelier/atelier-modals.tsx` |
 | **Prestations de chantier** (catalogue par magasin, demandes, devis, chantiers, pilotage) — README §19 | `lib/services.ts`, `lib/service-requests.ts`, `lib/quotes.ts`, `lib/jobs.ts`, `lib/jobs-dashboard.ts` ; écrans `app/prestations`, `app/chantiers/*`, `app/ouvriers`, `app/sous-traitants` ; composants `components/prestations/*`, `components/chantiers/*` ; démonstration `lib/seed-jobs.ts` |
 | **Transferts / inventaires** | `lib/transfers.ts`, `lib/transfer-actions.ts`, `lib/inventories.ts` |
 | **Synchronisation** (poste, push/pull, serveur) | `lib/device.ts`, `lib/sync-engine.ts`, `db/sync-registry.ts`, `db/triggers.ts`, `server/` |

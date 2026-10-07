@@ -123,6 +123,40 @@ export const SYNCED_TABLES: SyncedTable[] = [
     name: 'job_subcontracts',
     scope: { kind: 'child', parentTable: 'service_jobs', parentColumn: 'job_id' },
   },
+  /*
+   * Atelier de meubles (README §29) : modèles et commandes **du magasin**.
+   * Les modèles passent avant les commandes et les nomenclatures, qui les
+   * référencent.
+   */
+  { name: 'furniture_models', scope: { kind: 'store', column: 'store_id' }, naturalKey: ['store_id', 'code'] },
+  {
+    name: 'furniture_model_materials',
+    scope: { kind: 'child', parentTable: 'furniture_models', parentColumn: 'model_id' },
+  },
+  { name: 'furniture_orders', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'furniture_order_materials',
+    scope: { kind: 'child', parentTable: 'furniture_orders', parentColumn: 'order_id' },
+  },
+  {
+    name: 'furniture_order_workers',
+    scope: { kind: 'child', parentTable: 'furniture_orders', parentColumn: 'order_id' },
+  },
+  /*
+   * Briqueterie (README §30) : types, lots et commandes **du magasin**. Les
+   * commandes passent après `sales_invoices` (facture née de la commande).
+   */
+  { name: 'brick_types', scope: { kind: 'store', column: 'store_id' } },
+  { name: 'brick_productions', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'brick_production_workers',
+    scope: { kind: 'child', parentTable: 'brick_productions', parentColumn: 'production_id' },
+  },
+  { name: 'brick_orders', scope: { kind: 'store', column: 'store_id' } },
+  {
+    name: 'brick_order_items',
+    scope: { kind: 'child', parentTable: 'brick_orders', parentColumn: 'order_id' },
+  },
   { name: 'stock_transfers', scope: { kind: 'transfer' } },
   {
     name: 'stock_transfer_items',
@@ -148,6 +182,8 @@ export const SYNCED_TABLES: SyncedTable[] = [
           sale: 'sales_invoices',
           purchase: 'purchase_invoices',
           service_job: 'service_jobs',
+          furniture_order: 'furniture_orders',
+          brick_order: 'brick_orders',
         },
       },
     ],
@@ -166,6 +202,8 @@ export const SYNCED_TABLES: SyncedTable[] = [
           payment: 'payments',
           expense: 'expenses',
           service_job: 'service_jobs',
+          furniture_order: 'furniture_orders',
+          brick_order: 'brick_orders',
         },
       },
     ],

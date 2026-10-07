@@ -1,0 +1,1080 @@
+'use client';
+
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { toast } from 'react-toastify';
+import { PageHeader } from '@/components/page-header';
+import { ToolbarButton } from '@/components/data-toolbar';
+import { ResponsiveTable } from '@/components/responsive-table';
+import {
+  Badge,
+  Card,
+  EmptyState,
+  ErrorState,
+  InfoRow,
+  MiniStat,
+  MoneyText,
+  PageSection,
+  QuantityText,
+  SkeletonCards,
+  SkeletonTable,
+  StageTracker,
+  StatCardDelta,
+} from '@/components/design-system';
+import { usePermission } from '@/components/role-gate';
+import { useAuth } from '@/components/auth-provider';
+import { Modal } from '@/components/modal';
+import { FormField } from '@/components/design-system';
+import { useSettings } from '@/app/parametres/page';
+import { formatDateLong, formatDateShort, formatDateTime } from '@/lib/date-format';
+import { formatCurrency, formatNumber, formatPercent, formatQuantity } from '@/lib/format';
+import {
+  BRICK_PRODUCTION_STATUS_LABELS,
+  BRICK_PRODUCTION_STATUS_TONES,
+  BRICK_STAGES,
+  BRICK_STAGE_TONES,
+  BrickWorkersManagerButton,
+  BrokenBricksModal,
+  CancelProductionDialog,
+  ProductionCostCard,
+  ProductionExpenseModal,
+  ProductionMaterialModal,
+  ProductionWorkerModal,
+  RemoveExpenseDialog,
+  RemoveMaterialDialog,
+  RemoveWorkerDialog,
+  brickProductionStatusLabel,
+  brickShapeLabel,
+  brickStageLabel,
+  goodQuantityOf,
+  nextBrickStage,
+  productionExpenseColumns,
+  productionMaterialColumns,
+  productionWorkerColumns,
+  readApiError,
+  useBrickSelectOptions,
+  type BrickProductionDetail,
+  type BrickProductionExpenseRow,
+  type BrickProductionMaterialRow,
+  type BrickProductionWorkerRow,
+} from '@/components/briqueterie/briqueterie-modals';
+
+/* ==================================================================
+ * Fiche d'un lot de fabrication (README §20).
+ *
+ * `GET /api/briqueterie/productions/[id]` renvoie `production`, `brickType`,
+ * `product`, `materials`, `workers`, `expenses` et `costs` — le coût de revient
+ * étant **calculé** (`total_cost ÷ (produced − broken)`), jamais stocké.
+ *
+ * Les **dépenses rattachées** (`expenses`) sont la source de coût normale depuis
+ * la révision §20 : il n'y a plus de module de matières premières. La section
+ * « matières premières » ne subsiste que pour les lots **antérieurs**, dont le
+ * coût historique doit rester juste.
+ *
+ * Le bouton « Étape suivante » appelle `advance_stage` : c'est le serveur qui
+ * décide des mouvements de stock (crédit unique des briques finies à l'étape
+ * `stored`). La page n'écrit jamais `products.stock`.
+ * ================================================================== */
+
+/** Une ligne du journal d'actions liée à ce lot (traçabilité §20, point 10). */
+type HistoriqueEntry = {
+  id: number;
+  userName: string;
+  action: string;
+  details: string | null;
+  createdAt: string | null;
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  create: 'Création',
+  update: 'Modification',
+  delete: 'Suppression',
+  validate: 'Validation',
+  cancel: 'Annulation',
+  payment: 'Encaissement',
+  stock_adjust: 'Ajustement de stock',
+};
+
+function SectionCard({
+  title,
+  subtitle,
+  actions,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <PageSection
+      title={title}
+      subtitle={subtitle}
+      actions={actions}
+    >
+      <Card>{children}</Card>
+    </PageSection>
+  );
+}
+
+export default function BrickProductionDetailPage() {
+  const params = useParams<{ id: string }>();
+  const productionId = Number(params?.id);
+
+  const { settings } = useSettings();
+  const currency = settings.currency || 'GNF';
+  const paymentMethods = settings.paymentMethods ?? ['Espèces'];
+
+  const canUpdate = usePermission('brick.update');
+  const canDelete = usePermission('brick.delete');
+  const { activeStoreId } = useAuth();
+
+  const [detail, setDetail] = useState<BrickProductionDetail | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  /* Un état booléen par modale (§8.3 règle 1). */
+  const [isMaterialOpen, setIsMaterialOpen] = useState(false);
+  const [isWorkerOpen, setIsWorkerOpen] = useState(false);
+  const [isBrokenOpen, setIsBrokenOpen] = useState(false);
+  const [isCancelOpen, setIsCancelOpen] = useState(false);
+  const [isRemoveMaterialOpen, setIsRemoveMaterialOpen] = useState(false);
+  const [materialToRemove, setMaterialToRemove] = useState<BrickProductionMaterialRow | null>(null);
+  const [isRemoveWorkerOpen, setIsRemoveWorkerOpen] = useState(false);
+  const [workerToRemove, setWorkerToRemove] = useState<BrickProductionWorkerRow | null>(null);
+
+  /* Dépenses rattachées au lot. */
+  const [isExpenseOpen, setIsExpenseOpen] = useState(false);
+  const [expenseToEdit, setExpenseToEdit] = useState<BrickProductionExpenseRow | null>(null);
+  const [isRemoveExpenseOpen, setIsRemoveExpenseOpen] = useState(false);
+  const [expenseToRemove, setExpenseToRemove] = useState<BrickProductionExpenseRow | null>(null);
+
+  /* Équipe / responsable de production (modale d'édition rapide). */
+  const [isTeamOpen, setIsTeamOpen] = useState(false);
+  const [teamDraft, setTeamDraft] = useState('');
+  const [teamError, setTeamError] = useState<string | null>(null);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAdvancing, setIsAdvancing] = useState(false);
+
+  /* Historique d'actions du lot (traçabilité). */
+  const [historique, setHistorique] = useState<HistoriqueEntry[]>([]);
+
+  const { products, workers, isLoading: isOptionsLoading } = useBrickSelectOptions(
+    isMaterialOpen || isWorkerOpen,
+  );
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!Number.isInteger(productionId) || productionId <= 0) {
+        setError('Identifiant de lot invalide.');
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+      setNotFound(false);
+
+      try {
+        const response = await fetch(`/api/briqueterie/productions/${productionId}`, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          signal,
+        });
+
+        if (response.status === 404) {
+          setNotFound(true);
+          setDetail(null);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(await readApiError(response, 'Le lot n’a pas pu être chargé.'));
+        }
+
+        setDetail((await response.json()) as BrickProductionDetail);
+      } catch (caught) {
+        if (caught instanceof Error && caught.name === 'AbortError') return;
+        setDetail(null);
+        setError(caught instanceof Error ? caught.message : 'Le lot n’a pas pu être chargé.');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [productionId],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load, reloadToken]);
+
+  /* ── Historique d'actions du lot (lecture seule) ─────────────────── */
+  useEffect(() => {
+    if (!Number.isInteger(productionId) || productionId <= 0) return;
+
+    const controller = new AbortController();
+
+    fetch(`/api/briqueterie/historique?entity=brick_production&entityId=${productionId}&limit=30`, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('unavailable');
+        return (await response.json()) as { data?: HistoriqueEntry[] };
+      })
+      .then((payload) => setHistorique(Array.isArray(payload.data) ? payload.data : []))
+      .catch(() => {
+        // L'historique est un appoint : son échec ne doit pas masquer la fiche.
+      });
+
+    return () => controller.abort();
+  }, [productionId, reloadToken]);
+
+  const refresh = useCallback(() => setReloadToken((token) => token + 1), []);
+
+  /* ── Passage d'étape — mouvements de stock côté serveur ───────────── */
+  async function advance() {
+    if (!detail) return;
+    const next = nextBrickStage(detail.production.stage);
+    if (!next) return;
+
+    setIsAdvancing(true);
+    try {
+      const response = await fetch(`/api/briqueterie/productions/${detail.production.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action: 'advance_stage', stage: next.key }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Le passage d’étape a échoué.'));
+      }
+
+      if (next.key === 'stored') {
+        toast.success(
+          `Lot mis en stock : ${formatQuantity(goodQuantityOf(detail.production), detail.production.productUnit)} créditées au produit ${detail.production.productName}.`,
+        );
+      } else {
+        toast.success(`Étape « ${brickStageLabel(next.key)} » enregistrée.`);
+      }
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Le passage d’étape a échoué.');
+    } finally {
+      setIsAdvancing(false);
+    }
+  }
+
+  /* ── Retrait d'une ligne de matière ───────────────────────────────── */
+  async function removeMaterial() {
+    if (!detail || !materialToRemove) return;
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/briqueterie/productions/${detail.production.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action: 'remove_material', materialId: materialToRemove.id }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Le retrait a échoué.'));
+      }
+
+      toast.success(`${materialToRemove.productName} rendu au stock.`);
+      setIsRemoveMaterialOpen(false);
+      setMaterialToRemove(null);
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Le retrait a échoué.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  /* ── Retrait d'une affectation ────────────────────────────────────── */
+  async function removeWorker() {
+    if (!detail || !workerToRemove) return;
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/briqueterie/productions/${detail.production.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action: 'remove_worker', workerId: workerToRemove.id }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Le retrait a échoué.'));
+      }
+
+      toast.success(`Affectation de ${workerToRemove.workerName} retirée.`);
+      setIsRemoveWorkerOpen(false);
+      setWorkerToRemove(null);
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Le retrait a échoué.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  /* ── Retrait d'une dépense du lot (annulation motivée) ────────────── */
+  async function removeExpense(reason: string) {
+    if (!detail || !expenseToRemove) return;
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/briqueterie/productions/${detail.production.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          action: 'remove_expense',
+          expenseId: expenseToRemove.id,
+          reason,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Le retrait de la dépense a échoué.'));
+      }
+
+      toast.success(`${expenseToRemove.category} : dépense annulée, montant rendu à la caisse.`);
+      setIsRemoveExpenseOpen(false);
+      setExpenseToRemove(null);
+      refresh();
+    } catch (caught) {
+      toast.error(
+        caught instanceof Error ? caught.message : 'Le retrait de la dépense a échoué.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  /* ── Équipe / responsable de production ──────────────────────────── */
+  async function saveTeam() {
+    if (!detail) return;
+    setIsSubmitting(true);
+    setTeamError(null);
+    try {
+      const response = await fetch(`/api/briqueterie/productions/${detail.production.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ team: teamDraft.trim() || null }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'L’équipe n’a pas pu être enregistrée.'));
+      }
+
+      toast.success('Équipe de production enregistrée.');
+      setIsTeamOpen(false);
+      refresh();
+    } catch (caught) {
+      setTeamError(caught instanceof Error ? caught.message : 'L’équipe n’a pas pu être enregistrée.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  /* ── Annulation motivée (jamais de suppression) ───────────────────── */
+  async function cancelProduction(reason: string) {
+    if (!detail) return;
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(`/api/briqueterie/productions/${detail.production.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ reason }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'L’annulation a échoué.'));
+      }
+
+      toast.success('Lot annulé : le stock a été réversé, la fiche reste consultable.');
+      setIsCancelOpen(false);
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'L’annulation a échoué.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  /* ── États d'erreur et de chargement ──────────────────────────────── */
+  if (isLoading && !detail) {
+    return (
+      <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+        <SkeletonCards count={4} />
+        <SkeletonTable rows={6} cols={5} />
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+        <EmptyState
+          title="Lot introuvable"
+          description="Ce lot de fabrication n’existe pas sur ce poste, ou il a été annulé."
+          action={
+            <Link href="/briqueterie/productions" className="btn btn-primary min-h-11">
+              Retour aux productions
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (error || !detail) {
+    return (
+      <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+        <ErrorState
+          title="Chargement impossible"
+          description={error ?? 'Le lot n’a pas pu être chargé.'}
+          onRetry={refresh}
+        />
+      </div>
+    );
+  }
+
+  const { production, brickType, product, materials, workers: assignments, expenses, costs } = detail;
+  const isCancelled = production.isCancelled;
+  /** Un lot ne se modifie que depuis son magasin (README §30) ; annulé, il est figé. */
+  const productionStoreId = (production as { storeId?: number }).storeId;
+  const own = productionStoreId === undefined || productionStoreId === activeStoreId;
+  const readOnly = isCancelled || !own;
+  const next = nextBrickStage(production.stage);
+  const good = goodQuantityOf(production);
+  const salePrice = product?.salePrice ?? brickType?.salePrice ?? 0;
+  const unit = production.productUnit || 'pièce';
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+      <PageHeader
+        eyebrow={`Briqueterie · ${BRICK_PRODUCTION_STATUS_LABELS[production.status]}`}
+        title={production.batchNumber}
+        description={`${production.brickTypeName} — ${brickShapeLabel(production.shape)}${
+          production.dimensions ? ` · ${production.dimensions}` : ''
+        }${production.team ? ` · ${production.team}` : ''}`}
+        actions={
+          <>
+            <BrickWorkersManagerButton onChanged={refresh} />
+            <Link
+              href="/briqueterie/productions"
+              className="btn btn-ghost min-h-11 border border-base-300"
+            >
+              Toutes les productions
+            </Link>
+            {canUpdate && !readOnly && next && (
+              <button
+                type="button"
+                className="btn btn-primary min-h-11"
+                onClick={() => void advance()}
+                disabled={isAdvancing}
+              >
+                {isAdvancing ? (
+                  <>
+                    <span className="loading loading-spinner loading-sm" aria-hidden />
+                    Passage…
+                  </>
+                ) : (
+                  `Étape suivante : ${brickStageLabel(next.key)}`
+                )}
+              </button>
+            )}
+            {canDelete && !readOnly && (
+              <button
+                type="button"
+                className="btn btn-error min-h-11"
+                onClick={() => setIsCancelOpen(true)}
+              >
+                Annuler le lot
+              </button>
+            )}
+          </>
+        }
+      />
+
+      {!own && !isCancelled && (
+        <div className="rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm">
+          Ce lot appartient au magasin <strong>{(production as { storeName?: string | null }).storeName ?? '—'}</strong> : il se
+          consulte ici mais ne se modifie que depuis ce magasin.
+        </div>
+      )}
+      {/* Bandeau d'état : annulé, ou étape courante */}
+      {isCancelled ? (
+        <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
+          <strong>Lot annulé{production.cancelReason ? ` — motif : ${production.cancelReason}` : ''}.</strong>{' '}
+          Le stock du lot a été repris (briques mises en stock ressorties). La fiche
+          n’est jamais supprimée : elle reste consultable.
+        </div>
+      ) : null}
+
+      {/* 1 · Avancement — StageTracker (moulage → séchage → cuisson → stock) */}
+      <Card>
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Avancement de la fabrication</p>
+              <p className="text-xs text-base-content/55">
+                Le stock des briques finies est crédité <strong>une seule fois</strong>, à l’étape
+                « Mise en stock ». Si le lot y repasse, rien n’est crédité à nouveau.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={BRICK_STAGE_TONES[production.stage]}>
+                {brickStageLabel(production.stage)}
+              </Badge>
+              {production.stored ? (
+                <Badge tone="success">Stock crédité</Badge>
+              ) : (
+                <Badge tone="neutral">Pas encore en stock</Badge>
+              )}
+            </div>
+          </div>
+          <StageTracker stages={BRICK_STAGES} current={production.stage} />
+        </div>
+      </Card>
+
+      {/* 2 · Cartes de synthèse */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCardDelta
+          label="Quantité prévue"
+          tone="primary"
+          value={<QuantityText value={production.plannedQuantity} unit={unit} />}
+          hint={`Production : ${formatQuantity(production.producedQuantity, unit)}`}
+        />
+        <StatCardDelta
+          label="Briques bonnes"
+          tone="success"
+          value={<QuantityText value={good} unit={unit} />}
+          hint={`Cassées : ${formatQuantity(production.brokenQuantity, unit)}`}
+        />
+        <StatCardDelta
+          label="Coût de revient unitaire"
+          tone="info"
+          value={<MoneyText value={costs.unitCost} />}
+          hint={`Coût total ${formatNumber(costs.totalCost)} GNF`}
+        />
+        <StatCardDelta
+          label="Stock du produit lié"
+          tone="primary"
+          value={<QuantityText value={product?.stock ?? 0} unit={unit} />}
+          hint={product ? product.name : 'Produit lié introuvable'}
+        />
+      </div>
+
+      {/* 3 · Informations du lot */}
+      <SectionCard
+        title="Informations du lot"
+        subtitle="Un coût de revient n’est jamais stocké : il est recalculé à chaque lecture."
+        actions={
+          canUpdate && !readOnly ? (
+            <ToolbarButton
+              onClick={() => {
+                setTeamDraft(production.team ?? '');
+                setTeamError(null);
+                setIsTeamOpen(true);
+              }}
+            >
+              Modifier l’équipe
+            </ToolbarButton>
+          ) : null
+        }
+      >
+        <div className="grid gap-x-8 gap-y-1 sm:grid-cols-2">
+          <InfoRow label="Numéro de lot">
+            <span className="font-mono">{production.batchNumber}</span>
+          </InfoRow>
+          <InfoRow label="Statut">
+            <Badge tone={BRICK_PRODUCTION_STATUS_TONES[production.status]}>
+              {brickProductionStatusLabel(production.status)}
+            </Badge>
+          </InfoRow>
+          <InfoRow label="Type de brique">{production.brickTypeName}</InfoRow>
+          <InfoRow label="Forme">{brickShapeLabel(production.shape)}</InfoRow>
+          <InfoRow label="Dimensions">{production.dimensions || '—'}</InfoRow>
+          <InfoRow label="Équipe / responsable de production">
+            {production.team || (
+              <span className="text-base-content/50">Non renseignée</span>
+            )}
+          </InfoRow>
+          <InfoRow label="Date de début">{formatDateLong(production.startDate)}</InfoRow>
+          <InfoRow label="Date de fin">{formatDateLong(production.endDate)}</InfoRow>
+          <InfoRow label="Produit lié (stock et prix de vente)">
+            {product ? (
+              <span>{product.name}</span>
+            ) : (
+              '—'
+            )}
+          </InfoRow>
+          <InfoRow label="Prix de vente unitaire">
+            <MoneyText value={salePrice} currency={currency} />
+          </InfoRow>
+          <InfoRow label="Créé par">{production.userName || 'Système'}</InfoRow>
+          <InfoRow label="Créé le">{formatDateShort(production.createdAt)}</InfoRow>
+        </div>
+        {production.notes ? (
+          <div className="mt-4 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+              Notes de fabrication
+            </p>
+            <p className="mt-1 whitespace-pre-line text-sm">{production.notes}</p>
+          </div>
+        ) : null}
+      </SectionCard>
+
+      {/* 4 · Dépenses de production — la source de coût de la fiche (§20) */}
+      <SectionCard
+        title="Dépenses de production"
+        subtitle="Ciment, sable, carburant, électricité, main-d’œuvre… Chaque dépense est rattachée à ce lot et sort de la caisse."
+        actions={
+          canUpdate && !readOnly ? (
+            <ToolbarButton
+              variant="primary"
+              onClick={() => {
+                setExpenseToEdit(null);
+                setIsExpenseOpen(true);
+              }}
+            >
+              Ajouter une dépense
+            </ToolbarButton>
+          ) : null
+        }
+      >
+        {expenses.length === 0 ? (
+          <EmptyState
+            title="Aucune dépense rattachée"
+            description="Ajoutez le ciment, le sable, le carburant, l’eau, l’électricité ou la main-d’œuvre engagés pour cette fabrication : le coût total et le coût unitaire se calculent automatiquement."
+            action={
+              canUpdate && !readOnly ? (
+                <button
+                  type="button"
+                  className="btn btn-primary min-h-11"
+                  onClick={() => {
+                    setExpenseToEdit(null);
+                    setIsExpenseOpen(true);
+                  }}
+                >
+                  Ajouter la première dépense
+                </button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <>
+            <ResponsiveTable
+              columns={productionExpenseColumns}
+              data={expenses}
+              getRowKey={(expense) => expense.id}
+              emptyMessage="Aucune dépense."
+              actions={
+                canUpdate && !readOnly
+                  ? (expense) => (
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <ToolbarButton
+                          onClick={() => {
+                            setExpenseToEdit(expense);
+                            setIsExpenseOpen(true);
+                          }}
+                        >
+                          Corriger
+                        </ToolbarButton>
+                        <ToolbarButton
+                          variant="error"
+                          onClick={() => {
+                            setExpenseToRemove(expense);
+                            setIsRemoveExpenseOpen(true);
+                          }}
+                        >
+                          Annuler
+                        </ToolbarButton>
+                      </div>
+                    )
+                  : undefined
+              }
+            />
+            <div className="mt-4 flex justify-end border-t border-base-200 pt-4">
+              <div className="w-full space-y-1 sm:w-80">
+                <InfoRow label="Total des dépenses rattachées">
+                  <MoneyText value={costs.expenseCost} currency={currency} bold />
+                </InfoRow>
+              </div>
+            </div>
+          </>
+        )}
+      </SectionCard>
+
+      {/*
+        Matières premières **historiques** : seuls les lots saisis avant la
+        révision §20 en portent. On les affiche en lecture seule plutôt que de
+        les masquer — leur coût est réel et il entre encore dans le total.
+      */}
+      {materials.length > 0 && (
+        <SectionCard
+          title="Matières premières (lots antérieurs)"
+          subtitle="Lignes héritées : les matières premières ne sont plus un module, elles se saisissent désormais en dépenses ci-dessus."
+        >
+          <ResponsiveTable
+            columns={productionMaterialColumns}
+            data={materials}
+            getRowKey={(material) => material.id}
+            emptyMessage="Aucune matière première."
+            actions={
+              canUpdate && !readOnly
+                ? (material) => (
+                    <ToolbarButton
+                      variant="error"
+                      onClick={() => {
+                        setMaterialToRemove(material);
+                        setIsRemoveMaterialOpen(true);
+                      }}
+                    >
+                      Retirer
+                    </ToolbarButton>
+                  )
+                : undefined
+            }
+          />
+          <div className="mt-4 flex justify-end border-t border-base-200 pt-4">
+            <div className="w-full space-y-1 sm:w-80">
+              <InfoRow label="Total matières premières">
+                <MoneyText value={costs.materialCost} currency={currency} bold />
+              </InfoRow>
+            </div>
+          </div>
+        </SectionCard>
+      )}
+
+      {/* 5 · Équipe */}
+      <SectionCard
+        title="Équipe affectée"
+        subtitle="Montant = jours × tarif journalier. Un journalier ponctuel est saisissable librement."
+        actions={
+          canUpdate && !readOnly ? (
+            <ToolbarButton variant="primary" onClick={() => setIsWorkerOpen(true)}>
+              Affecter un ouvrier
+            </ToolbarButton>
+          ) : null
+        }
+      >
+        {assignments.length === 0 ? (
+          <EmptyState
+            title="Aucune affectation"
+            description="Affectez les ouvriers, apprentis ou journaliers qui ont travaillé sur ce lot : leur coût alimente le coût de revient."
+            action={
+              canUpdate && !readOnly ? (
+                <button
+                  type="button"
+                  className="btn btn-primary min-h-11"
+                  onClick={() => setIsWorkerOpen(true)}
+                >
+                  Affecter le premier ouvrier
+                </button>
+              ) : undefined
+            }
+          />
+        ) : (
+          <>
+            <ResponsiveTable
+              columns={productionWorkerColumns}
+              data={assignments}
+              getRowKey={(assignment) => assignment.id}
+              emptyMessage="Aucune affectation."
+              actions={
+                canUpdate && !readOnly
+                  ? (assignment) => (
+                      <ToolbarButton
+                        variant="error"
+                        onClick={() => {
+                          setWorkerToRemove(assignment);
+                          setIsRemoveWorkerOpen(true);
+                        }}
+                      >
+                        Retirer
+                      </ToolbarButton>
+                    )
+                  : undefined
+              }
+            />
+            <div className="mt-4 flex justify-end border-t border-base-200 pt-4">
+              <div className="w-full space-y-1 sm:w-80">
+                <InfoRow label="Total main-d’œuvre">
+                  <MoneyText value={costs.laborCost} bold />
+                </InfoRow>
+              </div>
+            </div>
+          </>
+        )}
+      </SectionCard>
+
+      {/* 6 · Coût de revient et marge potentielle */}
+      <SectionCard
+        title="Coût de revient détaillé"
+        subtitle="Coût unitaire = coût total ÷ (production − briques cassées)."
+        actions={
+          canUpdate && !readOnly ? (
+            <ToolbarButton variant="outline" onClick={() => setIsBrokenOpen(true)}>
+              Enregistrer une casse
+            </ToolbarButton>
+          ) : null
+        }
+      >
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ProductionCostCard costs={costs} salePrice={salePrice} unit={unit} />
+
+          <div className="space-y-3">
+            <div className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-base-content/45">
+                Calcul détaillé
+              </p>
+              <div className="mt-2 space-y-1 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-base-content/60">Dépenses de production</span>
+                  <MoneyText value={costs.expenseCost} currency={currency} />
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-base-content/60">Main-d’œuvre (équipe affectée)</span>
+                  <MoneyText value={costs.laborCost} currency={currency} />
+                </div>
+                {costs.materialCost > 0 && (
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-base-content/60">
+                      Matières premières (lots antérieurs)
+                    </span>
+                    <MoneyText value={costs.materialCost} currency={currency} />
+                  </div>
+                )}
+                <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-base-200 pt-1 font-semibold">
+                  <span>Coût total</span>
+                  <MoneyText value={costs.totalCost} currency={currency} bold />
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-base-content/60">
+                    Production ({formatQuantity(costs.producedQuantity, unit)}) − cassées (
+                    {formatQuantity(costs.brokenQuantity, unit)})
+                  </span>
+                  <QuantityText value={costs.goodQuantity} unit={unit} />
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-base-200 pt-1">
+                  <span className="text-base-content/60">
+                    {formatNumber(costs.totalCost)} ÷ {formatQuantity(costs.goodQuantity)}
+                  </span>
+                  <MoneyText value={costs.unitCost} bold />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <MiniStat
+                label="Cassées"
+                tone={production.brokenQuantity > 0 ? 'warning' : 'neutral'}
+                value={<QuantityText value={production.brokenQuantity} unit={unit} />}
+              />
+              <MiniStat
+                label="Taux de casse"
+                tone={production.brokenQuantity > 0 ? 'warning' : 'success'}
+                value={
+                  production.producedQuantity > 0
+                    ? formatPercent((production.brokenQuantity / production.producedQuantity) * 100)
+                    : '—'
+                }
+              />
+            </div>
+
+            {production.brokenQuantity > 0 ? (
+              <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-xs text-base-content/70">
+                Les {formatQuantity(production.brokenQuantity, unit)} briques cassées sont comptées
+                dans <code>broken_quantity</code> et sorties du stock par un mouvement « sortie »
+                motivé (« briques cassées lot {production.batchNumber} »). Il n’existe pas de type
+                de mouvement « perte » : c’est un <code>exit</code> explicite.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* 7 · Historique et traçabilité */}
+      <PageSection
+        title="Historique et traçabilité"
+        subtitle="Qui a fait quoi, et quand. Une opération validée n’est jamais supprimée : elle est annulée avec un motif."
+      >
+        <Card>
+          {historique.length === 0 ? (
+            <p className="text-sm text-base-content/60">
+              Aucune opération journalisée pour ce lot — ou historique indisponible sur ce poste.
+            </p>
+          ) : (
+            <ol className="space-y-3">
+              {historique.map((entry) => (
+                <li key={entry.id} className="flex flex-wrap items-start gap-x-3 gap-y-1">
+                  <Badge tone="neutral">{ACTION_LABELS[entry.action] ?? entry.action}</Badge>
+                  <span className="text-sm font-medium">{entry.userName}</span>
+                  <span className="text-xs text-base-content/50">
+                    {entry.createdAt ? formatDateTime(entry.createdAt) : '—'}
+                  </span>
+                  {entry.details ? (
+                    <span className="w-full break-words text-xs text-base-content/60">
+                      {entry.details}
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          )}
+        </Card>
+      </PageSection>
+
+      {/* 8 · Modales */}
+      <ProductionExpenseModal
+        isOpen={isExpenseOpen}
+        onClose={() => {
+          setIsExpenseOpen(false);
+          setExpenseToEdit(null);
+        }}
+        productionId={production.id}
+        batchNumber={production.batchNumber}
+        paymentMethods={paymentMethods}
+        expense={expenseToEdit}
+        onSaved={refresh}
+      />
+
+      <RemoveExpenseDialog
+        isOpen={isRemoveExpenseOpen}
+        onClose={() => {
+          if (!isSubmitting) {
+            setIsRemoveExpenseOpen(false);
+            setExpenseToRemove(null);
+          }
+        }}
+        onConfirm={removeExpense}
+        expense={expenseToRemove}
+        isSubmitting={isSubmitting}
+      />
+
+      <Modal
+        isOpen={isTeamOpen}
+        onClose={() => {
+          if (!isSubmitting) setIsTeamOpen(false);
+        }}
+        title="Équipe ou responsable de production"
+        size="md"
+        fullScreenMobile
+      >
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void saveTeam();
+          }}
+        >
+          <FormField
+            label="Équipe ou responsable"
+            hint="Texte libre : « Équipe A — Mamadou », « four n°2 »…"
+          >
+            <input
+              type="text"
+              maxLength={120}
+              className="input input-bordered min-h-11 w-full"
+              value={teamDraft}
+              onChange={(event) => setTeamDraft(event.target.value)}
+              placeholder="Équipe A — Mamadou"
+              aria-label="Équipe ou responsable de production"
+            />
+          </FormField>
+
+          {teamError && (
+            <p className="rounded-lg bg-error/10 px-3 py-2 text-sm text-error" role="alert">
+              {teamError}
+            </p>
+          )}
+
+          <div className="flex flex-wrap justify-end gap-3 border-t border-base-200 pt-4">
+            <button
+              type="button"
+              className="btn btn-ghost min-h-11"
+              onClick={() => setIsTeamOpen(false)}
+              disabled={isSubmitting}
+            >
+              Annuler
+            </button>
+            <button type="submit" className="btn btn-primary min-h-11" disabled={isSubmitting}>
+              {isSubmitting ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <ProductionMaterialModal
+        isOpen={isMaterialOpen}
+        onClose={() => setIsMaterialOpen(false)}
+        productionId={production.id}
+        batchNumber={production.batchNumber}
+        products={products}
+        isOptionsLoading={isOptionsLoading}
+        onAdded={refresh}
+      />
+
+      <ProductionWorkerModal
+        isOpen={isWorkerOpen}
+        onClose={() => setIsWorkerOpen(false)}
+        productionId={production.id}
+        batchNumber={production.batchNumber}
+        workers={workers}
+        isOptionsLoading={isOptionsLoading}
+        onAdded={refresh}
+      />
+
+      <BrokenBricksModal
+        isOpen={isBrokenOpen}
+        onClose={() => setIsBrokenOpen(false)}
+        production={production}
+        onRegistered={refresh}
+      />
+
+      <RemoveMaterialDialog
+        isOpen={isRemoveMaterialOpen}
+        onClose={() => {
+          if (!isSubmitting) setIsRemoveMaterialOpen(false);
+        }}
+        onConfirm={removeMaterial}
+        material={materialToRemove}
+        isSubmitting={isSubmitting}
+      />
+
+      <RemoveWorkerDialog
+        isOpen={isRemoveWorkerOpen}
+        onClose={() => {
+          if (!isSubmitting) setIsRemoveWorkerOpen(false);
+        }}
+        onConfirm={removeWorker}
+        assignment={workerToRemove}
+        isSubmitting={isSubmitting}
+      />
+
+      <CancelProductionDialog
+        isOpen={isCancelOpen}
+        onClose={() => {
+          if (!isSubmitting) setIsCancelOpen(false);
+        }}
+        onConfirm={cancelProduction}
+        production={production}
+        isSubmitting={isSubmitting}
+      />
+    </div>
+  );
+}

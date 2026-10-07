@@ -12,7 +12,7 @@
  */
 
 import { db, rawAll, rawGet, withTransaction } from '@/db';
-import { payments, salesInvoices, purchaseInvoices, serviceJobs } from '@/db/schema';
+import { brickOrders, furnitureOrders, payments, salesInvoices, purchaseInvoices, serviceJobs } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { nextDocumentNumber } from '@/lib/settings';
 import { addCashMovement } from '@/lib/caisse';
@@ -20,10 +20,11 @@ import { today } from '@/lib/format';
 import { scopeSql, type StoreScope } from '@/lib/stores';
 
 /**
- * Types de document encaissables. (`brick_order` n'existe plus que dans
- * l'historique de l'ancienne briqueterie : il n'est plus encaissable.)
+ * Types de document encaissables. Les acomptes de l'ancienne briqueterie v1
+ * portent `brick_order_v1` (migration 0014) : leur document n'existe plus, ils
+ * ne restent lisibles que comme reçus d'archive.
  */
-export type PaymentType = 'sale' | 'purchase' | 'service_job';
+export type PaymentType = 'sale' | 'purchase' | 'service_job' | 'furniture_order' | 'brick_order';
 export type PaymentLabel = 'deposit' | 'balance' | 'full';
 
 export class PaymentError extends Error {
@@ -72,7 +73,26 @@ const DOCUMENT_CONFIG: Record<
     cashType: 'income',
     syncTable: 'service_jobs',
   },
+  furniture_order: {
+    table: furnitureOrders,
+    label: 'Commande d’atelier',
+    cashType: 'income',
+    syncTable: 'furniture_orders',
+  },
+  brick_order: {
+    table: brickOrders,
+    label: 'Commande de briques',
+    cashType: 'income',
+    syncTable: 'brick_orders',
+  },
 };
+
+/** Numéro lisible d'un document, quel que soit son type. */
+function documentNumberOf(type: PaymentType, document: any): string | null {
+  if (type === 'sale') return document.invoiceNumber ?? null;
+  if (type === 'furniture_order' || type === 'brick_order') return document.orderNumber ?? null;
+  return document.reference ?? null;
+}
 
 /** Le document référencé, quel que soit son type. */
 async function loadDocument(type: PaymentType, referenceId: number) {
@@ -156,6 +176,23 @@ async function createPaymentInTx(input: Parameters<typeof createPayment>[0]): Pr
   if (document.status === 'cancelled') {
     throw new PaymentError('Impossible d’encaisser un document annulé');
   }
+  /*
+   * Commande de briques : acompte possible dès qu'elle est confirmée, jamais sur
+   * un brouillon ; une fois facturée, l'argent se règle sur la **facture** (les
+   * acomptes y ont été transférés), sinon il serait compté deux fois.
+   */
+  if (input.type === 'brick_order') {
+    if (document.status === 'draft') {
+      throw new PaymentError('Confirmez la commande de briques avant d’encaisser un acompte.');
+    }
+    if (document.salesInvoiceId) {
+      throw new PaymentError('Cette commande est facturée : encaissez sur sa facture de vente.');
+    }
+  }
+  // Une fabrication pour le stock n'a pas de client : rien à encaisser.
+  if (input.type === 'furniture_order' && document.purpose !== 'customer') {
+    throw new PaymentError('Une fabrication pour le stock ne s’encaisse pas : seule une commande de client se paie.');
+  }
 
   /*
    * Un **brouillon** de vente (ou un achat non validé) n'a ni sortie de stock ni
@@ -172,7 +209,7 @@ async function createPaymentInTx(input: Parameters<typeof createPayment>[0]): Pr
    * briques** ont, elles, un vrai brouillon : on refuse `draft` et `cancelled`
    * et on accepte tout le reste du cycle (`confirmed` → … → `delivered`).
    */
-  if (input.type !== 'service_job' && document.status !== 'active') {
+  if (input.type !== 'service_job' && input.type !== 'furniture_order' && input.type !== 'brick_order' && document.status !== 'active') {
     throw new PaymentError(
       input.type === 'sale'
         ? `Impossible d’encaisser la facture ${document.invoiceNumber ?? ''} : c’est un brouillon. Validez la vente avant d’enregistrer un encaissement.`
@@ -228,7 +265,7 @@ async function createPaymentInTx(input: Parameters<typeof createPayment>[0]): Pr
 
   // Mouvement de caisse : un règlement « Crédit » ne fait pas entrer d'argent.
   if (!input.skipCash && paymentMethod.toLowerCase() !== 'crédit' && paymentMethod.toLowerCase() !== 'credit') {
-    const referenceNumber = input.type === 'sale' ? document.invoiceNumber : document.reference;
+    const referenceNumber = documentNumberOf(input.type, document);
 
     await addCashMovement({
       storeId: input.storeId,
@@ -317,11 +354,11 @@ export async function getReceiptData(id: number) {
   const document = await loadDocument(payment.type, payment.referenceId);
 
   const customerName =
-    payment.type === 'sale' || payment.type === 'service_job'
+    payment.type === 'sale' || payment.type === 'service_job' || payment.type === 'furniture_order' || payment.type === 'brick_order'
       ? (document.customerName ?? (await customerNameOf(document.customerId)))
       : (document.supplierId ? await supplierNameOf(document.supplierId) : 'Fournisseur');
 
-  const documentNumber = payment.type === 'sale' ? document.invoiceNumber : document.reference;
+  const documentNumber = documentNumberOf(payment.type, document);
 
   // Historique des paiements du même document : un reçu doit pouvoir montrer
   // où en est l'échéancier (§7).
@@ -531,8 +568,14 @@ export async function listReceipts(options: PaymentFilters & {
             SELECT j.id FROM service_jobs j
             LEFT JOIN customers c ON c.id = j.customer_id
             WHERE j.reference LIKE ? OR c.name LIKE ?))
+      OR (p.type = 'furniture_order' AND p.reference_id IN (
+            SELECT o.id FROM furniture_orders o
+            WHERE o.order_number LIKE ? OR o.customer_name LIKE ?))
+      OR (p.type = 'brick_order' AND p.reference_id IN (
+            SELECT b.id FROM brick_orders b
+            WHERE b.order_number LIKE ? OR b.customer_name LIKE ?))
     )`);
-    args.push(like, like, like, like, like, like, like, like);
+    args.push(like, like, like, like, like, like, like, like, like, like, like, like);
   }
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -541,7 +584,8 @@ export async function listReceipts(options: PaymentFilters & {
     CASE p.type
       WHEN 'sale'        THEN (SELECT v.invoice_number FROM sales_invoices v WHERE v.id = p.reference_id)
       WHEN 'purchase'    THEN (SELECT a.reference      FROM purchase_invoices a WHERE a.id = p.reference_id)
-      WHEN 'brick_order' THEN NULL
+      WHEN 'brick_order' THEN (SELECT b.order_number FROM brick_orders b WHERE b.id = p.reference_id)
+      WHEN 'furniture_order' THEN (SELECT o.order_number FROM furniture_orders o WHERE o.id = p.reference_id)
       ELSE                    (SELECT j.reference      FROM service_jobs j WHERE j.id = p.reference_id)
     END`;
 
@@ -551,7 +595,8 @@ export async function listReceipts(options: PaymentFilters & {
       WHEN 'purchase'    THEN (SELECT s.name FROM purchase_invoices a
                                   LEFT JOIN suppliers s ON s.id = a.supplier_id
                                   WHERE a.id = p.reference_id)
-      WHEN 'brick_order' THEN NULL
+      WHEN 'brick_order' THEN (SELECT b.customer_name FROM brick_orders b WHERE b.id = p.reference_id)
+      WHEN 'furniture_order' THEN (SELECT COALESCE(o.customer_name, 'Client de passage') FROM furniture_orders o WHERE o.id = p.reference_id)
       ELSE                    (SELECT c.name FROM service_jobs j
                                   LEFT JOIN customers c ON c.id = j.customer_id
                                   WHERE j.id = p.reference_id)
@@ -599,7 +644,9 @@ export const PAYMENT_TYPE_LABELS: Record<string, string> = {
   sale: 'Vente',
   purchase: 'Achat',
   service_job: 'Prestation',
-  brick_order: 'Commande de briques (archive)',
+  furniture_order: 'Atelier',
+  brick_order: 'Briqueterie',
+  brick_order_v1: 'Commande de briques (archive v1)',
 };
 
 /**

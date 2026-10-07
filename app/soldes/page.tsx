@@ -589,6 +589,13 @@ export default function SoldesPage() {
                   value={<MoneyText value={summary.jobsRevenue} currency={currency} />}
                   tone="info"
                 />
+                {summary.furnitureRevenue > 0 && (
+                  <MiniStat
+                    label="CA atelier de meubles"
+                    value={<MoneyText value={summary.furnitureRevenue} currency={currency} />}
+                    tone="info"
+                  />
+                )}
                 <MiniStat
                   label="Dépenses"
                   value={<MoneyText value={summary.expenses} currency={currency} />}

@@ -651,7 +651,7 @@ export async function getStoreIndicators(storeId: number, from: string, to: stri
        (SELECT COUNT(*) FROM sales_invoices WHERE store_id = ? AND status = 'active' AND date BETWEEN ? AND ?) AS sales_count,
        (SELECT COALESCE(SUM(total), 0) FROM purchase_invoices WHERE store_id = ? AND status = 'active' AND date BETWEEN ? AND ?) AS purchases,
        (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE store_id = ? AND deleted_at IS NULL AND approval_status = 'approved' AND date BETWEEN ? AND ?) AS expenses,
-       (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE store_id = ? AND type IN ('sale', 'service_job') AND date BETWEEN ? AND ?) AS collected,
+       (SELECT COALESCE(SUM(amount), 0) FROM payments WHERE store_id = ? AND type IN ('sale', 'service_job', 'furniture_order') AND date BETWEEN ? AND ?) AS collected,
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM sales_invoices WHERE store_id = ? AND status = 'active') AS receivables,
        (SELECT COALESCE(SUM(remaining_amount), 0) FROM purchase_invoices WHERE store_id = ? AND status = 'active') AS payables,
        (SELECT COALESCE(SUM(ps.quantity * p.purchase_price), 0) FROM product_stocks ps JOIN products p ON p.id = ps.product_id WHERE ps.store_id = ? AND p.is_active = 1) AS stock_value,

@@ -130,7 +130,7 @@ export async function nextSequence(name: string, year = new Date().getFullYear()
   return Number(row[0]?.value ?? 1);
 }
 
-export type DocumentKind = 'invoice' | 'purchase' | 'receipt' | 'job' | 'quote' | 'request' | 'transfer' | 'inventory';
+export type DocumentKind = 'invoice' | 'purchase' | 'receipt' | 'job' | 'quote' | 'request' | 'transfer' | 'inventory' | 'furniture' | 'brick' | 'brick_order';
 
 /** Table et colonne portant le numéro, pour vérifier qu'il est libre. */
 const DOCUMENT_TARGETS: Record<DocumentKind, { table: string; column: string }> = {
@@ -142,6 +142,9 @@ const DOCUMENT_TARGETS: Record<DocumentKind, { table: string; column: string }> 
   request: { table: 'service_requests', column: 'reference' },
   transfer: { table: 'stock_transfers', column: 'reference' },
   inventory: { table: 'inventories', column: 'reference' },
+  furniture: { table: 'furniture_orders', column: 'order_number' },
+  brick: { table: 'brick_productions', column: 'batch_number' },
+  brick_order: { table: 'brick_orders', column: 'order_number' },
 };
 
 /** Étiquette de magasin dans les numéros : code du magasin + numéro de poste. */
@@ -176,6 +179,9 @@ export async function nextDocumentNumber(kind: DocumentKind, storeId?: number | 
     request: settings.requestPrefix,
     transfer: settings.transferPrefix,
     inventory: settings.inventoryPrefix,
+    furniture: settings.furniturePrefix,
+    brick: settings.brickPrefix,
+    brick_order: settings.brickOrderPrefix,
   }[kind];
 
   const tag = await storeNumberTag(storeId);

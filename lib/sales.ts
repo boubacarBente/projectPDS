@@ -52,19 +52,21 @@ import { scopeSql, type StoreScope } from '@/lib/stores';
  * ------------------------------------------------------------------ */
 
 /**
- * Canal de vente — un seul canal depuis le retrait de la briqueterie. Le champ
- * est conservé pour la compatibilité des données et de l'API.
+ * Canal de vente : `general` (commerce, `/ventes`) ou `brick` (briqueterie,
+ * `/briqueterie/ventes`, README §30). Une vente de briques n'apparaît pas dans
+ * `/ventes` et réciproquement ; les deux comptent au chiffre d'affaires.
  */
-export type SalesChannel = 'general';
+export type SalesChannel = 'general' | 'brick';
 
-export const SALES_CHANNELS: SalesChannel[] = ['general'];
+export const SALES_CHANNELS: SalesChannel[] = ['general', 'brick'];
 
 export function isSalesChannel(value: unknown): value is SalesChannel {
-  return value === 'general';
+  return value === 'general' || value === 'brick';
 }
 
 export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
   general: 'Commerce général',
+  brick: 'Briqueterie',
 };
 
 export type SalesInvoiceRow = {
@@ -274,7 +276,7 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
     paymentStatus: row.payment_status,
     paymentMethod: row.payment_method,
     status: row.status as SalesInvoiceRow['status'],
-    channel: 'general',
+    channel: isSalesChannel(row.channel) ? row.channel : 'general',
     cancelReason: row.cancel_reason ?? null,
     notes: row.notes ?? null,
     itemCount: Number(row.item_count ?? 0),
@@ -732,6 +734,7 @@ export async function listSalesInvoices(options: {
   status?: string;
   /** Magasins visibles (obligatoire). */
   scope: StoreScope;
+  /** `general` par défaut : `/ventes` ne montre pas les ventes de briques. */
   channel?: SalesChannel | 'all';
   page?: number;
   limit?: number;
@@ -749,6 +752,11 @@ export async function listSalesInvoices(options: {
   const where: string[] = [scopeSql('v.store_id', options.scope)];
   const args: (string | number)[] = [];
 
+  const channel = options.channel ?? 'general';
+  if (channel !== 'all') {
+    where.push('v.channel = ?');
+    args.push(channel);
+  }
   if (options.search) {
     where.push('(v.invoice_number LIKE ? OR v.customer_name LIKE ?)');
     const like = `%${options.search}%`;
@@ -873,7 +881,7 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
         : toNumber(body.taxRate, 0),
     notes: body?.notes ?? null,
     status,
-    channel: 'general',
+    channel: isSalesChannel(body?.channel) ? body.channel : 'general',
     lines: rawLines.map((line: any) => ({
       productId: toInt(line?.productId, 0),
       quantity: toNumber(line?.quantity, 0),
@@ -886,6 +894,22 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
 /* ------------------------------------------------------------------ *
  * Création (§10.5)
  * ------------------------------------------------------------------ */
+
+/**
+ * Une vente du canal briqueterie ne vend que des briques : chaque ligne doit
+ * être le produit d'un type de brique **actif de ce magasin**.
+ */
+async function assertBrickProducts(items: SalesItemDraft[], storeId: number): Promise<void> {
+  for (const item of items) {
+    const brick = await rawGet<{ id: number }>(
+      'SELECT id FROM brick_types WHERE product_id = ? AND store_id = ? AND is_active = 1 LIMIT 1',
+      [item.productId, storeId],
+    );
+    if (!brick) {
+      throw new ValidationError(`« ${item.productName} » n’est pas une brique de ce magasin : vendez-le depuis les ventes du commerce.`);
+    }
+  }
+}
 
 export async function createSalesInvoice(input: SalesInvoiceInput): Promise<SalesInvoiceRow> {
   return withTransaction(() => createSalesInvoiceInTx(input));
@@ -901,7 +925,8 @@ async function createSalesInvoiceInTx(input: SalesInvoiceInput): Promise<SalesIn
 
   const date = businessDate(input.date, 'date');
   const status = normalizeStatus(input.status, 'active');
-  const channel: SalesChannel = 'general';
+  const channel: SalesChannel = isSalesChannel(input.channel) ? input.channel : 'general';
+  if (channel === 'brick') await assertBrickProducts(items, storeId);
   const paymentMethod = String(input.paymentMethod ?? '').trim() || 'Espèces';
   const taxRate = input.taxRate === undefined ? Number(settings.defaultTaxRate ?? 0) : Number(input.taxRate);
 
@@ -1397,14 +1422,15 @@ export async function cancelSalesInvoice(
 /** Statistiques de ventes sur une période nommée (`resolvePeriod` de `lib/dashboard.ts`). */
 export async function getSalesStats(
   period: PeriodKey = 'month',
-  options: { scope: StoreScope },
+  options: { scope: StoreScope; channel?: SalesChannel | 'all' },
 ): Promise<SalesStats> {
   const key: PeriodKey = PERIOD_KEYS.includes(period) ? period : 'month';
   const bounds = resolvePeriod(key);
 
-  // Périmètre : les magasins demandés (filtre identique à la liste).
-  const channelSql = ` AND ${scopeSql('store_id', options.scope)}`;
-  const channelArgs: string[] = [];
+  // Périmètre : les magasins demandés et le canal (filtre identique à la liste).
+  const channel = options.channel ?? 'general';
+  const channelSql = ` AND ${scopeSql('store_id', options.scope)}${channel === 'all' ? '' : ' AND channel = ?'}`;
+  const channelArgs: string[] = channel === 'all' ? [] : [channel];
 
   const totals = await rawGet<any>(
     `SELECT COUNT(*) AS count,
@@ -1430,11 +1456,11 @@ export async function getSalesStats(
             SUM(i.amount)   AS amount
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', options.scope)}
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', options.scope)}${channel === 'all' ? '' : ' AND v.channel = ?'}
      GROUP BY i.product_name
      ORDER BY amount DESC
      LIMIT ?`,
-    [bounds.from, bounds.to, MAX_TOP_PRODUCTS],
+    [bounds.from, bounds.to, ...channelArgs, MAX_TOP_PRODUCTS],
   );
 
   const byDayRows = await rawAll<{ date: string; revenue: number; count: number }>(

@@ -57,13 +57,14 @@ type ReceiptRecord = PaymentRow & {
   partyName: string | null;
 };
 
-type TypeFilter = 'all' | 'sale' | 'purchase' | 'service_job';
+type TypeFilter = 'all' | 'sale' | 'purchase' | 'service_job' | 'furniture_order';
 
 const TYPE_OPTIONS = [
   { value: 'all', label: 'Toutes les origines' },
   { value: 'sale', label: 'Ventes' },
   { value: 'purchase', label: 'Achats' },
   { value: 'service_job', label: 'Prestations' },
+  { value: 'furniture_order', label: 'Atelier de meubles' },
 ];
 
 /** Origine du reçu — `payments.type` (§7.1). */
@@ -71,6 +72,7 @@ const DOCUMENT_TYPES: Record<string, { label: string; tone: BadgeTone }> = {
   sale: { label: 'Vente', tone: 'primary' },
   purchase: { label: 'Achat', tone: 'warning' },
   service_job: { label: 'Prestation', tone: 'info' },
+  furniture_order: { label: 'Atelier', tone: 'info' },
 };
 
 /** Acompte / solde / intégral (§7). */
@@ -90,7 +92,7 @@ type ViewState = {
 };
 
 function isTypeFilter(value: unknown): value is TypeFilter {
-  return value === 'all' || value === 'sale' || value === 'purchase' || value === 'service_job';
+  return value === 'all' || value === 'sale' || value === 'purchase' || value === 'service_job' || value === 'furniture_order';
 }
 
 export default function RecusPage() {

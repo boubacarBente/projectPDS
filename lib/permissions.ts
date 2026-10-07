@@ -85,6 +85,18 @@ export type Action =
   | 'jobs.update'
   | 'jobs.delete'
   | 'services.manage'
+  /* Atelier de meubles (README §29) */
+  | 'furniture.view'
+  | 'furniture.create'
+  | 'furniture.update'
+  | 'furniture.delete'
+  | 'furniture.models'
+  /* Briqueterie (README §30) */
+  | 'brick.view'
+  | 'brick.create'
+  | 'brick.update'
+  | 'brick.delete'
+  | 'brick.types'
   /* Multi-magasins */
   | 'stores.view'
   | 'stores.manage'
@@ -240,6 +252,26 @@ export const ACCESS_AREAS: AccessArea[] = [
     ],
   },
   {
+    id: 'atelier',
+    label: 'Atelier de meubles',
+    description: 'Modèles de meubles, commandes de fabrication, matières, équipe et livraisons.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['furniture.view'] },
+      { level: 'edit', label: 'Commandes, matières, équipe et étapes', actions: ['furniture.create', 'furniture.update'] },
+      { level: 'manage', label: 'Modèles et annulations', actions: ['furniture.models', 'furniture.delete'] },
+    ],
+  },
+  {
+    id: 'briqueterie',
+    label: 'Briqueterie',
+    description: 'Lots de fabrication, dépenses de production, stock de briques, commandes et rapports.',
+    levels: [
+      { level: 'view', label: 'Consulter', actions: ['brick.view'] },
+      { level: 'edit', label: 'Lots, étapes, équipe et commandes', actions: ['brick.create', 'brick.update'] },
+      { level: 'manage', label: 'Types de briques et annulations', actions: ['brick.types', 'brick.delete'] },
+    ],
+  },
+  {
     id: 'transferts',
     label: 'Transferts entre magasins',
     description: 'Envoyer et recevoir de la marchandise d’un magasin à l’autre.',
@@ -354,6 +386,8 @@ export const ROLE_LEVELS: Record<Role, Record<string, AccessLevel>> = {
     caisse: 'manage',
     depenses: 'manage',
     chantiers: 'manage',
+    atelier: 'manage',
+    briqueterie: 'manage',
     transferts: 'manage',
     inventaires: 'manage',
     magasins: 'view',
@@ -370,6 +404,8 @@ export const ROLE_LEVELS: Record<Role, Record<string, AccessLevel>> = {
     caisse: 'edit',
     depenses: 'edit',
     chantiers: 'view',
+    atelier: 'view',
+    briqueterie: 'view',
     magasins: 'view',
     parametres: 'view',
   },
@@ -382,6 +418,8 @@ export const ROLE_LEVELS: Record<Role, Record<string, AccessLevel>> = {
     achats: 'edit',
     stock: 'manage',
     chantiers: 'view',
+    atelier: 'edit',
+    briqueterie: 'edit',
     transferts: 'edit',
     inventaires: 'edit',
     magasins: 'view',
@@ -398,6 +436,8 @@ export const ROLE_LEVELS: Record<Role, Record<string, AccessLevel>> = {
     caisse: 'view',
     depenses: 'manage',
     chantiers: 'view',
+    atelier: 'view',
+    briqueterie: 'view',
     transferts: 'view',
     inventaires: 'view',
     magasins: 'view',
@@ -495,6 +535,16 @@ export const ALL_ACTIONS: Action[] = [
   'jobs.update',
   'jobs.delete',
   'services.manage',
+  'furniture.view',
+  'furniture.create',
+  'furniture.update',
+  'furniture.delete',
+  'furniture.models',
+  'brick.view',
+  'brick.create',
+  'brick.update',
+  'brick.delete',
+  'brick.types',
   'stores.view',
   'stores.manage',
   'stores.viewAll',
@@ -597,6 +647,16 @@ export const ACTION_META: Record<Action, ActionMeta> = {
   'jobs.update': { label: 'Modifier un chantier', group: 'Production', description: 'Prestations, étapes, équipe, sous-traitance, matériaux ; statut des demandes et des devis.' },
   'services.manage': { label: 'Gérer les prestations', group: 'Production', description: 'Catalogue des prestations du magasin : créer, tarifer, désactiver, archiver.' },
   'jobs.delete': { label: 'Annuler un chantier ou un devis', group: 'Production', description: 'Annulation avec motif (aucune suppression).', dangerous: true },
+  'furniture.view': { label: 'Consulter l’atelier', group: 'Production', description: 'Commandes de meubles, modèles, coûts de revient et livraisons.' },
+  'furniture.create': { label: 'Créer une commande d’atelier', group: 'Production', description: 'Commande d’un client ou fabrication pour le stock.' },
+  'furniture.update': { label: 'Faire avancer une commande d’atelier', group: 'Production', description: 'Étapes, matières sorties du stock, chutes, équipe, dates et prix convenu.' },
+  'furniture.models': { label: 'Gérer les modèles de meubles', group: 'Production', description: 'Fiches modèles du magasin et leur nomenclature de matières.' },
+  'furniture.delete': { label: 'Annuler une commande d’atelier', group: 'Production', description: 'Annulation avec motif : les matières reviennent au stock.', dangerous: true },
+  'brick.view': { label: 'Consulter la briqueterie', group: 'Production', description: 'Tableau de bord, lots, stock de briques, commandes, ventes et rapports.' },
+  'brick.create': { label: 'Créer un lot ou une commande de briques', group: 'Production', description: 'Lancer une fabrication, enregistrer une commande client.' },
+  'brick.update': { label: 'Faire avancer un lot ou une commande', group: 'Production', description: 'Étapes, quantités, pertes, équipe, dépenses rattachées ; statut, livraison et facturation des commandes.' },
+  'brick.types': { label: 'Gérer les types de briques', group: 'Production', description: 'Types de briques du magasin et produit qui porte leur prix et leur stock.' },
+  'brick.delete': { label: 'Annuler un lot ou une commande de briques', group: 'Production', description: 'Annulation avec motif : le stock du lot est repris.', dangerous: true },
 
   'stores.view': { label: 'Voir ses magasins', group: 'Magasins', description: 'Fiche et indicateurs des magasins auxquels on est affecté.' },
   'stores.manage': { label: 'Gérer les magasins', group: 'Magasins', description: 'Créer, modifier, suspendre ou archiver un magasin, désigner son gérant.', dangerous: true },

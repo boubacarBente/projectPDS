@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { fail, ok, parsePagination, requireAction, scopeFromRequest } from '@/lib/api';
 import { listReceipts, type PaymentType } from '@/lib/payments';
 
-const PAYMENT_TYPES: PaymentType[] = ['sale', 'purchase', 'service_job'];
+const PAYMENT_TYPES: PaymentType[] = ['sale', 'purchase', 'service_job', 'furniture_order'];
 
 /**
  * GET /api/recus — **registre des reçus** (§7.7).

@@ -650,4 +650,5 @@ export const CASH_REFERENCE_LABELS: Record<string, string> = {
   expense: 'Dépense',
   manual: 'Manuel',
   service_job: 'Chantier',
+  furniture_order: 'Atelier de meubles',
 };

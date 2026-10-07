@@ -305,6 +305,9 @@ export function fail(error: unknown): NextResponse {
       'stock_transfers.reference': 'Cette référence de transfert existe déjà.',
       'inventories.reference': 'Cette référence d’inventaire existe déjà.',
       'service_jobs.reference': 'Cette référence de chantier existe déjà.',
+      'furniture_orders.order_number': 'Ce numéro de commande d’atelier existe déjà.',
+      // Index composite (store_id, code) : SQLite cite la première colonne.
+      'furniture_models.store_id': 'Ce code de modèle existe déjà dans ce magasin.',
     };
 
     return NextResponse.json(

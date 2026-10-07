@@ -23,7 +23,13 @@ export async function GET(request: NextRequest) {
     const raw = params.get('period') ?? 'month';
     const period: PeriodKey = (PERIODS as string[]).includes(raw) ? (raw as PeriodKey) : 'month';
 
-    return ok(await getSalesStats(period, { scope: scopeFromRequest(user, request) }));
+    const channel = params.get('channel');
+    return ok(
+      await getSalesStats(period, {
+        scope: scopeFromRequest(user, request),
+        channel: channel === 'brick' || channel === 'all' ? channel : 'general',
+      }),
+    );
   } catch (error) {
     return fail(error);
   }

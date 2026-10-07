@@ -3,6 +3,7 @@ import { fail, ok, parsePagination, readJson, requireAction, requireActiveStore,
 import {
   canViewSalesProfit,
   createSalesInvoice,
+  isSalesChannel,
   listSalesInvoices,
   parseSalesInput,
   withoutSalesProfit,
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest) {
       to: params.get('to') ?? undefined,
       paymentStatus: params.get('paymentStatus') ?? undefined,
       status: params.get('status') ?? undefined,
+      channel: isSalesChannel(params.get('channel')) || params.get('channel') === 'all' ? (params.get('channel') as any) : 'general',
       page,
       limit,
     });

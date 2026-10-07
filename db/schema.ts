@@ -476,8 +476,8 @@ export const payments = sqliteTable('payments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   storeId: integer('store_id').references(() => stores.id),
   receiptNumber: text('receipt_number').notNull().unique(),
-  /** sale | purchase | service_job (`brick_order` : historique de l'ancienne briqueterie) */
-  type: text('type', { enum: ['sale', 'purchase', 'service_job', 'brick_order'] }).notNull(),
+  /** sale | purchase | service_job | furniture_order (`brick_order` : historique de l'ancienne briqueterie) */
+  type: text('type', { enum: ['sale', 'purchase', 'service_job', 'furniture_order', 'brick_order'] }).notNull(),
   referenceId: integer('reference_id').notNull(),
   amount: real('amount').notNull(),
   paymentMethod: text('payment_method').notNull().default('Espèces'),
@@ -903,6 +903,263 @@ export const jobSubcontracts = sqliteTable('job_subcontracts', {
   ...syncCols(),
 }, (t) => [
   index('job_subcontracts_job_idx').on(t.jobId),
+]);
+
+/* ------------------------------------------------------------------ *
+ * 7. Atelier de meubles par magasin (README §29)
+ *
+ * Retiré en v2 (migration 0004), rétabli le 7 octobre 2026 à la demande du
+ * client, cette fois **rattaché à un magasin** : modèles, commandes, matières
+ * et équipe appartiennent au magasin de l'atelier, comme les chantiers.
+ * ------------------------------------------------------------------ */
+
+export const FURNITURE_STAGE_VALUES = ['cutting', 'assembly', 'sanding', 'painting', 'finishing', 'delivered'] as const;
+
+/** Fiche modèle d'un meuble (catalogue **du magasin**). */
+export const furnitureModels = sqliteTable('furniture_models', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  /** Unique dans le magasin (`MOD-0001`). */
+  code: text('code').notNull(),
+  name: text('name').notNull(),
+  description: text('description'),
+  standardDimensions: text('standard_dimensions'),
+  laborHours: real('labor_hours').notNull().default(0),
+  /** Prix de vente indicatif d'une unité (repris à la commande, modifiable). */
+  salePrice: real('sale_price').notNull().default(0),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  uniqueIndex('furniture_models_store_code_unique').on(t.storeId, t.code),
+]);
+
+/** Nomenclature (BOM) : matières nécessaires pour **une** unité du modèle. */
+export const furnitureModelMaterials = sqliteTable('furniture_model_materials', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  modelId: integer('model_id').notNull().references(() => furnitureModels.id),
+  productId: integer('product_id').notNull().references(() => products.id),
+  quantity: real('quantity').notNull().default(0),
+  unit: text('unit').notNull().default('pièce'),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('furniture_model_materials_model_idx').on(t.modelId),
+]);
+
+export const furnitureOrders = sqliteTable('furniture_orders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  orderNumber: text('order_number').notNull().unique(),
+  /**
+   * `customer` : commande d'un client, facturée au prix convenu et encaissée
+   * par `payments` ; `stock` : fabrication pour le stock du magasin, le meuble
+   * fini entre en stock à la fin (jamais facturée).
+   */
+  purpose: text('purpose', { enum: ['customer', 'stock'] }).notNull().default('customer'),
+  customerId: integer('customer_id').references(() => customers.id),
+  /** Nom figé (ou client de passage). */
+  customerName: text('customer_name'),
+  modelId: integer('model_id').references(() => furnitureModels.id),
+  modelName: text('model_name'),
+  isCustom: integer('is_custom', { mode: 'boolean' }).notNull().default(false),
+  dimensions: text('dimensions'),
+  finish: text('finish'),
+  quantity: real('quantity').notNull().default(1),
+  startDate: text('start_date'),
+  promisedDate: text('promised_date'),
+  deliveryDate: text('delivery_date'),
+  stage: text('stage', { enum: FURNITURE_STAGE_VALUES }).notNull().default('cutting'),
+  /** active | cancelled — annulation = motif + auteur + date, jamais de suppression. */
+  status: text('status', { enum: ['active', 'cancelled'] }).notNull().default('active'),
+  cancelReason: text('cancel_reason'),
+  cancelledBy: integer('cancelled_by').references(() => users.id),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  /** Prix convenu avec le client = montant facturé (`total`). */
+  total: real('total').notNull().default(0),
+  /** Recalculés depuis `payments` (`recomputeDocumentPayments`), jamais saisis. */
+  amountPaid: real('amount_paid').notNull().default(0),
+  remainingAmount: real('remaining_amount').notNull().default(0),
+  paymentStatus: text('payment_status').notNull().default('unpaid'),
+  /** Meuble fini : entre en stock à la fin d'une fabrication pour le stock. */
+  productId: integer('product_id').references(() => products.id),
+  userId: integer('user_id').references(() => users.id),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('furniture_orders_store_idx').on(t.storeId),
+  index('furniture_orders_customer_idx').on(t.customerId),
+]);
+
+export const furnitureOrderMaterials = sqliteTable('furniture_order_materials', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id').notNull().references(() => furnitureOrders.id),
+  productId: integer('product_id').references(() => products.id),
+  productName: text('product_name').notNull(),
+  unit: text('unit').notNull().default('pièce'),
+  quantity: real('quantity').notNull(),
+  /** Chutes de bois et pertes de matière : sortie de stock distincte. */
+  wastageQuantity: real('wastage_quantity').notNull().default(0),
+  unitCost: real('unit_cost').notNull().default(0),
+  /** (quantité + chutes) × coût unitaire : les chutes ont été payées. */
+  amount: real('amount').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('furniture_order_materials_order_idx').on(t.orderId),
+]);
+
+/* ------------------------------------------------------------------ *
+ * 7 bis. Briqueterie par magasin (README §30)
+ *
+ * Retirée en v2 (migration 0004), rétablie le 7 octobre 2026, rattachée à un
+ * magasin. Le **coût d'un lot n'est pas stocké** : équipe + dépenses rattachées
+ * (`expenses.reference_type = 'brick_production'`), calculés à la lecture.
+ * ------------------------------------------------------------------ */
+
+export const BRICK_STAGE_VALUES = ['molding', 'drying', 'firing', 'stored'] as const;
+export const BRICK_ORDER_STATUS_VALUES = [
+  'draft',
+  'confirmed',
+  'in_production',
+  'ready',
+  'partially_delivered',
+  'delivered',
+  'cancelled',
+] as const;
+
+/** Type de brique du magasin ; le **produit lié** porte le prix de vente et le stock. */
+export const brickTypes = sqliteTable('brick_types', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  productId: integer('product_id').notNull().references(() => products.id),
+  name: text('name').notNull(),
+  /** solid | hollow | block */
+  shape: text('shape', { enum: ['solid', 'hollow', 'block'] }).notNull().default('solid'),
+  dimensions: text('dimensions'),
+  description: text('description'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('brick_types_store_idx').on(t.storeId),
+]);
+
+/** Lot de fabrication. */
+export const brickProductions = sqliteTable('brick_productions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  batchNumber: text('batch_number').notNull().unique(),
+  brickTypeId: integer('brick_type_id').notNull().references(() => brickTypes.id),
+  plannedQuantity: real('planned_quantity').notNull().default(0),
+  producedQuantity: real('produced_quantity').notNull().default(0),
+  brokenQuantity: real('broken_quantity').notNull().default(0),
+  startDate: text('start_date'),
+  endDate: text('end_date'),
+  /** molding | drying | firing | stored (mise en stock = terminée) */
+  stage: text('stage', { enum: BRICK_STAGE_VALUES }).notNull().default('molding'),
+  /** registered | finished | cancelled */
+  status: text('status', { enum: ['registered', 'finished', 'cancelled'] }).notNull().default('registered'),
+  /** Équipe ou responsable (texte libre). */
+  team: text('team'),
+  cancelReason: text('cancel_reason'),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  cancelledBy: integer('cancelled_by').references(() => users.id),
+  userId: integer('user_id').references(() => users.id),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('brick_productions_store_idx').on(t.storeId),
+]);
+
+export const brickProductionWorkers = sqliteTable('brick_production_workers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  productionId: integer('production_id').notNull().references(() => brickProductions.id),
+  workerId: integer('worker_id').references(() => workers.id),
+  workerName: text('worker_name').notNull(),
+  role: text('role'),
+  days: real('days').notNull().default(0),
+  dailyRate: real('daily_rate').notNull().default(0),
+  amount: real('amount').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('brick_production_workers_production_idx').on(t.productionId),
+]);
+
+/**
+ * Commande client de briques. Elle ne touche **jamais** le stock : c'est la
+ * facture de vente du canal `brick` née de la commande qui le sort. Ses
+ * acomptes (`payments.type = 'brick_order'`) sont **transférés** sur la facture.
+ */
+export const brickOrders = sqliteTable('brick_orders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  storeId: integer('store_id').notNull().references(() => stores.id),
+  orderNumber: text('order_number').notNull().unique(),
+  customerId: integer('customer_id').references(() => customers.id),
+  customerName: text('customer_name').notNull(),
+  userId: integer('user_id').references(() => users.id),
+  /** Date métier YYYY-MM-DD */
+  date: text('date').notNull(),
+  dueDate: text('due_date'),
+  deliveryDate: text('delivery_date'),
+  promisedDate: text('promised_date'),
+  subTotal: real('sub_total').notNull().default(0),
+  discount: real('discount').notNull().default(0),
+  total: real('total').notNull().default(0),
+  /** Recalculés depuis `payments`, jamais saisis. */
+  amountPaid: real('amount_paid').notNull().default(0),
+  remainingAmount: real('remaining_amount').notNull().default(0),
+  paymentStatus: text('payment_status').notNull().default('unpaid'),
+  status: text('status', { enum: BRICK_ORDER_STATUS_VALUES }).notNull().default('draft'),
+  /** Facture née de la commande — clé étrangère déclarée (invariant 20). */
+  salesInvoiceId: integer('sales_invoice_id').references(() => salesInvoices.id),
+  cancelReason: text('cancel_reason'),
+  cancelledBy: integer('cancelled_by').references(() => users.id),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('brick_orders_store_idx').on(t.storeId),
+]);
+
+export const brickOrderItems = sqliteTable('brick_order_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id').notNull().references(() => brickOrders.id),
+  brickTypeId: integer('brick_type_id').references(() => brickTypes.id),
+  productId: integer('product_id').references(() => products.id),
+  productName: text('product_name').notNull(),
+  unit: text('unit').notNull().default('pièce'),
+  quantity: real('quantity').notNull(),
+  unitPrice: real('unit_price').notNull().default(0),
+  discount: real('discount').notNull().default(0),
+  amount: real('amount').notNull().default(0),
+  deliveredQuantity: real('delivered_quantity').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('brick_order_items_order_idx').on(t.orderId),
+]);
+
+export const furnitureOrderWorkers = sqliteTable('furniture_order_workers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orderId: integer('order_id').notNull().references(() => furnitureOrders.id),
+  workerId: integer('worker_id').references(() => workers.id),
+  workerName: text('worker_name').notNull(),
+  role: text('role'),
+  days: real('days').notNull().default(0),
+  dailyRate: real('daily_rate').notNull().default(0),
+  amount: real('amount').notNull().default(0),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('furniture_order_workers_order_idx').on(t.orderId),
 ]);
 
 
@@ -1370,6 +1627,8 @@ export type ServiceJobMaterial = typeof serviceJobMaterials.$inferSelect;
 export type NewServiceJobMaterial = typeof serviceJobMaterials.$inferInsert;
 export type ServiceJobWorker = typeof serviceJobWorkers.$inferSelect;
 export type NewServiceJobWorker = typeof serviceJobWorkers.$inferInsert;
+export type FurnitureModel = typeof furnitureModels.$inferSelect;
+export type FurnitureOrder = typeof furnitureOrders.$inferSelect;
 export type ReportDelivery = typeof reportDeliveries.$inferSelect;
 export type NewReportDelivery = typeof reportDeliveries.$inferInsert;
 export type Setting = typeof settings.$inferSelect;

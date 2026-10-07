@@ -113,6 +113,11 @@ export type BalancesSummary = {
   jobsMaterialCost: number;
   /** Nombre de prestations de la période. */
   jobsCount: number;
+  /** Commandes clients de l'atelier de meubles (README §29). */
+  furnitureRevenue: number;
+  furnitureCount: number;
+  /** Matières de ces commandes (incluses dans `cogs`). */
+  furnitureMaterialCost: number;
   byMonth: BalancesByMonth[];
 };
 
@@ -379,7 +384,7 @@ export async function getSupplierBalances(options: {
  */
 async function getMonthlyTrend(scope: StoreScope): Promise<BalancesByMonth[]> {
   const v = scopeSql('store_id', scope);
-  const [salesRows, jobsRows, expenseRows] = await Promise.all([
+  const [salesRows, jobsRows, expenseRows, furnitureRows] = await Promise.all([
     rawAll<{ month: string; total: number | null }>(
       `SELECT substr(date, 1, 7) AS month, SUM(total_ht) AS total
        FROM sales_invoices
@@ -400,8 +405,17 @@ async function getMonthlyTrend(scope: StoreScope): Promise<BalancesByMonth[]> {
          AND date >= date('now', '-11 months', 'start of month')
        GROUP BY month`,
     ),
+    // Commandes clients de l'atelier, même règle que `getPeriodResult()`.
+    rawAll<{ month: string; total: number | null }>(
+      `SELECT substr(start_date, 1, 7) AS month, SUM(total) AS total
+       FROM furniture_orders
+       WHERE status = 'active' AND purpose = 'customer' AND ${v}
+         AND start_date >= date('now', '-11 months', 'start of month')
+       GROUP BY month`,
+    ),
   ]);
 
+  const furnitureByMonth = new Map(furnitureRows.map((r) => [r.month, Number(r.total ?? 0)]));
   const salesByMonth = new Map(salesRows.map((r) => [r.month, Number(r.total ?? 0)]));
   const jobsByMonth = new Map(jobsRows.map((r) => [r.month, Number(r.total ?? 0)]));
   const expensesByMonth = new Map(expenseRows.map((r) => [r.month, Number(r.total ?? 0)]));
@@ -418,7 +432,7 @@ async function getMonthlyTrend(scope: StoreScope): Promise<BalancesByMonth[]> {
   }
 
   return months.map((month) => {
-    const revenue = (salesByMonth.get(month) ?? 0) + (jobsByMonth.get(month) ?? 0);
+    const revenue = (salesByMonth.get(month) ?? 0) + (jobsByMonth.get(month) ?? 0) + (furnitureByMonth.get(month) ?? 0);
     const expenses = expensesByMonth.get(month) ?? 0;
     return {
       month,
@@ -487,6 +501,9 @@ export async function getBalancesSummary(options: {
     netProfit: result.netProfit,
     jobsMaterialCost: result.jobsMaterialCost,
     jobsCount: result.jobsCount,
+    furnitureRevenue: result.furnitureRevenue,
+    furnitureCount: result.furnitureCount,
+    furnitureMaterialCost: result.furnitureMaterialCost,
     byMonth: trend,
   };
 }

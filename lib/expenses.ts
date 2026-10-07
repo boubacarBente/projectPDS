@@ -141,9 +141,39 @@ export type ExpensesSummary = {
  * ------------------------------------------------------------------ */
 
 /** Catégorie validée contre la liste fermée des paramètres (casse canonique). */
-export async function validateExpenseCategory(value: unknown): Promise<string> {
+/**
+ * Catégories **fermées** des dépenses rattachées à un lot de briques (README
+ * §30, repris du §20 de la v1) : elles décrivent ce qui entre dans le coût
+ * d'une brique et ne dépendent pas de la liste des paramètres, qui décrit les
+ * frais de fonctionnement.
+ */
+export const PRODUCTION_EXPENSE_CATEGORIES = [
+  'Ciment',
+  'Sable',
+  'Argile / terre',
+  'Bois de chauffe',
+  'Carburant',
+  "Main-d'œuvre",
+  'Électricité',
+  'Eau',
+  'Transport',
+  'Entretien',
+  'Autre',
+] as const;
+
+export async function validateExpenseCategory(value: unknown, referenceType?: string | null): Promise<string> {
   const category = String(value ?? '').trim();
   if (!category) throw new ValidationError('La catégorie est obligatoire');
+
+  if (referenceType === 'brick_production') {
+    const match = PRODUCTION_EXPENSE_CATEGORIES.find(
+      (item) => item.toLocaleLowerCase('fr-FR') === category.toLocaleLowerCase('fr-FR'),
+    );
+    if (!match) {
+      throw new ValidationError(`Catégorie « ${category} » inconnue pour une dépense de production (${PRODUCTION_EXPENSE_CATEGORIES.join(', ')}).`);
+    }
+    return match;
+  }
 
   const settings = await getSettings();
   const allowed = settings.expenseCategories ?? [];
@@ -201,6 +231,16 @@ async function validateExpenseReference(
     if (sub.status === 'cancelled' || sub.job_status === 'cancelled') {
       throw new ValidationError('Ces travaux sous-traités sont annulés : aucun paiement ne peut plus y être rattaché.');
     }
+    return { referenceType: kind, referenceId: refId };
+  }
+  if (kind === 'brick_production') {
+    // Lot de la briqueterie (README §30) : même magasin, lot non annulé.
+    const lot = await rawGet<{ store_id: number; status: string }>('SELECT store_id, status FROM brick_productions WHERE id = ?', [refId]);
+    if (!lot) throw new NotFoundError('Lot de fabrication introuvable');
+    if (Number(lot.store_id) !== Number(storeId)) {
+      throw new ValidationError('Ce lot appartient à un autre magasin : sa dépense se saisit depuis ce magasin.');
+    }
+    if (lot.status === 'cancelled') throw new ValidationError('Ce lot est annulé : il n’accepte plus de dépense.');
     return { referenceType: kind, referenceId: refId };
   }
   throw new ValidationError('Type de rattachement inconnu.');
@@ -345,7 +385,7 @@ function assertSameStore(expense: ExpenseRow, storeId: number | null | undefined
 export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
   if (!input.storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
 
-  const category = await validateExpenseCategory(input.category);
+  const category = await validateExpenseCategory(input.category, input.referenceType);
   const amount = validateAmount(input.amount);
   const date = validateBusinessDate(input.date);
   const paymentMethod = optionalText(input.paymentMethod) ?? 'Espèces';
@@ -519,7 +559,7 @@ export async function updateExpense(
 
     const next: ExpenseRow = {
       ...previous,
-      category: patch.category !== undefined ? await validateExpenseCategory(patch.category) : previous.category,
+      category: patch.category !== undefined ? await validateExpenseCategory(patch.category, previous.referenceType) : previous.category,
       amount: patch.amount !== undefined ? validateAmount(patch.amount) : previous.amount,
       paymentMethod:
         patch.paymentMethod !== undefined ? optionalText(patch.paymentMethod) ?? 'Espèces' : previous.paymentMethod,

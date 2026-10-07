@@ -45,6 +45,11 @@ export type Settings = {
   quoteValidityDays: number;
   transferPrefix: string;
   inventoryPrefix: string;
+  /** Commandes de l'atelier de meubles (README §29). */
+  furniturePrefix: string;
+  /** Lots de fabrication et commandes de la briqueterie (README §30). */
+  brickPrefix: string;
+  brickOrderPrefix: string;
   defaultTaxRate: number;
   /* Référentiels — listes fermées (§6.6) */
   paymentMethods: string[];
@@ -120,6 +125,9 @@ export const DEFAULT_SETTINGS: Settings = {
   quoteValidityDays: 30,
   transferPrefix: 'TRF',
   inventoryPrefix: 'INV',
+  furniturePrefix: 'MEU',
+  brickPrefix: 'BRI',
+  brickOrderPrefix: 'BCM',
   // Q2 : taux par défaut 0 % (facturation sans TVA), champ présent et configurable.
   defaultTaxRate: 0,
   paymentMethods: ['Espèces', 'Mobile Money', 'Virement', 'Crédit'],

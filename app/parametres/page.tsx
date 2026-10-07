@@ -178,6 +178,9 @@ type FormState = {
   quoteValidityDays: string;
   transferPrefix: string;
   inventoryPrefix: string;
+  furniturePrefix: string;
+  brickPrefix: string;
+  brickOrderPrefix: string;
   defaultTaxRate: string;
   defaultStockMin: string;
   reportSendTime: string;
@@ -217,6 +220,9 @@ function toForm(settings: Settings): FormState {
     quoteValidityDays: String(settings.quoteValidityDays ?? 30),
     transferPrefix: settings.transferPrefix,
     inventoryPrefix: settings.inventoryPrefix,
+    furniturePrefix: settings.furniturePrefix,
+    brickPrefix: settings.brickPrefix,
+    brickOrderPrefix: settings.brickOrderPrefix,
     defaultTaxRate: String(settings.defaultTaxRate),
     defaultStockMin: String(settings.defaultStockMin),
     reportSendTime: settings.reportSendTime,
@@ -322,6 +328,9 @@ export default function ParametresPage() {
       quoteValidityDays: Math.max(1, Math.round(Number(form.quoteValidityDays) || 30)),
       transferPrefix: form.transferPrefix,
       inventoryPrefix: form.inventoryPrefix,
+      furniturePrefix: form.furniturePrefix,
+      brickPrefix: form.brickPrefix,
+      brickOrderPrefix: form.brickOrderPrefix,
       defaultTaxRate: Number(form.defaultTaxRate) || 0,
     });
     setIsSubmitting(false);
@@ -871,6 +880,30 @@ export default function ParametresPage() {
                 value={form.inventoryPrefix}
                 disabled={!canEditCentral}
                 onChange={(e) => set('inventoryPrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe commande d’atelier">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.furniturePrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('furniturePrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe lot de briques">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.brickPrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('brickPrefix', e.target.value.toUpperCase())}
+              />
+            </FormField>
+            <FormField label="Préfixe commande de briques">
+              <input
+                className="input input-bordered field-rounded w-full"
+                value={form.brickOrderPrefix}
+                disabled={!canEditCentral}
+                onChange={(e) => set('brickOrderPrefix', e.target.value.toUpperCase())}
               />
             </FormField>
             <FormField label="Gabarit du numéro" className="sm:col-span-2">

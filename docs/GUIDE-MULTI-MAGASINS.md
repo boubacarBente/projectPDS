@@ -92,6 +92,21 @@
 
 ### ✅ Fait
 
+- **Briqueterie rétablie par magasin** (README §30, demande du 7 octobre 2026) : types,
+  lots, équipe et commandes propres au magasin ; coût du lot calculé (équipe + dépenses
+  de production validées, catégories fermées) ; mise en stock unique ; commande facturée
+  sur le canal `brick` avec transfert des acomptes ; `/ventes/nouvelle?canal=briqueterie`.
+  Migration `0014` : archives v1 (anciennes dépenses de lots, mouvements, acomptes).
+  Recette : `npm run verify:briqueterie` (53 contrôles). **Reste** : `verify:ui` à 400 px,
+  données de démonstration de la briqueterie (les boutons de la v1 supprimaient des lignes :
+  non repris).
+- **Atelier de meubles rétabli par magasin** (README §29, demande du 7 octobre 2026) :
+  modèles et commandes propres au magasin, commande client encaissée (`furniture_order`)
+  ou fabrication pour le stock, matières sorties réellement (nomenclature = besoins),
+  chutes coûtées, annulation avec motif, bénéfice dans `lib/profit.ts`. Écrans
+  `/atelier`, `/atelier/[id]`, `/atelier/modeles`, menu « Fabrication ». Recette :
+  `npm run verify:atelier` (52 contrôles). **Reste** : passer `verify:ui` sur les trois
+  écrans (1366 et 400 px) et détailler l'atelier dans `/rapports`.
 - **Super administrateur et correctifs de sécurité** (README §17.2, §28.1, revue du
   4 octobre 2026) : un seul super administrateur (le compte de l'installation) qui
   commande les administrateurs ; un gérant ne peut plus s'accorder de droits ni
@@ -111,7 +126,8 @@
   en vue « tous les magasins ».
 
 - Retrait complet de **briqueterie** et **atelier** (pages, API, tables, permissions, rôles).
-  Les **chantiers** sont conservés.
+  Les **chantiers** sont conservés. *(L'atelier de meubles est revenu le 7 octobre 2026,
+  par magasin : voir plus haut et README §29.)*
 - Corrections de sécurité :
   - sessions en base (cookie `pd_session`, jeton haché, expiration 12 h d'inactivité, révocation) ;
   - verrouillage après 5 échecs de connexion ;

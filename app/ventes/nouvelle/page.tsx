@@ -32,7 +32,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'react-toastify';
 import { BackButton } from '@/components/back-button';
 import { DatePicker } from '@/components/date-picker';
@@ -349,9 +349,16 @@ const LINE_GRID =
 
 function NouvelleVenteForm() {
   const router = useRouter();
-  /** Canal unique depuis le retrait de la briqueterie. */
-  const channel = 'general' as const;
-  const listHref = '/ventes';
+  /*
+   * Canal de vente (README §30) : `/ventes/nouvelle?canal=briqueterie` crée une
+   * vente de la briqueterie avec **toutes** les fonctions de ce formulaire ; seuls
+   * le canal et le catalogue proposé (briques du magasin) changent. La vente
+   * n'apparaît alors que dans `/briqueterie/ventes`.
+   */
+  const searchParams = useSearchParams();
+  const isBrickChannel = searchParams.get('canal') === 'briqueterie';
+  const channel: 'general' | 'brick' = isBrickChannel ? 'brick' : 'general';
+  const listHref = isBrickChannel ? '/briqueterie/ventes' : '/ventes';
 
   const { settings } = useSettings();
   const canCreate = usePermission('sales.create');
@@ -429,7 +436,15 @@ function NouvelleVenteForm() {
         })
         .filter((product) => product.id > 0);
 
-      setProducts(catalogue);
+      // Canal briqueterie : seuls les produits liés à un type de brique du magasin.
+      let sellable = catalogue;
+      if (isBrickChannel) {
+        const typesResponse = await fetch('/api/briqueterie/types', { cache: 'no-store', credentials: 'same-origin', signal }).catch(() => null);
+        const typesPayload = typesResponse && typesResponse.ok ? ((await typesResponse.json()) as { data?: { productId?: number }[] }) : { data: [] };
+        const ids = new Set((typesPayload.data ?? []).map((type) => Number(type.productId ?? 0)).filter((id) => id > 0));
+        sellable = catalogue.filter((product) => ids.has(product.id));
+      }
+      setProducts(sellable);
 
       if (customersResponse && customersResponse.ok) {
         const customersPayload = (await customersResponse.json()) as { data?: unknown[] };
@@ -455,7 +470,7 @@ function NouvelleVenteForm() {
     } finally {
       if (!signal.aborted) setIsLoading(false);
     }
-  }, []);
+  }, [isBrickChannel]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -846,10 +861,10 @@ function NouvelleVenteForm() {
             <div className="flex items-center gap-2 text-xs text-base-content/60">
               <BackButton withMargin={false} />
               <span className="flex items-center gap-1.5">
-                <span>Commercial</span>
+                <span>{isBrickChannel ? 'Briqueterie' : 'Commercial'}</span>
                 <span aria-hidden>›</span>
                 <Link href={listHref} className="font-medium hover:underline">
-                  Ventes
+                  {isBrickChannel ? 'Ventes de briques' : 'Ventes'}
                 </Link>
               </span>
             </div>

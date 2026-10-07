@@ -23,6 +23,13 @@
  *    consolidée).
  *  - un chantier **annulé** ne compte ni sa recette, ni ses matériaux, ni sa
  *    main-d'œuvre.
+ *  - l'**atelier de meubles** (README §29) est un troisième document
+ *    facturable : une **commande client** active compte son prix convenu au
+ *    chiffre d'affaires (date de début), ses matières dans le coût des
+ *    marchandises et son équipe dans la main-d'œuvre. Une **fabrication pour
+ *    le stock** n'entre pas dans la période : le meuble est en stock, son coût
+ *    reviendra à la vente au prix d'achat de sa fiche produit (sinon il
+ *    serait compté deux fois).
  *
  * **Aucun de ces montants n'est stocké** : tout est calculé à la lecture, ce
  * qui garantit qu'un bénéfice ne peut pas « dériver ».
@@ -49,6 +56,11 @@ export type PeriodResult = {
   jobsCount: number;
   /** Coût des matériaux consommés par les chantiers (inclus dans `cogs`). */
   jobsMaterialCost: number;
+  /** Commandes clients de l'atelier de meubles (prix convenus). */
+  furnitureRevenue: number;
+  furnitureCount: number;
+  /** Matières (chutes comprises) des commandes clients de l'atelier (incluses dans `cogs`). */
+  furnitureMaterialCost: number;
   /** Coût des marchandises vendues + matériaux consommés par les chantiers. */
   cogs: number;
   /** Bénéfice brut = CA − coût des marchandises. */
@@ -164,18 +176,32 @@ export async function getProductMargins(from: string, to: string, scope: StoreSc
  * ------------------------------------------------------------------ */
 
 /**
- * Main-d'œuvre de la période : affectations des chantiers non annulés.
+ * Main-d'œuvre de la période : affectations des chantiers non annulés, des
+ * commandes clients actives de l'atelier et des lots de briques non annulés
+ * (README §30 : les ventes de briques sont des ventes ; les dépenses de
+ * production sont des dépenses, déjà comptées par date).
  */
 async function sumLaborCost(from: string, to: string, scope: StoreScope): Promise<number> {
-  const row = await rawGet<{ labor: number | null }>(
-    `SELECT COALESCE(SUM(w.amount), 0) AS labor
-       FROM service_job_workers w
-       JOIN service_jobs j ON j.id = w.job_id
-      WHERE j.status <> 'cancelled' AND ${scopeSql('j.store_id', scope)}
-        AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)`,
-    [from, to],
+  const row = await rawGet<{ labor: number | null; furniture: number | null; bricks: number | null }>(
+    `SELECT
+       (SELECT COALESCE(SUM(w.amount), 0)
+          FROM service_job_workers w
+          JOIN service_jobs j ON j.id = w.job_id
+         WHERE j.status <> 'cancelled' AND ${scopeSql('j.store_id', scope)}
+           AND date(j.start_date) >= date(?) AND date(j.start_date) <= date(?)) AS labor,
+       (SELECT COALESCE(SUM(w.amount), 0)
+          FROM furniture_order_workers w
+          JOIN furniture_orders o ON o.id = w.order_id
+         WHERE o.status = 'active' AND o.purpose = 'customer' AND ${scopeSql('o.store_id', scope)}
+           AND o.start_date >= ? AND o.start_date <= ?) AS furniture,
+       (SELECT COALESCE(SUM(w.amount), 0)
+          FROM brick_production_workers w
+          JOIN brick_productions p ON p.id = w.production_id
+         WHERE p.status <> 'cancelled' AND ${scopeSql('p.store_id', scope)}
+           AND p.start_date >= ? AND p.start_date <= ?) AS bricks`,
+    [from, to, from, to, from, to],
   );
-  return Number(row?.labor ?? 0);
+  return Number(row?.labor ?? 0) + Number(row?.furniture ?? 0) + Number(row?.bricks ?? 0);
 }
 
 /**
@@ -192,7 +218,8 @@ async function sumLaborCost(from: string, to: string, scope: StoreScope): Promis
 export async function getPeriodResult(from: string, to: string, scope: StoreScope): Promise<PeriodResult> {
   const v = scopeSql('store_id', scope);
   const jv = scopeSql('j.store_id', scope);
-  const [salesRow, jobsRow, jobsMaterialsRow, marginMetrics, expensesRow, laborCost] =
+  const ov = scopeSql('o.store_id', scope);
+  const [salesRow, jobsRow, jobsMaterialsRow, marginMetrics, expensesRow, laborCost, furnitureRow] =
     await Promise.all([
       rawGet<{ total: number | null }>(
         `SELECT COALESCE(SUM(total_ht), 0) AS total
@@ -224,6 +251,14 @@ export async function getPeriodResult(from: string, to: string, scope: StoreScop
         [from, to],
       ),
       sumLaborCost(from, to, scope),
+      rawGet<{ count: number; total: number | null; materials: number | null }>(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(o.total), 0) AS total,
+                COALESCE(SUM((SELECT SUM(m.amount) FROM furniture_order_materials m WHERE m.order_id = o.id)), 0) AS materials
+         FROM furniture_orders o
+         WHERE o.status = 'active' AND o.purpose = 'customer' AND ${ov}
+           AND o.start_date >= ? AND o.start_date <= ?`,
+        [from, to],
+      ),
     ]);
 
   const revenueHt = Number(salesRow?.total ?? 0);
@@ -231,10 +266,14 @@ export async function getPeriodResult(from: string, to: string, scope: StoreScop
   const jobsCount = Number(jobsRow?.count ?? 0);
   const jobsMaterialCost = Number(jobsMaterialsRow?.total ?? 0);
 
-  const revenue = revenueHt + jobsRevenue;
+  const furnitureRevenue = Number(furnitureRow?.total ?? 0);
+  const furnitureCount = Number(furnitureRow?.count ?? 0);
+  const furnitureMaterialCost = Number(furnitureRow?.materials ?? 0);
+
+  const revenue = revenueHt + jobsRevenue + furnitureRevenue;
   // Coût des marchandises vendues (marchandises revendues) + matériaux
-  // consommés par les chantiers : les deux sont des coûts directs.
-  const cogs = marginMetrics.cogs + jobsMaterialCost;
+  // consommés par les chantiers et l'atelier : tous sont des coûts directs.
+  const cogs = marginMetrics.cogs + jobsMaterialCost + furnitureMaterialCost;
   const grossProfit = revenue - cogs;
   const expenses = Number(expensesRow?.total ?? 0);
 
@@ -244,6 +283,9 @@ export async function getPeriodResult(from: string, to: string, scope: StoreScop
     jobsRevenue,
     jobsCount,
     jobsMaterialCost,
+    furnitureRevenue,
+    furnitureCount,
+    furnitureMaterialCost,
     cogs,
     grossProfit,
     grossMarginPercent:

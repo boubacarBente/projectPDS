@@ -153,7 +153,7 @@ export function normalizeInvoiceRow(raw: unknown): SalesInvoiceRow {
     paymentStatus: String(row.paymentStatus ?? row.payment_status ?? 'unpaid'),
     paymentMethod: String(row.paymentMethod ?? row.payment_method ?? 'Espèces'),
     status: toInvoiceStatus(row.status),
-    channel: 'general',
+    channel: row.channel === 'brick' ? 'brick' : 'general',
     cancelReason: (row.cancelReason ?? row.cancel_reason ?? null) as string | null,
     notes: (row.notes ?? null) as string | null,
     itemCount: num(row.itemCount ?? row.item_count),

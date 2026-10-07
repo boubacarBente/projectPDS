@@ -1773,6 +1773,12 @@ convenu qui compte. Coûts et marges ne sont renvoyés qu'à qui détient
 
 ## 20. Gestion de la briqueterie
 
+> **v1 — retirée en v2 puis rétablie par magasin le 7 octobre 2026 : la
+> spécification en vigueur est le [§30](#30-briqueterie-par-magasin-v2).** Les
+> sections ci-dessous décrivent la v1 (coûts recopiés sur le lot, dépenses sans
+> approbation, boutons de démonstration qui suppriment des lignes) et ne sont
+> conservées que pour l'historique.
+
 **Révision majeure (v1.4)** : le client a demandé la suppression de tout **module
 de matières premières**. Le ciment, le sable, le carburant ou la main-d'œuvre ne
 sont plus des produits du stock : ce sont des **dépenses rattachées à une
@@ -1898,6 +1904,11 @@ celles que l'application aurait produites, invariants compris.
 ---
 
 ## 21. Gestion de l'atelier de meubles
+
+> **v1 — retirée en v2 puis rétablie par magasin le 7 octobre 2026 : la
+> spécification en vigueur est le [§29](#29-atelier-de-meubles-par-magasin-v2).**
+> Le tableau ci-dessous décrit la v1 (sans magasin, acompte saisi à la main,
+> matières préremplies sans sortie de stock) et n'est conservé que pour l'historique.
 
 | Exigence (§18) | Mise en œuvre |
 |---|---|
@@ -2498,6 +2509,8 @@ Tests : `cd server && npm test`.
 | **Changer de magasin actif** : permission `stores.switch` (administrateur d'office, sinon accordée par compte), magasin principal imposé sans elle, case « Peut changer de magasin » à la création et dans « Magasins » | ✅ | §28.6 |
 | **Refonte des comptes** : rôles par domaine (Aucun accès / Consulter / Saisir / Gérer), rôle Comptable, administrateur jamais désactivable, `/utilisateurs` refait (assistant de création en 4 étapes, page `/utilisateurs/[id]` à onglets), période d'affectation repliée (« Remplacement temporaire »). Catégories : seulement celles du magasin, création par un magasin. Essais API : 19 contrôles ; écrans vérifiés à 1366 et 400 px | ✅ | §17.2, §28.5 |
 | **Super administrateur et correctifs de sécurité** (revue du 4 octobre 2026) : un seul super administrateur (compte de l'installation, migration `0010`) qui commande les administrateurs ; gérant borné à ses magasins et à ses propres droits (§17.2) ; portée des lignes d'un poste de magasin recalculée par le serveur de synchronisation (§28.1). `npm run verify:comptes` (36 contrôles), `cd server && npm test` (8 tests) | ✅ | `lib/user-scope.ts`, `lib/users.ts`, `server/index.mjs`, `server/sync-scopes.mjs` |
+| **Atelier de meubles par magasin** (demande du 7 octobre 2026) : module v1 rétabli aux règles v2 — modèles et commandes par magasin, commande client encaissée (reçus, caisse) ou fabrication pour le stock, matières sorties réellement (nomenclature tout ou rien), chutes coûtées, annulation avec motif, bénéfice intégré. Migration `0012`. `npm run verify:atelier` : 52 contrôles | ✅ (écrans à vérifier à 1366 / 400 px avec `verify:ui`) | §29 |
+| **Briqueterie par magasin** (demande du 7 octobre 2026) : module v1.4 rétabli aux règles v2 — types, lots et commandes par magasin, coût du lot calculé (équipe + dépenses validées), dépenses de production dans le circuit des dépenses, mise en stock unique, commandes facturées sur le canal briqueterie avec transfert des acomptes, ventes de briques à part. Migrations `0013` et `0014` (archives v1). `npm run verify:briqueterie` : 53 contrôles | ✅ (écrans à vérifier à 1366 / 400 px avec `verify:ui`) | §30 |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette
@@ -2586,6 +2599,166 @@ autre utilisateur doit en avoir la permission, et on choisit quels magasins il v
 ⚠️ **Changement pour les comptes existants** : un gérant ou un magasinier affecté à
 plusieurs magasins ne change plus de magasin tant qu'on ne lui a pas accordé le droit.
 Essais API : 16 contrôles (sans droit, avec droit, retrait, administrateur, création).
+
+---
+
+## 29. Atelier de meubles par magasin (v2)
+
+Demande client (7 octobre 2026) : *rétablir l'atelier de meubles retiré en v2*. Le
+module de la v1 (§21 : modèles avec nomenclature, commandes standard ou sur mesure,
+étapes découpe → livraison, matières et chutes, équipe, délai promis) est repris
+**aux règles de la v2**. Code : `lib/furniture.ts` (serveur), `lib/furniture-shared.ts`
+(constantes sans base, importables par l'interface), `components/atelier/atelier-modals.tsx`.
+
+### 29.1 Règles
+
+| Règle | Détail | Où |
+|---|---|---|
+| **Tout appartient à un magasin** | Modèles (`furniture_models.store_id`, code `MOD-0001` unique **dans** le magasin), commandes, matières, équipe. Écriture dans le magasin actif seulement ; lecture élargie par `?store=` ; un document d'un autre magasin se lit (`assertStoreVisible`) mais ne se modifie pas. Client et ouvriers : ceux du magasin (`assertCustomerInStore`). | `assertModelInStore`, `assertOrderEditable` |
+| **Deux natures de commande** | `customer` : commande d'un client (ou client de passage), facturée au **prix convenu** (`total`), encaissée par `payments` de type `furniture_order` (reçu, caisse). `stock` : fabrication pour le stock, **jamais facturée**, produit fini obligatoire. | `furniture_orders.purpose` |
+| **Étapes** | Découpe → assemblage → ponçage → peinture / vernis → finition → livré (« mis en stock » pour une fabrication). Uniquement l'étape **suivante** : ni saut ni retour. La dernière pose la date de livraison. | `advanceFurnitureStage` |
+| **Meuble fini en stock** | Seulement pour une fabrication pour le stock : **une** entrée de `quantité` unités à la dernière étape (le journal de stock fait foi contre un double crédit). ⚠️ En v1, le meuble d'une commande **client** entrait en stock à sa livraison au client. | idem |
+| **Matières = sorties réelles** | La nomenclature donne des **besoins** (× quantité, sur le stock du magasin, déjà sorti déduit). « Sortir les matières prévues » consomme le reste, **tout ou rien**. Une matière ne devient une ligne que lorsqu'elle sort (`addStockMovement`, jamais de stock négatif). ⚠️ En v1, les lignes préremplies sans sortie comptaient dans le coût et étaient « rendues » au stock à l'annulation. | `consumePlannedMaterials` |
+| **Chutes** | Sortie de stock distincte (motif « chutes de bois ») **et** comptée dans le coût : `montant = (quantité + chutes) × coût unitaire`. ⚠️ La v1 ne valorisait pas les chutes. | `consumeMaterialInTx` |
+| **Aucun total stocké hors paiements** | Coût matières, main-d'œuvre (jours × tarif), coût de revient, marge : calculés à la lecture. `amount_paid` / `remaining_amount` recalculés depuis `payments`. Le prix convenu ne descend jamais sous l'encaissé (409). ⚠️ La v1 avait un « acompte reçu » saisi à la main, sans reçu ni caisse. | `recomputeDocumentPayments` |
+| **Corrections** | Retirer une matière la rend au stock **avec ses chutes** ; retirer un ouvrier. Plus de matière ni d'équipe une fois livrée. | `removeOrderMaterial` |
+| **Annulation** | Motif obligatoire, auteur et date (`cancel_reason`, `cancelled_by`, `cancelled_at`) ; matières et chutes rendues au stock ; les acomptes restent en caisse (remboursement à part). Une commande livrée / mise en stock ne s'annule pas. | `cancelFurnitureOrder` |
+| **Retard** | Calculé : livrée après la date promise, ou date promise dépassée sans livraison. | `mapOrderRow` |
+| **Coûts protégés** (invariant 13) | Coûts et marge `null` sans `balances.view` (`hideOrderCosts`, `hideDetailCosts`). | routes `/api/atelier/commandes*` |
+
+### 29.2 Rentabilité (`lib/profit.ts`)
+
+Une **commande client active** compte son prix convenu dans le chiffre d'affaires
+(date de début), ses matières (chutes comprises) dans le coût des marchandises et son
+équipe dans la main-d'œuvre — tableau de bord, `/soldes` (carte « CA atelier de
+meubles », tendance sur douze mois). Une **fabrication pour le stock** n'entre pas dans
+la période : le meuble est en stock, son coût reviendra à sa vente au prix d'achat de
+sa fiche produit (la fiche de la commande affiche le coût de revient d'une unité à y
+reporter). `/rapports` ne détaille pas encore l'atelier.
+
+### 29.3 Droits (domaine « Atelier de meubles »)
+
+| Niveau | Actions | Rôles par défaut |
+|---|---|---|
+| Consulter | `furniture.view` | vendeur, comptable |
+| Saisir | `furniture.create`, `furniture.update` (commandes, étapes, matières, équipe) | magasinier |
+| Gérer | `furniture.models` (modèles et nomenclatures), `furniture.delete` (annulation) | gérant, administrateur |
+
+Encaisser demande en plus `payments.create`.
+
+### 29.4 Données, pages, API
+
+- Migration **`0012_atelier_meubles`** (additive) : `furniture_models`,
+  `furniture_model_materials`, `furniture_orders`, `furniture_order_materials`,
+  `furniture_order_workers`, toutes synchronisées (portée magasin, enfants par leur
+  parent ; `server/sync-scopes.mjs` régénéré). `payments.type` et
+  `cash_movements` acceptent `furniture_order`. Préfixe des commandes **`MEU`**
+  (Paramètres → Numérotation), numéro propre au magasin (`MEU-KAL-2026-000001`).
+- Pages : `/atelier` (liste, portée magasin, synthèse avec infobulles), `/atelier/[id]`
+  (suivi des étapes, matières prévues, matières sorties, équipe, encaissements, délai),
+  `/atelier/modeles` (modèles et nomenclature ; consultation seule hors du magasin).
+  Menu « Fabrication ». `/recus` filtre « Atelier de meubles ».
+- API : `GET/POST /api/atelier/commandes` (`?stats=1`, `stage`, `purpose`, `late`,
+  `from`, `to`, `includeCancelled`, `sort=promised`, `store`) ·
+  `GET/PUT/DELETE /api/atelier/commandes/[id]` (`PUT` : `action` = `update` | `advance`
+  | `addMaterial` | `consumePlanned` | `removeMaterial` | `addWorker` |
+  `removeWorker` ; `DELETE` = annulation avec `reason`) · `GET/POST /api/atelier/modeles`
+  · `GET/PUT/DELETE /api/atelier/modeles/[id]` (`?quantity=` : besoins ; `PUT
+  {materials}` : nomenclature ; `DELETE` = désactivation, `?reactivate=true`) ·
+  `POST /api/paiements` avec `type: 'furniture_order'`.
+
+### 29.5 Recette
+
+`APP_URL=http://127.0.0.1:3100 npm run verify:atelier` (base de recette après
+`demo:seed`) : **52 contrôles** — cloisonnement des modèles et commandes entre Kaloum
+et Matoto (lecture, modification, `?store=` forgé, client d'un autre magasin),
+création sans sortie de stock, besoins calculés, sortie des matières prévues une seule
+fois, chutes sorties et coûtées, stock insuffisant sans écriture partielle,
+encaissements (reçu, reste, au-delà du reste, autre magasin, fabrication pour le
+stock), prix convenu ≥ encaissé, étapes sans saut, livrée non annulable, mise en stock
+unique, annulation avec motif rendant matières et chutes, vendeur sans coûts ni
+écriture, chiffre d'affaires de `/soldes`, vue consolidée de l'administrateur.
+
+---
+
+## 30. Briqueterie par magasin (v2)
+
+Demande client (7 octobre 2026) : *rétablir la briqueterie retirée en v2*. Le module de la
+v1.4 (§20 : pas de module de matières premières — ciment, sable, carburant… sont des
+**dépenses rattachées au lot**) est repris aux règles de la v2. Code : `lib/brick.ts`
+(types, lots, équipe, dépenses), `lib/brick-orders.ts` (commandes), `lib/brick-analytics.ts`
+(tableau de bord, stock, rapports) ; écrans `app/briqueterie/*` (barre d'onglets
+`components/briqueterie/brick-tabs.tsx`, qui porte aussi la portée de magasins du module).
+
+### 30.1 Règles
+
+| Règle | Détail | Où |
+|---|---|---|
+| **Tout appartient à un magasin** | Types de briques, lots, équipe, commandes. Écriture dans le magasin actif ; lecture élargie par `?store=` (un seul sélecteur pour tout le module) ; un document d'un autre magasin se lit mais ne se modifie pas. Clients et ouvriers du magasin. | `assertBrickTypeInStore`, `assertProductionEditable`, `assertOrderInStore` |
+| **Type ↔ produit** | Le **produit lié** porte prix de vente et stock (stock du magasin, `product_stocks`). Un produit ne porte qu'un type actif par magasin ; son produit ne change plus une fois des lots faits. | `validateLinkedProduct` |
+| **Coût jamais stocké** | Coût d'un lot = équipe (`jours × tarif`) + dépenses rattachées **approuvées ou à décaisser** ; coût unitaire = coût ÷ (produites − cassées). ⚠️ La v1 recopiait ces sommes sur le lot : une dépense approuvée plus tard dans `/depenses` ne mettait pas le lot à jour. | `TOTAL_COST_SQL` |
+| **Dépenses de production** | Des dépenses ordinaires (`expenses.reference_type = 'brick_production'`) qui suivent **le circuit des dépenses** (seuil d'approbation, décaissement, annulation motivée) — en v1 elles sortaient de la caisse sans approbation. Catégories **fermées** de production (ciment, sable, argile, bois de chauffe, carburant, main-d'œuvre, électricité, eau, transport, entretien, autre), distinctes de celles des Paramètres. | `PRODUCTION_EXPENSE_CATEGORIES` (`lib/expenses.ts`) |
+| **Étapes et stock** | Moulage → séchage → cuisson → en stock, jamais en arrière. « En stock » crédite **une seule fois** les briques produites puis sort les cassées connues (stock net = bonnes), et termine le lot ; quantités figées ensuite. Pertes après coup : sortie motivée. | `advanceStage`, `registerBroken` |
+| **Annulation d'un lot** | Motif, auteur, date ; le solde net que le lot a mis en stock ressort (refusé si les briques sont déjà vendues : jamais de stock négatif). Les dépenses rattachées restent des dépenses réelles (à annuler une à une si elles n'ont pas eu lieu). | `cancelBrickProduction` |
+| **Commandes** | Brouillon → confirmée → en production → prête → (partiellement) livrée, transitions contrôlées. La commande ne touche ni stock ni chiffre d'affaires. Acompte (`payments.type = 'brick_order'`) seulement une fois confirmée. **Facturer** crée une vente du canal briqueterie (sort le stock, refusée s'il manque des briques) et **transfère** les acomptes sur la facture (mêmes reçus, même caisse). Commande facturée : plus d'encaissement sur elle ; annulable seulement si sa facture est annulée. | `invoiceBrickOrder` |
+| **Ventes de briques** | `sales_invoices.channel = 'brick'` : listées dans `/briqueterie/ventes`, jamais dans `/ventes` (et réciproquement). `/ventes/nouvelle?canal=briqueterie` = le formulaire de vente complet, catalogue restreint aux briques du magasin ; le serveur refuse tout autre produit sur ce canal. | `lib/sales.ts` (`assertBrickProducts`) |
+| **Coûts protégés** (invariant 13) | Coûts, coût unitaire et rentabilité `null` sans `balances.view` ; le rapport exige `reports.viewAll` + `balances.view`. | routes `/api/briqueterie/*` |
+| **Retiré** | Les boutons « Pré-remplir / Réinitialiser la briqueterie » de la v1 supprimaient physiquement des lignes (invariant 1) : non repris. | — |
+
+### 30.2 Rentabilité
+
+Les ventes de briques sont des ventes (chiffre d'affaires de `lib/profit.ts`), les dépenses
+de production des dépenses (charges de leur date), l'équipe des lots entre dans la
+main-d'œuvre de la période. Le tableau de bord et les rapports **de la briqueterie** calculent
+en plus la marge sur le **coût de production réel** des lots. ⚠️ Limite connue (déjà en v1,
+§20.3 point 6) : le coût des marchandises vendues de `/soldes` lit le prix d'achat de la
+fiche produit ; laissez-le à 0 pour une brique fabriquée, sinon son coût serait compté deux
+fois (dépenses + coût d'achat).
+
+### 30.3 Droits (domaine « Briqueterie »)
+
+| Niveau | Actions | Rôles par défaut |
+|---|---|---|
+| Consulter | `brick.view` | vendeur, comptable |
+| Saisir | `brick.create`, `brick.update` (lots, étapes, pertes, équipe, commandes, livraisons) | magasinier |
+| Gérer | `brick.types` (types de briques), `brick.delete` (annulations) | gérant, administrateur |
+
+Dépense de lot : en plus `expenses.create` / `update` / `delete`. Acompte : `payments.create`.
+Facturer : `sales.create`.
+
+### 30.4 Données, migration, API
+
+- Migration **`0013_briqueterie`** (additive) : `brick_types`, `brick_productions`,
+  `brick_production_workers`, `brick_orders` (`sales_invoice_id` = clé étrangère déclarée,
+  invariant 20), `brick_order_items` ; synchronisées (`server/sync-scopes.mjs` régénéré).
+  Préfixes **`BRI`** (lot) et **`BCM`** (commande), numéros propres au magasin.
+- Migration **`0014_archives_v1_atelier_briqueterie`** : les lignes de la v1 qui visaient
+  les anciennes tables (dépenses rattachées aux lots, mouvements de stock, acomptes) passent
+  en `brick_production_v1`, `furniture_order_v1`, `brick_order_v1`. Sans elle, le nouveau
+  lot n° 1 aurait hérité des 232 dépenses de l'ancien lot n° 1 (constaté sur la base du
+  client). Elles restent lisibles (« archive v1 ») dans les journaux.
+- API : `GET/POST /api/briqueterie/types` · `GET/PUT/DELETE /api/briqueterie/types/[id]`
+  (`DELETE` = désactivation, `?reactivate=true`) · `GET/POST /api/briqueterie/productions`
+  (`?stats=1`) · `GET/PUT/DELETE /api/briqueterie/productions/[id]` (`PUT` : `action` =
+  `advance_stage` | `register_broken` | `add_expense` | `update_expense` | `remove_expense` |
+  `add_worker` | `remove_worker`, sinon modification) · `GET/POST /api/briqueterie/commandes`
+  · `GET/PUT/DELETE /api/briqueterie/commandes/[id]` (`PUT` : `set_status` | `deliver` |
+  `invoice`, sinon modification) · `POST /api/briqueterie/commandes/[id]/paiements` ·
+  `GET /api/briqueterie/stock` · `GET /api/briqueterie/tableau-de-bord` ·
+  `GET /api/briqueterie/rapports` · `GET /api/briqueterie/historique`. `GET /api/ventes` et
+  `/api/ventes/stats` acceptent `channel=brick|all` (défaut `general`).
+- Écrans : `/briqueterie` (tableau de bord), `/productions`, `/[id]` (fiche du lot),
+  `/stock`, `/commandes`, `/commandes/[id]`, `/ventes`, `/rapports` ; menu « Fabrication » → « Briqueterie ».
+
+### 30.5 Recette
+
+`APP_URL=http://127.0.0.1:3100 npm run verify:briqueterie` (base de recette après
+`demo:seed`) : **53 contrôles** — cloisonnement (types, lots, commandes, clients, `?store=`),
+coût calculé et coût unitaire, vendeur sans coûts ni écriture, étapes sans retour, mise en
+stock unique nette des cassées, quantités figées, pertes, catégories de production, commande
+(brouillon non encaissable, transitions, acompte, facturation, stock sorti, acompte
+transféré, double facturation refusée), canal des ventes (absent de `/ventes`, produit
+étranger refusé), annulation d'un lot (stock repris), tableau de bord, rapport.
 
 ---
 

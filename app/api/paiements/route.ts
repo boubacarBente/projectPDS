@@ -9,6 +9,7 @@ import {
   requireAction,
   requireActiveStore,
   scopeFromRequest,
+  ValidationError,
 } from '@/lib/api';
 import { createPayment, listPayments, type PaymentType } from '@/lib/payments';
 import { writeAudit } from '@/lib/audit';
@@ -52,8 +53,8 @@ export async function POST(request: NextRequest) {
     const body = await readJson<any>(request);
 
     const type = required(body.type, 'Type de paiement') as PaymentType;
-    if (!['sale', 'purchase', 'service_job'].includes(type)) {
-      return fail(new Error('Type de paiement invalide : attendu sale, purchase ou service_job'));
+    if (!['sale', 'purchase', 'service_job', 'furniture_order'].includes(type)) {
+      return fail(new ValidationError('Type de paiement invalide : attendu sale, purchase, service_job ou furniture_order'));
     }
 
     const storeId = await requireActiveStore(user);

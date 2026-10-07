@@ -38,6 +38,9 @@ export type IconKey =
   | 'workers'
   | 'subcontractors'
   | 'planning'
+  | 'workshop'
+  | 'bricks'
+  | 'furnitureModels'
   | 'stores'
   | 'transfers'
   | 'inventory'
@@ -91,6 +94,16 @@ export const NAVIGATION: NavGroup[] = [
       { href: '/prestations', label: 'Prestations', iconKey: 'services', action: 'jobs.view' },
       { href: '/ouvriers', label: 'Ouvriers et équipes', iconKey: 'workers', action: 'jobs.view' },
       { href: '/sous-traitants', label: 'Sous-traitants', iconKey: 'subcontractors', action: 'jobs.view' },
+    ],
+  },
+  {
+    // Fabrication : atelier de meubles (README §29) et briqueterie (README §30), rétablis par magasin le 7 octobre 2026.
+    title: 'Fabrication',
+    items: [
+      { href: '/atelier', label: 'Commandes d’atelier', iconKey: 'workshop', action: 'furniture.view' },
+      { href: '/atelier/modeles', label: 'Modèles de meubles', iconKey: 'furnitureModels', action: 'furniture.view' },
+      // Briqueterie (README §30) : une entrée, ses écrans sont des onglets.
+      { href: '/briqueterie', label: 'Briqueterie', iconKey: 'bricks', action: 'brick.view' },
     ],
   },
   {

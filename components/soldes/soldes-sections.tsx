@@ -281,6 +281,15 @@ export function ProfitResultSection({
         </span>
       </div>
 
+      {summary.furnitureRevenue > 0 && (
+        <p className="border-t border-base-200 pt-3 text-xs leading-5 text-base-content/60">
+          Dont <strong>{formatNumber(summary.furnitureCount)}</strong> commande(s) client(s) de l&apos;atelier
+          de meubles pour <MoneyText value={summary.furnitureRevenue} currency={currency} />. Leurs matières
+          (chutes comprises) sont dans le coût des marchandises, leur équipe dans la main-d&apos;œuvre. Une
+          fabrication pour le stock n&apos;y figure pas : son coût reviendra à la vente du meuble.
+        </p>
+      )}
+
       {summary.jobsRevenue > 0 && (
         <p className="border-t border-base-200 pt-3 text-xs leading-5 text-base-content/60">
           Dont <strong>{formatNumber(summary.jobsCount)}</strong> prestation(s) de chantier pour{' '}

@@ -23,7 +23,7 @@ import { getSettings } from '@/lib/settings';
 
 export type StockMovementType = 'entry' | 'exit' | 'adjustment';
 
-export type StockReferenceType = 'sale' | 'purchase' | 'service_job' | 'inventory' | 'transfer';
+export type StockReferenceType = 'sale' | 'purchase' | 'service_job' | 'furniture_order' | 'brick_production' | 'inventory' | 'transfer';
 
 export type AddStockMovementOptions = {
   /** Magasin concerné — obligatoire. */
@@ -619,6 +619,9 @@ export const STOCK_REFERENCE_LABELS: Record<string, string> = {
   service_job: 'Chantier',
   inventory: 'Inventaire',
   transfer: 'Transfert',
-  brick_production: 'Fabrication de briques (archive)',
-  furniture_order: 'Commande de meuble (archive)',
+  brick_production: 'Fabrication de briques',
+  furniture_order: 'Atelier de meubles',
+  // Lignes de la v1 (migration 0014) : leurs documents n'existent plus.
+  brick_production_v1: 'Fabrication de briques (archive v1)',
+  furniture_order_v1: 'Atelier de meubles (archive v1)',
 };
