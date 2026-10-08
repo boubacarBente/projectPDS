@@ -1,15 +1,14 @@
 {
   "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true,
+    "superpowers@projetpds": true,
+    "frontend-design@projetpds": true,
+    "playwright@projetpds": true,
+    "context7@projetpds": true,
+    "typescript-lsp@projetpds": true,
+    "chrome-devtools-mcp@projetpds": true,
     "claude-mem@thedotmack": true
   },
   "extraKnownMarketplaces": {
-    "superpowers-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "obra/superpowers-marketplace"
-      }
-    },
     "thedotmack": {
       "source": {
         "source": "github",
@@ -19,6 +18,36 @@
           "plugin"
         ]
       }
+    },
+    "projetpds": {
+      "source": {
+        "source": "directory",
+        "path": "D:\\projetPDS\\.claude\\plugins"
+      }
     }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard search",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard read",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

@@ -1,0 +1,68 @@
+{
+  "name": "projetpds",
+  "owner": {
+    "name": "Boubacar Bente Diallo"
+  },
+  "metadata": {
+    "description": "Plugins Claude Code embarqués dans le dépôt projetPDS (sources copiées, versionnées avec le projet)"
+  },
+  "plugins": [
+    {
+      "name": "superpowers",
+      "source": "./superpowers",
+      "description": "obra/superpowers 6.4.2 — skills TDD, débogage, plans, revues (MIT)",
+      "version": "6.4.2"
+    },
+    {
+      "name": "frontend-design",
+      "source": "./frontend-design",
+      "description": "anthropics/claude-plugins-official — conception d'interfaces",
+      "version": "1.0.0"
+    },
+    {
+      "name": "playwright",
+      "source": "./playwright",
+      "description": "anthropics/claude-plugins-official — serveur MCP Playwright de Microsoft (automatisation de navigateur)",
+      "version": "1.0.0"
+    },
+    {
+      "name": "context7",
+      "source": "./context7",
+      "description": "anthropics/claude-plugins-official — serveur MCP Context7 d'Upstash (documentation à jour des bibliothèques)",
+      "version": "1.0.0"
+    },
+    {
+      "name": "typescript-lsp",
+      "source": "./typescript-lsp",
+      "description": "anthropics/claude-plugins-official — serveur de langage TypeScript (natif TS 7 du projet)",
+      "version": "1.0.0",
+      "strict": false,
+      "lspServers": {
+        "typescript": {
+          "command": "node",
+          "args": [
+            "node_modules/typescript/bin/tsc",
+            "--lsp",
+            "-stdio"
+          ],
+          "extensionToLanguage": {
+            ".ts": "typescript",
+            ".tsx": "typescriptreact",
+            ".js": "javascript",
+            ".jsx": "javascriptreact",
+            ".mts": "typescript",
+            ".cts": "typescript",
+            ".mjs": "javascript",
+            ".cjs": "javascript"
+          }
+        }
+      }
+    },
+    {
+      "name": "chrome-devtools-mcp",
+      "source": "./chrome-devtools-mcp",
+      "description": "ChromeDevTools/chrome-devtools-mcp 1.9.0 (commit 1cec9cd) — piloter et inspecter Chrome : console, réseau, performances",
+      "version": "1.9.0"
+    }
+  ]
+}

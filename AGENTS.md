@@ -36,6 +36,7 @@ npm run verify:atelier    # atelier de meubles : cloisonnement, matières et chu
 npm run verify:briqueterie # briqueterie : cloisonnement, coût des lots, mise en stock, commandes facturées
 npm run verify:comptes    # super administrateur, périmètre des gérants (failles de la revue du 4/10/2026)
 npm run sync:scopes       # régénère server/sync-scopes.mjs après tout ajout de table synchronisée
+npm run db:dbml           # régénère docs/schema.dbml (diagramme dbdiagram.io) après toute migration
 (cd server && npm test)   # serveur de synchronisation : portée recalculée
 npm run verify:export  # export PDF/image dans un vrai navigateur (CDP)
 npm run verify:export-image # exporte de vrais documents en PNG (OUT=<dossier>) pour les regarder

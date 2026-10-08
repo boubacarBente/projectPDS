@@ -102,3 +102,6 @@ achats.json
 ventes.json
 *.verif.ps1
 
+
+# Python et environnement de graphify, installés localement (≈100 Mo) : non versionnés
+.claude/tools/

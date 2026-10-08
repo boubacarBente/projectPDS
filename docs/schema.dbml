@@ -1,0 +1,1533 @@
+// Fichier généré par `npm run db:dbml` depuis db/schema.ts — ne pas modifier.
+// À coller dans https://dbdiagram.io pour obtenir le diagramme.
+// 57 tables, 124 liens ; colonnes de synchronisation masquées (--complet pour les voir).
+
+Project planete_deco {
+  database_type: 'SQLite'
+  Note: 'Gestion commerciale Planète Déco Sarlu — base locale de chaque poste (Drizzle ORM)'
+}
+
+Enum brick_orders_status {
+  "draft"
+  "confirmed"
+  "in_production"
+  "ready"
+  "partially_delivered"
+  "delivered"
+  "cancelled"
+}
+
+Enum brick_productions_stage {
+  "molding"
+  "drying"
+  "firing"
+  "stored"
+}
+
+Enum brick_productions_status {
+  "registered"
+  "finished"
+  "cancelled"
+}
+
+Enum brick_types_shape {
+  "solid"
+  "hollow"
+  "block"
+}
+
+Enum cash_movements_type {
+  "income"
+  "expense"
+}
+
+Enum cash_sessions_status {
+  "open"
+  "closed"
+}
+
+Enum expenses_approval_status {
+  "approved"
+  "pending"
+  "to_pay"
+  "rejected"
+}
+
+Enum furniture_orders_purpose {
+  "customer"
+  "stock"
+}
+
+Enum furniture_orders_stage {
+  "cutting"
+  "assembly"
+  "sanding"
+  "painting"
+  "finishing"
+  "delivered"
+}
+
+Enum furniture_orders_status {
+  "active"
+  "cancelled"
+}
+
+Enum inventories_status {
+  "open"
+  "validated"
+  "cancelled"
+}
+
+Enum job_stages_status {
+  "todo"
+  "in_progress"
+  "done"
+  "blocked"
+}
+
+Enum job_subcontracts_status {
+  "active"
+  "cancelled"
+}
+
+Enum payments_type {
+  "sale"
+  "purchase"
+  "service_job"
+  "furniture_order"
+  "brick_order"
+}
+
+Enum payments_payment_label {
+  "deposit"
+  "balance"
+  "full"
+}
+
+Enum purchase_invoices_status {
+  "active"
+  "cancelled"
+}
+
+Enum quotes_status {
+  "draft"
+  "sent"
+  "accepted"
+  "refused"
+  "cancelled"
+}
+
+Enum report_deliveries_period {
+  "day"
+  "week"
+  "month"
+}
+
+Enum report_deliveries_channel {
+  "sms"
+  "whatsapp"
+}
+
+Enum report_deliveries_status {
+  "sent"
+  "failed"
+}
+
+Enum report_deliveries_triggered_by {
+  "auto"
+  "manual"
+}
+
+Enum sales_invoices_status {
+  "draft"
+  "active"
+  "cancelled"
+}
+
+Enum sales_invoices_channel {
+  "general"
+  "brick"
+}
+
+Enum service_jobs_status {
+  "quote"
+  "pending"
+  "planned"
+  "in_progress"
+  "suspended"
+  "completed"
+  "cancelled"
+}
+
+Enum service_jobs_quote_status {
+  "draft"
+  "sent"
+  "accepted"
+  "refused"
+}
+
+Enum service_requests_status {
+  "new"
+  "study"
+  "visit"
+  "quote_to_prepare"
+  "quote_sent"
+  "accepted"
+  "refused"
+  "converted"
+}
+
+Enum services_status {
+  "active"
+  "inactive"
+  "archived"
+}
+
+Enum stock_movements_type {
+  "entry"
+  "exit"
+  "adjustment"
+}
+
+Enum stock_transfers_status {
+  "draft"
+  "pending"
+  "approved"
+  "preparing"
+  "in_transit"
+  "partially_received"
+  "received"
+  "disputed"
+  "refused"
+  "cancelled"
+}
+
+Enum stores_kind {
+  "store"
+  "headquarters"
+}
+
+Enum stores_status {
+  "active"
+  "suspended"
+  "archived"
+}
+
+Enum sync_conflicts_resolution {
+  "pending"
+  "local"
+  "remote"
+}
+
+Enum user_permissions_effect {
+  "allow"
+  "deny"
+}
+
+Enum workers_role {
+  "foreman"
+  "worker"
+  "apprentice"
+}
+
+Table audit_logs {
+  id integer [pk, increment]
+  user_id integer
+  user_name text [not null]
+  store_id integer
+  action text [not null]
+  entity text [not null]
+  entity_id integer
+  details text
+  created_at integer [not null]
+
+  Indexes {
+    (created_at) [name: 'audit_logs_created_idx']
+    (store_id) [name: 'audit_logs_store_idx']
+    (entity, entity_id) [name: 'audit_logs_entity_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table brick_order_items {
+  id integer [pk, increment]
+  order_id integer [not null]
+  brick_type_id integer
+  product_id integer
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity real [not null]
+  unit_price real [not null, default: 0]
+  discount real [not null, default: 0]
+  amount real [not null, default: 0]
+  delivered_quantity real [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (order_id) [name: 'brick_order_items_order_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table brick_orders {
+  id integer [pk, increment]
+  store_id integer [not null]
+  order_number text [not null, unique]
+  customer_id integer
+  customer_name text [not null]
+  user_id integer
+  date text [not null]
+  due_date text
+  delivery_date text
+  promised_date text
+  sub_total real [not null, default: 0]
+  discount real [not null, default: 0]
+  total real [not null, default: 0]
+  amount_paid real [not null, default: 0]
+  remaining_amount real [not null, default: 0]
+  payment_status text [not null, default: 'unpaid']
+  status brick_orders_status [not null, default: 'draft']
+  sales_invoice_id integer
+  cancel_reason text
+  cancelled_by integer
+  cancelled_at integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'brick_orders_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table brick_production_workers {
+  id integer [pk, increment]
+  production_id integer [not null]
+  worker_id integer
+  worker_name text [not null]
+  role text
+  days real [not null, default: 0]
+  daily_rate real [not null, default: 0]
+  amount real [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (production_id) [name: 'brick_production_workers_production_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table brick_productions {
+  id integer [pk, increment]
+  store_id integer [not null]
+  batch_number text [not null, unique]
+  brick_type_id integer [not null]
+  planned_quantity real [not null, default: 0]
+  produced_quantity real [not null, default: 0]
+  broken_quantity real [not null, default: 0]
+  start_date text
+  end_date text
+  stage brick_productions_stage [not null, default: 'molding']
+  status brick_productions_status [not null, default: 'registered']
+  team text
+  cancel_reason text
+  cancelled_at integer
+  cancelled_by integer
+  user_id integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'brick_productions_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table brick_types {
+  id integer [pk, increment]
+  store_id integer [not null]
+  product_id integer [not null]
+  name text [not null]
+  shape brick_types_shape [not null, default: 'solid']
+  dimensions text
+  description text
+  is_active integer [not null, default: true]
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'brick_types_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table cash_movements {
+  id integer [pk, increment]
+  store_id integer
+  type cash_movements_type [not null]
+  amount real [not null]
+  payment_method text [not null, default: 'Espèces']
+  motif text [not null]
+  reference_type text
+  reference_id integer
+  session_id integer
+  balance_after real [not null, default: 0]
+  date text [not null]
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, date) [name: 'cash_movements_store_date_idx']
+    (session_id) [name: 'cash_movements_session_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table cash_sessions {
+  id integer [pk, increment]
+  store_id integer
+  status cash_sessions_status [not null, default: 'open']
+  opened_at integer [not null]
+  opened_by integer
+  opening_amount real [not null, default: 0]
+  closed_at integer
+  closed_by integer
+  theoretical_amount real
+  counted_amount real
+  difference real
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, status) [name: 'cash_sessions_store_status_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table categories {
+  id integer [pk, increment]
+  name text [not null, unique]
+  kind text [not null, default: 'finished']
+  description text
+  is_active integer [not null, default: true]
+  created_at integer [not null]
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table customers {
+  id integer [pk, increment]
+  store_id integer
+  name text [not null]
+  phone text
+  address text
+  notes text
+  credit_limit real [not null, default: 0]
+  is_active integer [not null, default: true]
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'customers_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table devices {
+  id integer [pk, increment]
+  device_id text [not null, unique]
+  name text [not null]
+  is_current integer [not null, default: false]
+  last_seen_at integer
+  last_push_at integer
+  last_pull_at integer
+  created_at integer [not null]
+}
+
+Table doc_sequences {
+  key text [pk]
+  value integer [not null, default: 0]
+}
+
+Table expenses {
+  id integer [pk, increment]
+  store_id integer
+  category text [not null]
+  amount real [not null]
+  description text
+  payment_method text [not null, default: 'Espèces']
+  reference_type text
+  reference_id integer
+  beneficiary text
+  approval_status expenses_approval_status [not null, default: 'approved']
+  approved_by integer
+  approved_at integer
+  date text [not null]
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, date) [name: 'expenses_store_date_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table furniture_model_materials {
+  id integer [pk, increment]
+  model_id integer [not null]
+  product_id integer [not null]
+  quantity real [not null, default: 0]
+  unit text [not null, default: 'pièce']
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (model_id) [name: 'furniture_model_materials_model_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table furniture_models {
+  id integer [pk, increment]
+  store_id integer [not null]
+  code text [not null]
+  name text [not null]
+  description text
+  standard_dimensions text
+  labor_hours real [not null, default: 0]
+  sale_price real [not null, default: 0]
+  is_active integer [not null, default: true]
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, code) [name: 'furniture_models_store_code_unique', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table furniture_order_materials {
+  id integer [pk, increment]
+  order_id integer [not null]
+  product_id integer
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity real [not null]
+  wastage_quantity real [not null, default: 0]
+  unit_cost real [not null, default: 0]
+  amount real [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (order_id) [name: 'furniture_order_materials_order_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table furniture_order_workers {
+  id integer [pk, increment]
+  order_id integer [not null]
+  worker_id integer
+  worker_name text [not null]
+  role text
+  days real [not null, default: 0]
+  daily_rate real [not null, default: 0]
+  amount real [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (order_id) [name: 'furniture_order_workers_order_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table furniture_orders {
+  id integer [pk, increment]
+  store_id integer [not null]
+  order_number text [not null, unique]
+  purpose furniture_orders_purpose [not null, default: 'customer']
+  customer_id integer
+  customer_name text
+  model_id integer
+  model_name text
+  is_custom integer [not null, default: false]
+  dimensions text
+  finish text
+  quantity real [not null, default: 1]
+  start_date text
+  promised_date text
+  delivery_date text
+  stage furniture_orders_stage [not null, default: 'cutting']
+  status furniture_orders_status [not null, default: 'active']
+  cancel_reason text
+  cancelled_by integer
+  cancelled_at integer
+  total real [not null, default: 0]
+  amount_paid real [not null, default: 0]
+  remaining_amount real [not null, default: 0]
+  payment_status text [not null, default: 'unpaid']
+  product_id integer
+  user_id integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'furniture_orders_store_idx']
+    (customer_id) [name: 'furniture_orders_customer_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table inventories {
+  id integer [pk, increment]
+  reference text [not null, unique]
+  store_id integer [not null]
+  status inventories_status [not null, default: 'open']
+  category_id integer
+  opened_by integer
+  validated_by integer
+  validated_at integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, status) [name: 'inventories_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table inventory_items {
+  id integer [pk, increment]
+  inventory_id integer [not null]
+  product_id integer [not null]
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  expected_quantity real [not null, default: 0]
+  counted_quantity real
+  justification text
+  created_at integer [not null]
+
+  Indexes {
+    (inventory_id) [name: 'inventory_items_inventory_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table job_stages {
+  id integer [pk, increment]
+  job_id integer [not null]
+  name text [not null]
+  service_id integer
+  responsible text
+  planned_date text
+  actual_date text
+  progress integer [not null, default: 0]
+  status job_stages_status [not null, default: 'todo']
+  comment text
+  position integer [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (job_id) [name: 'job_stages_job_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table job_subcontracts {
+  id integer [pk, increment]
+  job_id integer [not null]
+  supplier_id integer [not null]
+  work text [not null]
+  agreed_amount real [not null, default: 0]
+  status job_subcontracts_status [not null, default: 'active']
+  notes text
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (job_id) [name: 'job_subcontracts_job_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table login_attempts {
+  username text [pk]
+  failures integer [not null, default: 0]
+  locked_until integer
+  last_failure_at integer
+}
+
+Table payments {
+  id integer [pk, increment]
+  store_id integer
+  receipt_number text [not null, unique]
+  type payments_type [not null]
+  reference_id integer [not null]
+  amount real [not null]
+  payment_method text [not null, default: 'Espèces']
+  payment_label payments_payment_label [not null, default: 'full']
+  date text [not null]
+  notes text
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (type, reference_id) [name: 'payments_reference_idx']
+    (store_id, date) [name: 'payments_store_date_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table product_stocks {
+  id integer [pk, increment]
+  store_id integer [not null]
+  product_id integer [not null]
+  quantity real [not null, default: 0]
+  stock_min real
+  sale_price real
+  is_listed integer [not null, default: true]
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, product_id) [name: 'product_stocks_store_product_unique', unique]
+    (product_id) [name: 'product_stocks_product_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table products {
+  id integer [pk, increment]
+  name text [not null]
+  category_id integer
+  unit text [not null, default: 'pièce']
+  purchase_price real [not null, default: 0]
+  sale_price real [not null, default: 0]
+  stock_min real [not null, default: 0]
+  barcode text
+  owner_store_id integer
+  description text
+  is_active integer [not null, default: true]
+  created_at integer [not null]
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table purchase_invoice_items {
+  id integer [pk, increment]
+  invoice_id integer [not null]
+  product_id integer
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity real [not null]
+  unit_price real [not null]
+  amount real [not null]
+  created_at integer [not null]
+
+  Indexes {
+    (invoice_id) [name: 'purchase_invoice_items_invoice_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table purchase_invoices {
+  id integer [pk, increment]
+  store_id integer
+  reference text [not null, unique]
+  supplier_reference text
+  supplier_id integer
+  user_id integer
+  date text [not null]
+  due_date text
+  total real [not null, default: 0]
+  amount_paid real [not null, default: 0]
+  remaining_amount real [not null, default: 0]
+  payment_status text [not null, default: 'unpaid']
+  payment_method text [not null, default: 'Espèces']
+  status purchase_invoices_status [not null, default: 'active']
+  cancel_reason text
+  cancelled_by integer
+  cancelled_at integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, date) [name: 'purchase_invoices_store_date_idx']
+    (supplier_id) [name: 'purchase_invoices_supplier_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table quote_items {
+  id integer [pk, increment]
+  quote_id integer [not null]
+  service_id integer
+  service_name text [not null]
+  unit text [not null]
+  quantity real [not null]
+  unit_price real [not null]
+  discount_percent real [not null, default: 0]
+  amount real [not null]
+  position integer [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (quote_id) [name: 'quote_items_quote_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table quotes {
+  id integer [pk, increment]
+  store_id integer [not null]
+  reference text [not null, unique]
+  customer_id integer [not null]
+  request_id integer
+  date text [not null]
+  valid_until text
+  category text
+  title text
+  site_address text
+  description text
+  status quotes_status [not null, default: 'draft']
+  cancel_reason text
+  cancelled_at integer
+  cancelled_by integer
+  user_id integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, date) [name: 'quotes_store_date_idx']
+    (customer_id) [name: 'quotes_customer_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table report_deliveries {
+  id integer [pk, increment]
+  store_id integer
+  period report_deliveries_period [not null, default: 'day']
+  from_date text [not null]
+  to_date text [not null]
+  channel report_deliveries_channel [not null, default: 'whatsapp']
+  recipients text [not null]
+  content text [not null]
+  status report_deliveries_status [not null, default: 'sent']
+  error text
+  triggered_by report_deliveries_triggered_by [not null, default: 'manual']
+  user_id integer
+  sent_at integer [not null]
+  created_at integer [not null]
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table sales_invoice_items {
+  id integer [pk, increment]
+  invoice_id integer [not null]
+  product_id integer
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity real [not null]
+  unit_price real [not null]
+  discount real [not null, default: 0]
+  amount real [not null]
+  created_at integer [not null]
+
+  Indexes {
+    (invoice_id) [name: 'sales_invoice_items_invoice_idx']
+    (product_id) [name: 'sales_invoice_items_product_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table sales_invoices {
+  id integer [pk, increment]
+  store_id integer
+  invoice_number text [not null, unique]
+  customer_id integer
+  customer_name text [not null]
+  user_id integer
+  date text [not null]
+  due_date text
+  sub_total real [not null, default: 0]
+  discount real [not null, default: 0]
+  total_ht real [not null, default: 0]
+  tax_rate real [not null, default: 0]
+  tax_amount real [not null, default: 0]
+  total real [not null, default: 0]
+  amount_paid real [not null, default: 0]
+  remaining_amount real [not null, default: 0]
+  payment_status text [not null, default: 'unpaid']
+  payment_method text [not null, default: 'Espèces']
+  status sales_invoices_status [not null, default: 'active']
+  channel sales_invoices_channel [not null, default: 'general']
+  cancel_reason text
+  cancelled_by integer
+  cancelled_at integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, date) [name: 'sales_invoices_store_date_idx']
+    (customer_id) [name: 'sales_invoices_customer_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_job_items {
+  id integer [pk, increment]
+  job_id integer [not null]
+  service_id integer
+  service_name text [not null]
+  unit text [not null]
+  quantity real [not null]
+  unit_price real [not null]
+  discount_percent real [not null, default: 0]
+  amount real [not null]
+  position integer [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (job_id) [name: 'service_job_items_job_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_job_materials {
+  id integer [pk, increment]
+  job_id integer [not null]
+  product_id integer
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity real [not null]
+  unit_cost real [not null, default: 0]
+  amount real [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (job_id) [name: 'service_job_materials_job_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_job_workers {
+  id integer [pk, increment]
+  job_id integer [not null]
+  worker_id integer
+  worker_name text [not null]
+  role text
+  days real [not null, default: 0]
+  daily_rate real [not null, default: 0]
+  amount real [not null, default: 0]
+  created_at integer [not null]
+
+  Indexes {
+    (job_id) [name: 'service_job_workers_job_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_jobs {
+  id integer [pk, increment]
+  store_id integer
+  reference text [not null, unique]
+  customer_id integer [not null]
+  category text [not null, default: 'placo']
+  title text
+  site_address text
+  description text
+  start_date text
+  end_date text
+  status service_jobs_status [not null, default: 'quote']
+  quote_status service_jobs_quote_status [not null, default: 'draft']
+  quote_materials real [not null, default: 0]
+  quote_labor real [not null, default: 0]
+  quote_total real [not null, default: 0]
+  total real [not null, default: 0]
+  amount_paid real [not null, default: 0]
+  remaining_amount real [not null, default: 0]
+  payment_status text [not null, default: 'unpaid']
+  user_id integer
+  notes text
+  responsible_user_id integer
+  actual_start_date text
+  actual_end_date text
+  progress integer
+  quote_id integer
+  request_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'service_jobs_store_idx']
+    (customer_id) [name: 'service_jobs_customer_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_price_history {
+  id integer [pk, increment]
+  service_id integer [not null]
+  old_price real [not null]
+  new_price real [not null]
+  user_id integer
+  user_name text
+  date text [not null]
+  created_at integer [not null]
+
+  Indexes {
+    (service_id) [name: 'service_price_history_service_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_request_items {
+  id integer [pk, increment]
+  request_id integer [not null]
+  service_id integer
+  service_name text [not null]
+  created_at integer [not null]
+
+  Indexes {
+    (request_id) [name: 'service_request_items_request_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table service_requests {
+  id integer [pk, increment]
+  store_id integer [not null]
+  reference text [not null, unique]
+  customer_id integer [not null]
+  date text [not null]
+  need text [not null]
+  site_address text
+  desired_date text
+  status service_requests_status [not null, default: 'new']
+  user_id integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, date) [name: 'service_requests_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table services {
+  id integer [pk, increment]
+  store_id integer [not null]
+  code text [not null]
+  name text [not null]
+  category text [not null]
+  description text
+  unit text [not null, default: 'forfait']
+  unit_price real [not null, default: 0]
+  status services_status [not null, default: 'active']
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, code) [name: 'services_store_code_unique', unique]
+    (store_id, status) [name: 'services_store_status_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table sessions {
+  id text [pk]
+  user_id integer [not null]
+  store_id integer
+  created_at integer [not null]
+  expires_at integer [not null]
+  last_seen_at integer
+  revoked_at integer
+}
+
+Table settings {
+  key text [pk]
+  value text [not null]
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table stock_movements {
+  id integer [pk, increment]
+  store_id integer
+  product_id integer [not null]
+  type stock_movements_type [not null]
+  quantity real [not null]
+  motif text [not null]
+  stock_before real [not null]
+  stock_after real [not null]
+  reference_type text
+  reference_id integer
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (store_id, product_id) [name: 'stock_movements_store_product_idx']
+    (reference_type, reference_id) [name: 'stock_movements_reference_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table stock_transfer_events {
+  id integer [pk, increment]
+  transfer_id integer [not null]
+  event text [not null]
+  from_status text
+  to_status text
+  store_id integer
+  user_id integer
+  user_name text
+  note text
+  created_at integer [not null]
+
+  Indexes {
+    (transfer_id) [name: 'stock_transfer_events_transfer_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table stock_transfer_items {
+  id integer [pk, increment]
+  transfer_id integer [not null]
+  product_id integer [not null]
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity_requested real [not null]
+  quantity_shipped real [not null, default: 0]
+  quantity_received real [not null, default: 0]
+  discrepancy_note text
+  created_at integer [not null]
+
+  Indexes {
+    (transfer_id) [name: 'stock_transfer_items_transfer_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table stock_transfers {
+  id integer [pk, increment]
+  reference text [not null, unique]
+  source_store_id integer [not null]
+  destination_store_id integer [not null]
+  status stock_transfers_status [not null, default: 'draft']
+  reason text
+  requested_date text
+  requested_by integer
+  approved_by integer
+  approved_at integer
+  shipped_by integer
+  shipped_at integer
+  received_by integer
+  received_at integer
+  closed_at integer
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (source_store_id, status) [name: 'stock_transfers_source_idx']
+    (destination_store_id, status) [name: 'stock_transfers_destination_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table stores {
+  id integer [pk, increment]
+  code text [not null, unique]
+  name text [not null]
+  kind stores_kind [not null, default: 'store']
+  address text
+  phone text
+  email text
+  manager_user_id integer
+  opening_date text
+  status stores_status [not null, default: 'active']
+  opening_hours text
+  receipt_footer text
+  document_phones text
+  settings text
+  notes text
+  created_at integer [not null]
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table suppliers {
+  id integer [pk, increment]
+  store_id integer
+  name text [not null]
+  phone text
+  address text
+  notes text
+  is_subcontractor integer [not null, default: false]
+  specialty text
+  is_active integer [not null, default: true]
+  created_at integer [not null]
+
+  Indexes {
+    (store_id) [name: 'suppliers_store_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table sync_changes {
+  table_name text [not null]
+  sync_id text [not null]
+  deleted integer [not null, default: false]
+  change_seq integer [not null, default: 0]
+  attempts integer [not null, default: 0]
+  last_error text
+
+  Indexes {
+    (table_name, sync_id) [pk]
+  }
+}
+
+Table sync_conflicts {
+  id integer [pk, increment]
+  table_name text [not null]
+  sync_id text [not null]
+  local_payload text [not null]
+  remote_payload text [not null]
+  resolution sync_conflicts_resolution [not null, default: 'pending']
+  resolved_at integer
+  resolved_by integer
+  created_at integer [not null]
+}
+
+Table sync_pending {
+  id integer [pk, increment]
+  table_name text [not null]
+  sync_id text [not null]
+  payload text [not null]
+  missing_parent text
+  attempts integer [not null, default: 0]
+  last_attempt_at integer
+  last_error text
+  created_at integer [not null]
+}
+
+Table sync_state {
+  id integer [pk, increment]
+  key text [not null, unique]
+  value text
+  updated_at integer [not null]
+}
+
+Table user_permissions {
+  id integer [pk, increment]
+  user_id integer [not null]
+  action text [not null]
+  effect user_permissions_effect [not null]
+  granted_by integer
+  note text
+  created_at integer [not null]
+
+  Indexes {
+    (user_id, action) [name: 'user_permissions_user_action_unique', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table user_stores {
+  id integer [pk, increment]
+  user_id integer [not null]
+  store_id integer [not null]
+  is_manager integer [not null, default: false]
+  is_active integer [not null, default: true]
+  starts_at text
+  ends_at text
+  created_at integer [not null]
+
+  Indexes {
+    (user_id, store_id) [name: 'user_stores_user_store_unique', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table users {
+  id integer [pk, increment]
+  name text [not null]
+  username text [not null, unique]
+  password_hash text [not null]
+  role text [not null, default: 'seller']
+  phone text
+  is_active integer [not null, default: true]
+  is_super_admin integer [not null, default: false]
+  last_login_at integer
+  created_at integer [not null]
+
+  Indexes {
+    (is_super_admin) [name: 'users_single_super_admin', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table workers {
+  id integer [pk, increment]
+  name text [not null]
+  phone text
+  role workers_role [not null, default: 'worker']
+  specialty text
+  daily_rate real [not null, default: 0]
+  store_id integer
+  team text
+  is_active integer [not null, default: true]
+  created_at integer [not null]
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Ref: audit_logs.user_id > users.id
+Ref: brick_order_items.order_id > brick_orders.id
+Ref: brick_order_items.brick_type_id > brick_types.id
+Ref: brick_order_items.product_id > products.id
+Ref: brick_orders.store_id > stores.id
+Ref: brick_orders.customer_id > customers.id
+Ref: brick_orders.user_id > users.id
+Ref: brick_orders.sales_invoice_id > sales_invoices.id
+Ref: brick_orders.cancelled_by > users.id
+Ref: brick_production_workers.production_id > brick_productions.id
+Ref: brick_production_workers.worker_id > workers.id
+Ref: brick_productions.store_id > stores.id
+Ref: brick_productions.brick_type_id > brick_types.id
+Ref: brick_productions.cancelled_by > users.id
+Ref: brick_productions.user_id > users.id
+Ref: brick_types.store_id > stores.id
+Ref: brick_types.product_id > products.id
+Ref: brick_types.user_id > users.id
+Ref: cash_movements.store_id > stores.id
+Ref: cash_movements.session_id > cash_sessions.id
+Ref: cash_movements.user_id > users.id
+Ref: cash_sessions.store_id > stores.id
+Ref: cash_sessions.opened_by > users.id
+Ref: cash_sessions.closed_by > users.id
+Ref: customers.store_id > stores.id
+Ref: expenses.store_id > stores.id
+Ref: expenses.approved_by > users.id
+Ref: expenses.user_id > users.id
+Ref: furniture_model_materials.model_id > furniture_models.id
+Ref: furniture_model_materials.product_id > products.id
+Ref: furniture_models.store_id > stores.id
+Ref: furniture_models.user_id > users.id
+Ref: furniture_order_materials.order_id > furniture_orders.id
+Ref: furniture_order_materials.product_id > products.id
+Ref: furniture_order_workers.order_id > furniture_orders.id
+Ref: furniture_order_workers.worker_id > workers.id
+Ref: furniture_orders.store_id > stores.id
+Ref: furniture_orders.customer_id > customers.id
+Ref: furniture_orders.model_id > furniture_models.id
+Ref: furniture_orders.cancelled_by > users.id
+Ref: furniture_orders.product_id > products.id
+Ref: furniture_orders.user_id > users.id
+Ref: inventories.store_id > stores.id
+Ref: inventories.category_id > categories.id
+Ref: inventories.opened_by > users.id
+Ref: inventories.validated_by > users.id
+Ref: inventory_items.inventory_id > inventories.id [delete: cascade]
+Ref: inventory_items.product_id > products.id
+Ref: job_stages.job_id > service_jobs.id
+Ref: job_stages.service_id > services.id
+Ref: job_subcontracts.job_id > service_jobs.id
+Ref: job_subcontracts.supplier_id > suppliers.id
+Ref: job_subcontracts.user_id > users.id
+Ref: payments.store_id > stores.id
+Ref: payments.user_id > users.id
+Ref: product_stocks.store_id > stores.id
+Ref: product_stocks.product_id > products.id
+Ref: products.category_id > categories.id
+Ref: products.owner_store_id > stores.id
+Ref: purchase_invoice_items.invoice_id > purchase_invoices.id [delete: cascade]
+Ref: purchase_invoice_items.product_id > products.id
+Ref: purchase_invoices.store_id > stores.id
+Ref: purchase_invoices.supplier_id > suppliers.id
+Ref: purchase_invoices.user_id > users.id
+Ref: purchase_invoices.cancelled_by > users.id
+Ref: quote_items.quote_id > quotes.id
+Ref: quote_items.service_id > services.id
+Ref: quotes.store_id > stores.id
+Ref: quotes.customer_id > customers.id
+Ref: quotes.request_id > service_requests.id
+Ref: quotes.cancelled_by > users.id
+Ref: quotes.user_id > users.id
+Ref: report_deliveries.store_id > stores.id
+Ref: report_deliveries.user_id > users.id
+Ref: sales_invoice_items.invoice_id > sales_invoices.id [delete: cascade]
+Ref: sales_invoice_items.product_id > products.id
+Ref: sales_invoices.store_id > stores.id
+Ref: sales_invoices.customer_id > customers.id
+Ref: sales_invoices.user_id > users.id
+Ref: sales_invoices.cancelled_by > users.id
+Ref: service_job_items.job_id > service_jobs.id
+Ref: service_job_items.service_id > services.id
+Ref: service_job_materials.job_id > service_jobs.id [delete: cascade]
+Ref: service_job_materials.product_id > products.id
+Ref: service_job_workers.job_id > service_jobs.id [delete: cascade]
+Ref: service_job_workers.worker_id > workers.id
+Ref: service_jobs.store_id > stores.id
+Ref: service_jobs.customer_id > customers.id
+Ref: service_jobs.user_id > users.id
+Ref: service_jobs.responsible_user_id > users.id
+Ref: service_jobs.quote_id > quotes.id
+Ref: service_jobs.request_id > service_requests.id
+Ref: service_price_history.service_id > services.id
+Ref: service_price_history.user_id > users.id
+Ref: service_request_items.request_id > service_requests.id
+Ref: service_request_items.service_id > services.id
+Ref: service_requests.store_id > stores.id
+Ref: service_requests.customer_id > customers.id
+Ref: service_requests.user_id > users.id
+Ref: services.store_id > stores.id
+Ref: services.user_id > users.id
+Ref: sessions.user_id > users.id
+Ref: stock_movements.store_id > stores.id
+Ref: stock_movements.product_id > products.id
+Ref: stock_movements.user_id > users.id
+Ref: stock_transfer_events.transfer_id > stock_transfers.id [delete: cascade]
+Ref: stock_transfer_events.store_id > stores.id
+Ref: stock_transfer_events.user_id > users.id
+Ref: stock_transfer_items.transfer_id > stock_transfers.id [delete: cascade]
+Ref: stock_transfer_items.product_id > products.id
+Ref: stock_transfers.source_store_id > stores.id
+Ref: stock_transfers.destination_store_id > stores.id
+Ref: stock_transfers.requested_by > users.id
+Ref: stock_transfers.approved_by > users.id
+Ref: stock_transfers.shipped_by > users.id
+Ref: stock_transfers.received_by > users.id
+Ref: stores.manager_user_id > users.id
+Ref: suppliers.store_id > stores.id
+Ref: sync_conflicts.resolved_by > users.id
+Ref: user_permissions.user_id > users.id [delete: cascade]
+Ref: user_permissions.granted_by > users.id
+Ref: user_stores.user_id > users.id
+Ref: user_stores.store_id > stores.id
+Ref: workers.store_id > stores.id
+
+TableGroup "Ventes" [color: #2563eb] {
+  customers
+  sales_invoice_items
+  sales_invoices
+}
+
+TableGroup "Achats" [color: #7c3aed] {
+  purchase_invoice_items
+  purchase_invoices
+  suppliers
+}
+
+TableGroup "Caisse et depenses" [color: #059669] {
+  cash_movements
+  cash_sessions
+  expenses
+  payments
+}
+
+TableGroup "Produits et stock" [color: #d97706] {
+  categories
+  inventories
+  inventory_items
+  product_stocks
+  products
+  stock_movements
+  stock_transfer_events
+  stock_transfer_items
+  stock_transfers
+}
+
+TableGroup "Chantiers" [color: #dc2626] {
+  job_stages
+  job_subcontracts
+  quote_items
+  quotes
+  service_job_items
+  service_job_materials
+  service_job_workers
+  service_jobs
+  service_price_history
+  service_request_items
+  service_requests
+  services
+  workers
+}
+
+TableGroup "Atelier" [color: #92400e] {
+  furniture_model_materials
+  furniture_models
+  furniture_order_materials
+  furniture_order_workers
+  furniture_orders
+}
+
+TableGroup "Briqueterie" [color: #9f1239] {
+  brick_order_items
+  brick_orders
+  brick_production_workers
+  brick_productions
+  brick_types
+}
+
+TableGroup "Magasins et comptes" [color: #0891b2] {
+  audit_logs
+  doc_sequences
+  login_attempts
+  report_deliveries
+  sessions
+  settings
+  stores
+  user_permissions
+  user_stores
+  users
+}
+
+TableGroup "Synchronisation" [color: #475569] {
+  devices
+  sync_changes
+  sync_conflicts
+  sync_pending
+  sync_state
+}

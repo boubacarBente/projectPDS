@@ -1,0 +1,29 @@
+{
+  "enabledPlugins": {
+    "superpowers@projetpds": true,
+    "frontend-design@projetpds": true,
+    "playwright@projetpds": true,
+    "context7@projetpds": true,
+    "typescript-lsp@projetpds": true,
+    "chrome-devtools-mcp@projetpds": true,
+    "claude-mem@thedotmack": true
+  },
+  "extraKnownMarketplaces": {
+    "thedotmack": {
+      "source": {
+        "source": "github",
+        "repo": "thedotmack/claude-mem",
+        "sparsePaths": [
+          ".claude-plugin",
+          "plugin"
+        ]
+      }
+    },
+    "projetpds": {
+      "source": {
+        "source": "directory",
+        "path": "D:\\projetPDS\\.claude\\plugins"
+      }
+    }
+  }
+}
