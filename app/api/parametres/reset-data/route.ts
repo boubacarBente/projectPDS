@@ -3,11 +3,12 @@ import { createBackup, resetBusinessData } from '@/lib/backup';
 import { writeAudit } from '@/lib/audit';
 
 /**
- * POST /api/parametres/reset-data — réinitialise les données métier.
+ * POST /api/parametres/reset-data — vide toute la base.
  *
- * Les paramètres de l'entreprise et les comptes utilisateurs sont **conservés**
- * (voir `lib/backup.ts`) : une réinitialisation ne doit pas rendre
- * l'application inaccessible. Une copie de sécurité est créée avant l'effacement.
+ * Seuls les comptes utilisateurs (et leurs droits), les paramètres et le magasin
+ * principal sont **conservés** (voir `resetBusinessData` dans `lib/backup.ts`) :
+ * une réinitialisation ne doit pas rendre l'application inaccessible. Une copie
+ * de sécurité est créée avant l'effacement.
  */
 export async function POST() {
   try {
@@ -20,15 +21,16 @@ export async function POST() {
       user,
       action: 'reset',
       entity: 'database',
-      details: { tables: result.tables.length, safetyBackup },
+      details: { tables: result.tables.length, mainStore: result.mainStore, safetyBackup },
     });
 
     return ok({
       success: true,
       tablesCleared: result.tables.length,
       safetyBackup,
-      message:
-        'Données réinitialisées. Les paramètres et les comptes utilisateurs ont été conservés.',
+      message: result.mainStore
+        ? `Base vidée. Seuls les comptes utilisateurs, les paramètres et le magasin « ${result.mainStore} » ont été conservés.`
+        : 'Base vidée. Seuls les comptes utilisateurs et les paramètres ont été conservés.',
     });
   } catch (error) {
     return fail(error);

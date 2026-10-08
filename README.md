@@ -574,6 +574,12 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 > **Le schéma de cette section part du document `Schema_BDD_Planete_Deco_Sarlu.pdf` fourni par le client.**
 > Ce document annonce « 18 tables » : il en contient en réalité **24**. Quatre fonctionnalités exigées par le cahier des charges y sont impossibles en l'état (§7 TVA/HT et échéancier, §17 matières premières et dimensions des briques, §18 fiche modèle et nomenclature, §12/§14 journal des actions). Le schéma client est donc **conservé dans sa structure**, corrigé sur **9 points** et aligné sur les conventions de nommage du projet Gaz → **32 tables métier**, plus les **colonnes de synchronisation** (§6.7) et **5 tables locales de synchronisation** ([§23](#23-synchronisation-avec-postgresql-option-en-ligne)).
 
+> **Diagramme de la base.** `docs/schema.dbml` décrit les tables, clés, index et liens au format
+> DBML, regroupés par domaine : le coller dans [dbdiagram.io](https://dbdiagram.io) affiche le
+> diagramme. Il est **généré** depuis `db/schema.ts` (`npm run db:dbml` ; `-- --complet` pour
+> voir aussi les 4 colonnes de synchronisation ; `-- --check` pour vérifier qu'il est à jour) :
+> le régénérer après toute migration. Seuls les liens déclarés en `references()` y figurent.
+
 ### 6.1 Décisions structurantes (v1.2)
 
 | Décision | Choix retenu | Conséquence |
@@ -1133,7 +1139,13 @@ Reprise du patron `SettingsCard` (titre + icône colorée + corps) de Gaz :
 6. **Stock** — activation des alertes, seuil par défaut.
 7. **Rapports SMS / WhatsApp** — canal, destinataires, fréquence, heure, configuration de la passerelle, **bouton « Envoyer un rapport de test »**.
 8. **Application** — version + `electron-updater` (`UpdateStatus`).
-9. **Zone dangereuse** — réinitialiser les données · préremplir les données de démonstration.
+9. **Zone dangereuse** (outil de test, masqué en production) — réinitialiser les données · préremplir les données de démonstration.
+   La réinitialisation (`resetBusinessData`, `lib/backup.ts`) **vide toutes les tables** de la base
+   (équivalent d'un TRUNCATE : `DELETE` + compteurs `sqlite_sequence` remis à zéro), y compris le
+   journal et les tables locales. Seuls restent : les comptes (`users`, `user_permissions`), les
+   `settings`, le **magasin principal** (le siège, sinon le plus ancien) auquel chaque compte est
+   rattaché, et les tables techniques (migrations, identité du poste, sessions). Copie de sécurité
+   avant ; refusée sur un poste relié au serveur.
 10. **Sauvegarde** — télécharger la base `.db` · **restaurer une sauvegarde**.
 
 > Les cartes **Zone dangereuse** et **Préremplir** restent **masquées en production et dans l'app desktop** (`hideDatabaseActions`), comme dans Gaz — outils de développement uniquement.
@@ -2382,6 +2394,7 @@ npm run db:generate        # Générer les migrations Drizzle
 npm run db:push            # Pousser le schéma vers la base
 npm run db:studio          # Ouvrir Drizzle Studio
 npm run db:migrate         # Appliquer les migrations sans démarrer Next (avant verify:*)
+npm run db:dbml            # Régénère docs/schema.dbml (diagramme de la base, à coller dans dbdiagram.io)
 ```
 
 **Scripts de vérification** — ils interrogent une application **démarrée**
@@ -2493,7 +2506,7 @@ Tests : `cd server && npm test`.
 | **`/produits`** : modale en deux niveaux (« Catalogue — tous les magasins » / « Réglages de ce magasin » : prix et seuil locaux), code-barres, mention « prix local », portée magasin, catalogue en consultation sur poste magasin, infobulles. **Défauts corrigés** : la modification recopiait le prix local dans le prix du catalogue ; « prix locaux désactivés » n'empêchait que la saisie (les prix déjà saisis s'appliquaient encore) | ✅ | guide §6.9 |
 | Portée magasin sur les listes restantes : `/soldes`, `/recus` (règle : `StoreScopeSelect` dans la barre d'outils, nom du magasin **sous l'identifiant** de la ligne avec `StoreTag` — pas de colonne de plus). **À corriger au passage** : tableaux trop larges en 1366 px sur `/rapports`, `/recus` — `verify:ui` le signale | ⏳ | guide §6.5 → §6.13 |
 | Tableau de bord et rapports consolidés | ⏳ | guide §6.3, §6.12 |
-| **Jeu de démonstration** (`lib/seed-data.ts`, `npm run demo:seed`) : 3 magasins, 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |
+| **Jeu de démonstration** (`lib/seed-data.ts`, `lib/seed-workshops.ts`, `npm run demo:seed`) : 4 magasins au plus, commerce + briqueterie + atelier dans chacun, 13 mois d'activité (année précédente comprise) pour tester tous les filtres de période, documents dans chaque statut (brouillon, annulé, dépense en attente / à décaisser / rejetée, transferts à toutes les étapes, inventaire en cours et validé) ; stocks cohérents et jamais négatifs | ✅ | §28.4 |
 | **Annulation d'achat** : refus si la marchandise est déjà vendue, dérogation explicite réservée à `stock.adjust` (§28.2 règle 6) | ✅ | `lib/purchases.ts` |
 | **En-tête des documents au nom du magasin émetteur** (facture, reçu, bon d'achat, devis ; écran, PDF, image, WhatsApp) : champ `store` des routes de détail (`getStoreLetterhead`) + `applyStoreLetterhead` | ✅ | §11.1, guide §6.4 |
 | **Exports** : texte décalé vers le bas corrigé (mesure des polices de html2canvas faussée par Tailwind), WhatsApp sur la capture commune, statut du document (annulée / brouillon) et reste payable cohérents, justificatif de paiement fournisseur, devis non accepté sans « reste à payer » ; `npm run verify:export-image` | ✅ | §11.1 |
@@ -2538,9 +2551,19 @@ Tests : `cd server && npm test`.
 - **Démonstration sur base vierge** — `npm run demo:seed` (`scripts/seed-demo.js`) :
   sur une instance démarrée avec une base **vide**, installe l'administrateur
   (`admin` / `admin1234` par défaut) et le magasin `SIEGE`, puis crée le réseau de
-  démonstration (≈ 30 s) : magasins `SIEGE`, `KAL`, `MAT` ; comptes `gerant.kaloum`,
-  `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege` (mot de passe
-  `demo1234`) ; 13 mois de ventes, achats, dépenses ; tous les statuts.
+  démonstration (≈ 3 min) : **4 magasins au plus** — `SIEGE` (ou le magasin principal
+  laissé par une réinitialisation, réutilisé au lieu d'en créer un cinquième), `KAL`,
+  `MAT`, `RAT` ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`,
+  `vendeur.matoto`, `gerant.ratoma`, `vendeur.ratoma`, `magasinier.siege` (mot de passe
+  `demo1234`) ; 13 mois de ventes, achats, dépenses ; tous les statuts. **Chaque magasin**
+  a aussi sa briqueterie et son atelier (`lib/seed-workshops.ts`) : lots de briques à
+  chaque étape (et un annulé) avec équipe et dépenses, ventes du canal `brick`, commandes
+  de briques dans chaque statut (dont une facturée) ; modèles de meubles avec
+  nomenclature, commandes client et fabrications pour le stock à chaque étape, matières
+  et chutes sorties du stock, acomptes, soldes et restes dus. Volume et calendrier
+  diffèrent d'un magasin à l'autre, et chaque magasin a **ses propres clients et
+  fournisseurs** (noms différents : 6 clients et 4 fournisseurs par magasin). Les chantiers
+  restent sur les trois premiers magasins.
   ```bash
   PDS_DB_PATH=demo.db NEXT_DIST_DIR=.next-recette npx next dev -H 127.0.0.1 -p 3100
   APP_URL=http://127.0.0.1:3100 npm run demo:seed

@@ -9,7 +9,8 @@
  * qu'il produit suit exactement les règles de l'application.
  *
  * Contenu :
- *  - 3 établissements : le siège (charges centrales, entrepôt), Kaloum, Matoto ;
+ *  - **4 établissements au plus** : le siège (le magasin principal laissé par une
+ *    réinitialisation, sinon créé), Kaloum, Matoto, Ratoma ;
  *  - comptes : gérants et vendeurs par magasin (mot de passe `demo1234`) ;
  *  - catalogue commun, clients, fournisseurs, ouvriers ;
  *  - **13 mois d'activité** (l'année précédente comprise) pour que chaque
@@ -23,7 +24,11 @@
  *    en litige, refusé, annulé) ;
  *  - un inventaire validé avec écarts et un inventaire en cours ;
  *  - les prestations de chantier : catalogue par magasin, demandes, devis et
- *    chantiers à toutes les étapes (voir lib/seed-jobs.ts).
+ *    chantiers à toutes les étapes (voir lib/seed-jobs.ts) ;
+ *  - dans **chaque** magasin, une briqueterie (lots à chaque étape, ventes du
+ *    canal `brick`, commandes dans chaque statut) et un atelier de meubles
+ *    (modèles, commandes client ou pour le stock à chaque étape, acomptes,
+ *    soldes et restes dus) étalés sur 13 mois (voir lib/seed-workshops.ts).
  *
  * Idempotent : ne fait rien si le catalogue contient déjà des produits.
  */
@@ -42,6 +47,7 @@ import { createPayment } from '@/lib/payments';
 import { approveTransfer, cancelTransfer, createTransfer, receiveTransfer, shipTransfer } from '@/lib/transfers';
 import { openInventory, recordCounts, validateInventory, getInventory } from '@/lib/inventories';
 import { seedServiceJobs } from '@/lib/seed-jobs';
+import { seedWorkshops } from '@/lib/seed-workshops';
 import { addCashMovement, closeSession, getOpenSession, getSessionTheoreticalByMethod } from '@/lib/caisse';
 import { getStoreStock } from '@/lib/stock';
 import { addDays, today } from '@/lib/format';
@@ -64,6 +70,10 @@ export type SeedReport = {
   services: number;
   quotes: number;
   requests: number;
+  brickProductions: number;
+  brickSales: number;
+  brickOrders: number;
+  furnitureOrders: number;
   skipped: boolean;
   message: string;
 };
@@ -113,21 +123,84 @@ const PRODUCTS: ProductSeed[] = [
   { name: 'Clous 50 mm (1 kg)', category: 'Quincaillerie', unit: 'kg', purchasePrice: 12_000, salePrice: 19_000, stock: 80, stockMin: 15 },
 ];
 
-const CUSTOMERS = [
-  { name: 'Résidence Les Palmiers', phone: '+224 622 11 22 33', address: 'Kipé, Conakry', creditLimit: 50_000_000 },
-  { name: 'Hôtel Kaloum Plaza', phone: '+224 621 44 55 66', address: 'Kaloum, Conakry', creditLimit: 80_000_000 },
-  { name: 'M. Ibrahima Camara', phone: '+224 664 77 88 99', address: 'Matam, Conakry', creditLimit: 5_000_000 },
-  { name: 'Chantier Villa Nongo', phone: '+224 628 33 44 55', address: 'Nongo, Conakry', creditLimit: 25_000_000 },
-  { name: 'Mme Fatoumata Diallo', phone: '+224 666 12 34 56', address: 'Ratoma, Conakry', creditLimit: 3_000_000 },
-  { name: 'Bureaux Nimba Services', phone: '+224 620 98 76 54', address: 'Taouyah, Conakry', creditLimit: 15_000_000 },
-];
+type CustomerSeed = { name: string; phone: string; address: string; creditLimit: number };
 
-const SUPPLIERS = [
-  { name: 'Scierie Kindia Bois', phone: '+224 655 10 20 30', address: 'Kindia' },
-  { name: 'Quincaillerie du Port', phone: '+224 622 40 50 60', address: 'Port de Conakry' },
-  { name: 'Alucobond Afrique de l’Ouest', phone: '+224 628 11 33 55', address: 'Conakry' },
-  { name: 'Meubles Import Dakar', phone: '+221 77 123 45 67', address: 'Dakar' },
-];
+/*
+ * Une clientèle **différente par magasin** (README §28.5) : avec la même liste
+ * partout, les écrans semblaient montrer les mêmes clients dans chaque magasin.
+ * Même ordre de profils dans chaque liste (0 résidence, 1 hôtel ou grand
+ * compte, 2 particulier, 3 chantier de villa, 4 particulière, 5 entreprise) :
+ * `lib/seed-jobs.ts` désigne ses clients par leur rang.
+ */
+const CUSTOMERS: Record<'hq' | 'kaloum' | 'matoto' | 'ratoma', CustomerSeed[]> = {
+  hq: [
+    { name: 'Cité des Enseignants Yattaya', phone: '+224 622 30 40 50', address: 'Yattaya, Conakry', creditLimit: 45_000_000 },
+    { name: 'Hôtel Riviera Royal', phone: '+224 621 70 80 90', address: 'Dixinn, Conakry', creditLimit: 90_000_000 },
+    { name: 'M. Alhassane Sylla', phone: '+224 664 21 32 43', address: 'Yattaya, Conakry', creditLimit: 6_000_000 },
+    { name: 'Chantier Villa Lambanyi', phone: '+224 628 54 65 76', address: 'Lambanyi, Conakry', creditLimit: 30_000_000 },
+    { name: 'Mme Kadiatou Baldé', phone: '+224 666 87 98 09', address: 'Sonfonia, Conakry', creditLimit: 4_000_000 },
+    { name: 'Société Guinéenne de Logistique', phone: '+224 620 13 24 35', address: 'Hamdallaye, Conakry', creditLimit: 20_000_000 },
+  ],
+  kaloum: [
+    { name: 'Résidence Les Palmiers', phone: '+224 622 11 22 33', address: 'Kipé, Conakry', creditLimit: 50_000_000 },
+    { name: 'Hôtel Kaloum Plaza', phone: '+224 621 44 55 66', address: 'Kaloum, Conakry', creditLimit: 80_000_000 },
+    { name: 'M. Ibrahima Camara', phone: '+224 664 77 88 99', address: 'Matam, Conakry', creditLimit: 5_000_000 },
+    { name: 'Chantier Villa Nongo', phone: '+224 628 33 44 55', address: 'Nongo, Conakry', creditLimit: 25_000_000 },
+    { name: 'Mme Fatoumata Diallo', phone: '+224 666 12 34 56', address: 'Ratoma, Conakry', creditLimit: 3_000_000 },
+    { name: 'Bureaux Nimba Services', phone: '+224 620 98 76 54', address: 'Taouyah, Conakry', creditLimit: 15_000_000 },
+  ],
+  matoto: [
+    { name: 'Résidence Le Baobab', phone: '+224 622 45 67 89', address: 'Matoto, Conakry', creditLimit: 40_000_000 },
+    { name: 'Clinique Santé Plus Matoto', phone: '+224 621 12 23 34', address: 'Matoto, Conakry', creditLimit: 60_000_000 },
+    { name: 'M. Mamadou Saliou Barry', phone: '+224 664 56 78 90', address: 'Gbessia, Conakry', creditLimit: 5_000_000 },
+    { name: 'Chantier Villa Kissosso', phone: '+224 628 98 87 76', address: 'Kissosso, Conakry', creditLimit: 25_000_000 },
+    { name: 'Mme Aïssata Touré', phone: '+224 666 34 45 56', address: 'Dabondy, Conakry', creditLimit: 3_000_000 },
+    { name: 'Transports Diallo & Fils', phone: '+224 620 67 78 89', address: 'Enta, Conakry', creditLimit: 15_000_000 },
+  ],
+  ratoma: [
+    { name: 'Résidence Bambeto Horizon', phone: '+224 622 76 54 32', address: 'Bambeto, Conakry', creditLimit: 35_000_000 },
+    { name: 'Hôtel Nongo Beach', phone: '+224 621 98 76 12', address: 'Nongo, Conakry', creditLimit: 70_000_000 },
+    { name: 'M. Ousmane Kouyaté', phone: '+224 664 43 21 09', address: 'Cosa, Conakry', creditLimit: 4_000_000 },
+    { name: 'Chantier Villa Kaporo', phone: '+224 628 21 43 65', address: 'Kaporo, Conakry', creditLimit: 20_000_000 },
+    { name: 'Mme Mariama Sow', phone: '+224 666 65 43 21', address: 'Hamdallaye, Conakry', creditLimit: 3_000_000 },
+    { name: 'École Privée Les Étoiles', phone: '+224 620 54 32 10', address: 'Koloma, Conakry', creditLimit: 12_000_000 },
+  ],
+};
+
+type SupplierSeed = { name: string; phone: string; address: string };
+
+/**
+ * Des fournisseurs **différents par magasin**, pour la même raison que les
+ * clients. Même ordre de spécialités partout (0 bois, 1 quincaillerie,
+ * 2 panneaux et façades, 3 meubles importés) : le premier fournit aussi
+ * l'atelier de meubles (`lib/seed-workshops.ts`).
+ */
+const SUPPLIERS: Record<'hq' | 'kaloum' | 'matoto' | 'ratoma', SupplierSeed[]> = {
+  hq: [
+    { name: 'Scierie Kindia Bois', phone: '+224 655 10 20 30', address: 'Kindia' },
+    { name: 'Quincaillerie du Port', phone: '+224 622 40 50 60', address: 'Port de Conakry' },
+    { name: 'Alucobond Afrique de l’Ouest', phone: '+224 628 11 33 55', address: 'Conakry' },
+    { name: 'Meubles Import Dakar', phone: '+221 77 123 45 67', address: 'Dakar' },
+  ],
+  kaloum: [
+    { name: 'Bois du Fouta Mamou', phone: '+224 655 21 31 41', address: 'Mamou' },
+    { name: 'Quincaillerie Centrale Kaloum', phone: '+224 622 51 61 71', address: 'Marché Niger, Kaloum' },
+    { name: 'Façades & Décors Conakry', phone: '+224 628 22 44 66', address: 'Boulbinet, Kaloum' },
+    { name: 'Mobilier Import Abidjan', phone: '+225 07 12 34 56 78', address: 'Abidjan' },
+  ],
+  matoto: [
+    { name: 'Scierie de Forécariah', phone: '+224 655 32 42 52', address: 'Forécariah' },
+    { name: 'Quincaillerie Madina Gros', phone: '+224 622 62 72 82', address: 'Marché Madina, Conakry' },
+    { name: 'Panneaux Composites Guinée', phone: '+224 628 33 55 77', address: 'Zone industrielle, Matoto' },
+    { name: 'Meubles Import Bamako', phone: '+223 76 12 34 56', address: 'Bamako' },
+  ],
+  ratoma: [
+    { name: 'Bois et Dérivés de Kankan', phone: '+224 655 43 53 63', address: 'Kankan' },
+    { name: 'Quincaillerie Bambeto Matériaux', phone: '+224 622 73 83 93', address: 'Bambeto, Ratoma' },
+    { name: 'Alu-Déco Ratoma', phone: '+224 628 44 66 88', address: 'Kipé, Ratoma' },
+    { name: 'Meubles Import Freetown', phone: '+232 76 123 456', address: 'Freetown' },
+  ],
+};
 
 const WORKERS = [
   { name: 'Sékou Touré', role: 'foreman' as const, dailyRate: 150_000, specialty: 'Chef d’équipe chantier' },
@@ -172,6 +245,10 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     services: 0,
     quotes: 0,
     requests: 0,
+    brickProductions: 0,
+    brickSales: 0,
+    brickOrders: 0,
+    furnitureOrders: 0,
     skipped: false,
     message: '',
   };
@@ -198,18 +275,28 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   const start = addDays(today(), -days);
 
   /* ----------------------------- Magasins ------------------------------ */
+  /*
+   * **Quatre magasins au plus.** Après une réinitialisation, seul le magasin
+   * principal subsiste : il devient le premier établissement de la
+   * démonstration (siège) au lieu d'en créer un cinquième. Un magasin déjà
+   * présent est réutilisé avant d'en créer un nouveau.
+   */
   let stores = await listStores();
+  const used = new Set<number>();
   const ensureStore = async (code: string, name: string, kind: 'store' | 'headquarters', address: string, phone: string) => {
-    let store = stores.find((s) => s.code === code);
+    let store = stores.find((s) => s.code === code && !used.has(s.id)) ?? stores.find((s) => !used.has(s.id));
     if (!store) {
       store = await createStore({ code, name, kind, address, phone, openingDate: addDays(start, -30) }, adminRef);
       report.stores += 1;
     }
+    used.add(store.id);
     return store;
   };
+  stores.sort((a, b) => (a.kind === 'headquarters' ? 0 : 1) - (b.kind === 'headquarters' ? 0 : 1) || a.id - b.id);
   const hq = await ensureStore('SIEGE', 'Siège — Entrepôt central', 'headquarters', 'Yattaya, Conakry', '+224 620 00 00 01');
   const kaloum = await ensureStore('KAL', 'Magasin Kaloum', 'store', 'Avenue de la République, Kaloum', '+224 620 00 00 02');
   const matoto = await ensureStore('MAT', 'Magasin Matoto', 'store', 'Marché de Matoto', '+224 620 00 00 03');
+  const ratoma = await ensureStore('RAT', 'Magasin Ratoma', 'store', 'Carrefour Bambeto, Ratoma', '+224 620 00 00 04');
   stores = await listStores();
 
   /* ----------------------------- Comptes ------------------------------- */
@@ -225,6 +312,10 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   const gerantMat = await makeUser('Thierno Diallo', 'gerant.matoto', 'manager');
   const vendeurMat = await makeUser('Hawa Camara', 'vendeur.matoto', 'seller');
   const magasinier = await makeUser('Abdoulaye Sow', 'magasinier.siege', 'storekeeper');
+  const gerantRat = await makeUser('Fatoumata Binta Bah', 'gerant.ratoma', 'manager');
+  const vendeurRat = await makeUser('Lansana Conté', 'vendeur.ratoma', 'seller');
+  await setUserAssignments(gerantRat, [{ storeId: ratoma.id, isManager: true }], adminRef);
+  await setUserAssignments(vendeurRat, [{ storeId: ratoma.id }], adminRef);
   await setUserAssignments(gerantKal, [{ storeId: kaloum.id, isManager: true }], adminRef);
   await setUserAssignments(vendeurKal, [{ storeId: kaloum.id }], adminRef);
   await setUserAssignments(gerantMat, [{ storeId: matoto.id, isManager: true }], adminRef);
@@ -258,21 +349,24 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     report.products += 1;
   }
   /*
-   * Chaque magasin a ses propres clients et fournisseurs (README §28.5) : la
-   * démonstration crée la même liste dans chaque magasin (même ordre, donc
-   * mêmes indices), ce qui montre aussi qu'un client des deux magasins a deux
-   * fiches.
+   * Chaque magasin a ses propres clients et fournisseurs (README §28.5) : une
+   * clientèle et des fournisseurs distincts par magasin.
    */
   const customersByStore: Record<number, number[]> = {};
   const suppliersByStore: Record<number, number[]> = {};
-  for (const store of [hq, kaloum, matoto]) {
+  for (const [store, key] of [
+    [hq, 'hq'],
+    [kaloum, 'kaloum'],
+    [matoto, 'matoto'],
+    [ratoma, 'ratoma'],
+  ] as const) {
     customersByStore[store.id] = [];
-    for (const customer of CUSTOMERS) {
+    for (const customer of CUSTOMERS[key]) {
       customersByStore[store.id].push((await createCustomer(customer, store.id)).id);
       report.customers += 1;
     }
     suppliersByStore[store.id] = [];
-    for (const supplier of SUPPLIERS) {
+    for (const supplier of SUPPLIERS[key]) {
       suppliersByStore[store.id].push((await createSupplier(supplier, store.id)).id);
       report.suppliers += 1;
     }
@@ -294,6 +388,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     [hq, 400_000_000, 400_000_000],
     [kaloum, 120_000_000, 180_000_000],
     [matoto, 100_000_000, 160_000_000],
+    [ratoma, 90_000_000, 140_000_000],
   ] as const) {
     await addCashMovement({ storeId: store.id, type: 'income', amount: cash, paymentMethod: 'Espèces', motif: 'Apport initial — fonds de caisse', date: start, userId: adminRef.id });
     await addCashMovement({ storeId: store.id, type: 'income', amount: bank, paymentMethod: 'Virement', motif: 'Apport initial — compte bancaire', date: start, userId: adminRef.id });
@@ -304,6 +399,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     [hq, 1],
     [kaloum, 0.8],
     [matoto, 0.6],
+    [ratoma, 0.5],
   ];
   for (const [store, share] of shares) {
     const supplierIds = suppliersByStore[store.id];
@@ -330,7 +426,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   }
 
   /* ------------------------------ Ventes ------------------------------- */
-  const sellers: Record<number, number> = { [hq.id]: magasinier, [kaloum.id]: vendeurKal, [matoto.id]: vendeurMat };
+  const sellers: Record<number, number> = { [hq.id]: magasinier, [kaloum.id]: vendeurKal, [matoto.id]: vendeurMat, [ratoma.id]: vendeurRat };
   const sellable = PRODUCTS.filter((p) => p.salePrice > 0);
   for (let d = 0; d <= days; d += 1) {
     const date = addDays(start, d);
@@ -366,7 +462,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
       }
     }
 
-    for (const store of [kaloum, matoto, hq]) {
+    for (const store of [kaloum, matoto, ratoma, hq]) {
       const salesToday = !dense
         ? random() < (store.kind === 'headquarters' ? 0.1 : 0.4)
           ? 1
@@ -416,7 +512,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
 
     // Dépenses locales (hebdomadaires) et charges centrales (mensuelles).
     if (d % 7 === 3) {
-      for (const store of [kaloum, matoto]) {
+      for (const store of [kaloum, matoto, ratoma]) {
         await createExpense({
           storeId: store.id,
           category: pick(['Transport', 'Électricité', 'Carburant']),
@@ -617,7 +713,7 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   report.inventories += 1;
 
   // Ventes : deux brouillons (ni stock ni caisse) et trois annulations.
-  for (const [store, seller] of [[kaloum, vendeurKal], [matoto, vendeurMat]] as const) {
+  for (const [store, seller] of [[kaloum, vendeurKal], [matoto, vendeurMat], [ratoma, vendeurRat]] as const) {
     const product = PRODUCTS[6];
     await createSalesInvoice({
       storeId: store.id,
@@ -689,8 +785,28 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   await decideExpense(rejected.id, 'reject', { userId: gerantKal, reason: 'Non prévu au budget', activeStoreId: kaloum.id });
   report.expenses += 3;
 
+  /* ------------------ Briqueterie et atelier de meubles ----------------- */
+  // Chaque magasin a les siens, avec son volume et son calendrier (lib/seed-workshops.ts).
+  const workshops = await seedWorkshops({
+    stores: [
+      { store: hq, manager: adminRef, seller: { id: magasinier, name: 'Abdoulaye Sow' }, scale: 1.2, offset: 0 },
+      { store: kaloum, manager: { id: gerantKal, name: 'Mariama Bangoura' }, seller: { id: vendeurKal, name: 'Moussa Keïta' }, scale: 1, offset: 2 },
+      { store: matoto, manager: { id: gerantMat, name: 'Thierno Diallo' }, seller: { id: vendeurMat, name: 'Hawa Camara' }, scale: 0.8, offset: 5 },
+      { store: ratoma, manager: { id: gerantRat, name: 'Fatoumata Binta Bah' }, seller: { id: vendeurRat, name: 'Lansana Conté' }, scale: 0.6, offset: 8 },
+    ],
+    admin: adminRef,
+    customersByStore,
+    suppliersByStore,
+    productIds,
+    random,
+  });
+  report.brickProductions = workshops.brickProductions;
+  report.brickSales = workshops.brickSales;
+  report.brickOrders = workshops.brickOrders;
+  report.furnitureOrders = workshops.furnitureOrders;
+
   /* ---------------- Clôture des caisses des magasins ------------------ */
-  for (const store of [kaloum, matoto]) {
+  for (const store of [kaloum, matoto, ratoma]) {
     const session = await getOpenSession(store.id);
     if (!session) continue;
     const theoretical = await getSessionTheoreticalByMethod(session.id);
@@ -706,7 +822,9 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
   report.message =
     `Démonstration créée : ${report.stores} magasin(s), ${report.users} compte(s) (mot de passe « demo1234 »), ` +
     `${report.products} produits, ${report.sales} ventes, ${report.purchases} achats, ${report.expenses} dépenses, ` +
-    `${report.transfers} transferts, ${report.inventories} inventaire, ${report.serviceJobs} chantiers, ${report.services} prestations, ${report.quotes} devis, ${report.requests} demandes.`;
+    `${report.transfers} transferts, ${report.inventories} inventaire, ${report.serviceJobs} chantiers, ${report.services} prestations, ${report.quotes} devis, ${report.requests} demandes, ` +
+    `${report.brickProductions} lots de briques, ${report.brickSales} ventes de briques, ${report.brickOrders} commandes de briques, ` +
+    `${report.furnitureOrders} commandes d’atelier.`;
   return report;
 }
 

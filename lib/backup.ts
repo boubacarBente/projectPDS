@@ -381,11 +381,38 @@ export async function restoreBackup(filePath: string): Promise<RestoreReport> {
 }
 
 /**
- * Réinitialise les données métier **sans toucher aux paramètres, aux comptes ni
- * aux magasins**. Refusé sur un poste relié au serveur : les suppressions
- * seraient propagées à tous les magasins.
+ * Tables conservées par la réinitialisation : les comptes et leurs droits, les
+ * paramètres, et les tables techniques sans lesquelles l'application ne démarre
+ * plus (historique des migrations, identité du poste, sessions ouvertes — sinon
+ * la personne qui réinitialise est déconnectée au milieu de l'opération).
+ * `stores` et `user_stores` sont traitées à part : seul le magasin principal reste.
  */
-export async function resetBusinessData(): Promise<{ tables: string[] }> {
+const RESET_KEEP_TABLES = new Set([
+  'users',
+  'user_permissions',
+  'settings',
+  '__drizzle_migrations',
+  'sync_state',
+  'devices',
+  'sessions',
+  'sqlite_sequence',
+]);
+
+/**
+ * Réinitialise la base : **toutes** les tables sont vidées (équivalent d'un
+ * TRUNCATE : SQLite n'en a pas, un `DELETE` sans condition + remise à zéro des
+ * compteurs `sqlite_sequence` fait la même chose), sauf les comptes, les
+ * paramètres et le **magasin principal** (le siège, sinon le plus ancien), auquel
+ * chaque compte est rattaché pour pouvoir retravailler aussitôt.
+ *
+ * La liste vient de `sqlite_master` et non du registre de synchronisation :
+ * l'ancienne version oubliait les tables locales (journal, archives v1, caisse
+ * locale…), qui gardaient leurs lignes.
+ *
+ * Refusé sur un poste relié au serveur : les suppressions seraient propagées à
+ * tous les magasins.
+ */
+export async function resetBusinessData(): Promise<{ tables: string[]; mainStore: string | null }> {
   const mode = await rawAll<{ value: string | null }>(`SELECT value FROM sync_state WHERE key = 'device_mode'`);
   if (mode[0]?.value === 'hq' || mode[0]?.value === 'store') {
     throw new BackupError(
@@ -393,31 +420,83 @@ export async function resetBusinessData(): Promise<{ tables: string[] }> {
     );
   }
 
-  const keep = new Set(['settings', 'users', 'user_permissions', 'stores', 'user_stores']);
   const cleared: string[] = [];
+  let mainStore: string | null = null;
 
   await withTransaction(async () => {
-    for (const table of [...BUSINESS_TABLES].reverse()) {
-      if (keep.has(table)) continue;
-      try {
-        await rawRun(`DELETE FROM main."${table}"`);
-        cleared.push(table);
-      } catch {
-        /* table absente */
+    // Les contrôles de clés étrangères sont reportés à la validation : on vide
+    // dans n'importe quel ordre, seul l'état final doit être cohérent.
+    await rawRun(`PRAGMA defer_foreign_keys = ON`);
+    // Les triggers de capture se taisent : rien de tout cela n'est à synchroniser.
+    await rawRun(
+      `INSERT INTO sync_state (key, value, updated_at) VALUES ('applying', '1', unixepoch())
+       ON CONFLICT(key) DO UPDATE SET value = '1'`,
+    );
+
+    const main = await rawAll<{ id: number; name: string }>(
+      `SELECT id, name FROM stores
+       ORDER BY CASE kind WHEN 'headquarters' THEN 0 ELSE 1 END, id
+       LIMIT 1`,
+    );
+    const mainId = main[0]?.id ?? null;
+    mainStore = main[0]?.name ?? null;
+
+    const tables = (
+      await rawAll<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+      )
+    ).map((r) => r.name);
+    const toClear = tables.filter((t) => !RESET_KEEP_TABLES.has(t) && t !== 'stores' && t !== 'user_stores');
+    const clearedSet = new Set([...toClear, 'stores']);
+
+    // Une table conservée qui pointe vers une table vidée (ex. `users.site_id`,
+    // vestige de la v1 vers `sites`) : le lien est remis à vide, sinon la
+    // validation échoue sur la clé étrangère.
+    for (const kept of RESET_KEEP_TABLES) {
+      if (!tables.includes(kept)) continue;
+      const fks = await rawAll<{ table: string; from: string }>(`PRAGMA foreign_key_list("${kept}")`);
+      const info = await rawAll<{ name: string; notnull: number }>(`PRAGMA table_info("${kept}")`);
+      for (const fk of fks) {
+        if (!clearedSet.has(fk.table) || fk.table === 'stores') continue;
+        if (info.find((c) => c.name === fk.from)?.notnull) continue;
+        await rawRun(`UPDATE main."${kept}" SET "${fk.from}" = NULL`);
       }
     }
-    await rawRun(`DELETE FROM doc_sequences`).catch(() => {});
-    await rawRun(`DELETE FROM sync_changes`).catch(() => {});
-    try {
-      await rawRun(
-        `DELETE FROM main."sqlite_sequence" WHERE name NOT IN ('settings', 'users', 'stores', 'user_stores', 'user_permissions')`,
-      );
-    } catch {
-      /* table absente */
+
+    for (const table of toClear) {
+      await rawRun(`DELETE FROM main."${table}"`);
+      cleared.push(table);
     }
+
+    if (mainId === null) {
+      await rawRun(`DELETE FROM user_stores`);
+    } else {
+      await rawRun(`DELETE FROM user_stores WHERE store_id <> ?`, [mainId]);
+      await rawRun(`DELETE FROM stores WHERE id <> ?`, [mainId]);
+      await rawRun(`UPDATE stores SET manager_user_id = NULL WHERE manager_user_id NOT IN (SELECT id FROM users)`);
+      // Un compte qui n'était affecté qu'à un magasin supprimé n'aurait plus
+      // aucun magasin : il est rattaché au magasin principal.
+      await rawRun(
+        `INSERT INTO user_stores (user_id, store_id, is_manager, is_active, created_at, sync_id, updated_at)
+         SELECT u.id, ?, 0, 1, unixepoch(), 'us-' || lower(hex(randomblob(16))), unixepoch()
+         FROM users u
+         WHERE NOT EXISTS (SELECT 1 FROM user_stores us WHERE us.user_id = u.id)`,
+        [mainId],
+      );
+      await rawRun(`UPDATE sessions SET store_id = ? WHERE store_id IS NOT NULL AND store_id <> ?`, [mainId, mainId]);
+    }
+    cleared.push('stores (hors magasin principal)', 'user_stores (hors magasin principal)');
+
+    // Compteurs AUTOINCREMENT remis à zéro, comme un TRUNCATE.
+    await rawRun(
+      `DELETE FROM sqlite_sequence
+       WHERE name NOT IN ('users', 'user_permissions', 'settings', 'stores', 'user_stores', 'sync_state', 'devices')`,
+    ).catch(() => {});
+
+    await rawRun(`UPDATE sync_state SET value = '0' WHERE key = 'applying'`);
   });
 
-  return { tables: cleared };
+  return { tables: cleared, mainStore };
 }
 
 /** Taille de la base et des sauvegardes, pour l'écran Paramètres. */

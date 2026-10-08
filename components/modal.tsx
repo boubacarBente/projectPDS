@@ -1,5 +1,7 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface ModalProps {
@@ -35,12 +37,31 @@ const sizeClasses = {
   xl: 'max-w-4xl',
 };
 
+/**
+ * La fenêtre est rendue **dans un portail** (`document.body`). Rendue sur
+ * place, une modale ouverte depuis une autre (« Nouveau client » dans le
+ * formulaire d'un chantier, d'un devis…) plaçait son `<form>` à l'intérieur du
+ * `<form>` parent : HTML invalide (erreur d'hydratation « <form> cannot be a
+ * descendant of <form> », constatée en recette le 8 octobre 2026).
+ *
+ * Un portail garde pourtant la remontée des événements **React** vers le
+ * composant parent : sans `stopPropagation` ci-dessous, valider le client
+ * déclenchait aussi l'envoi du formulaire du chantier.
+ */
 export function Modal({ isOpen, onClose, title, children, size = 'md', fullScreenMobile = false, footer, closeOnOverlay = true }: ModalProps) {
   const hasFooter = footer !== undefined && footer !== null;
-  return (
+  // Le portail n'existe qu'après le montage : le rendu serveur n'a pas de `document`.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+          onSubmit={(event) => event.stopPropagation()}
+        >
           {/* Overlay */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -85,6 +106,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', fullScree
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

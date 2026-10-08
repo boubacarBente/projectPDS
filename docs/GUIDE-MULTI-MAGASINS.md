@@ -695,7 +695,7 @@ Autres zones de la fiche :
 | **Numérotation** | Ajouter `transferPrefix` (TRF), `inventoryPrefix` (INV), `invoiceNumberFormat` (défaut `{PREFIX}-{STORE}-{YYYY}-{NNNNNN}` ; aide : jetons `{PREFIX}` `{STORE}` `{YYYY}` `{NNNNNN}` ; `{STORE}` est ajouté automatiquement s'il manque). |
 | **Multi-magasins** (nouvelle carte) | `expenseApprovalThreshold` (montant ; 0 = jamais d'approbation), `transferApprovalRequired` (case), `centralChargesAllocation` (« Au prorata du CA » / « À parts égales » / « Ne pas répartir » : dépenses du siège réparties sur les magasins dans la comparaison des rapports), `localPricesAllowed` (case). |
 | **Sauvegarde automatique** | `autoBackupEnabled`, `backupExternalDir` (clé USB, disque réseau, dossier Drive synchronisé), `backupRetentionDays` ; afficher `storage.lastBackupAt`. La sauvegarde est vérifiée chaque heure par `lib/scheduler.ts`. |
-| **Sauvegarde / Restauration / Réinitialisation** (existantes) | `GET /api/parametres/backup`, `POST /api/parametres/restore` (garde l'identité du poste), `POST /api/parametres/reset-data` (**refusée** sur un poste relié au serveur). |
+| **Sauvegarde / Restauration / Réinitialisation** (existantes) | `GET /api/parametres/backup`, `POST /api/parametres/restore` (garde l'identité du poste), `POST /api/parametres/reset-data` (**refusée** sur un poste relié au serveur ; vide toutes les tables sauf comptes, paramètres et magasin principal — README §9). |
 | Poste magasin | Bandeau « Paramètres de l'entreprise gérés au siège ». Désactiver tous les champs sauf `LOCAL_ONLY_SETTINGS_KEYS` (thème, couleurs, barre latérale, passerelle de rapport, sauvegarde). Sinon le serveur renvoie 403. |
 | Textes | Retirer toute mention de briqueterie, atelier, menuisiers, briquetiers. |
 
@@ -772,7 +772,7 @@ Dossier `server/` (Node 20+, `pg`). Fichiers : `index.mjs`, `Dockerfile`, `docke
    - magasin `PRINC` ;
    - stocks identiques (`product_stocks` = somme des mouvements) ;
    - factures rattachées.
-4. **Démonstration** : sur une base vierge, `npm run demo:seed` (ou Paramètres → données de démonstration en développement) : magasins SIEGE / KAL / MAT ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `magasinier.siege`, mot de passe `demo1234` ; 13 mois d'activité, tous les statuts.
+4. **Démonstration** : sur une base vierge, `npm run demo:seed` (ou Paramètres → données de démonstration en développement) : magasins SIEGE (ou le magasin principal existant) / KAL / MAT / RAT ; comptes `gerant.kaloum`, `vendeur.kaloum`, `gerant.matoto`, `vendeur.matoto`, `gerant.ratoma`, `vendeur.ratoma`, `magasinier.siege`, mot de passe `demo1234` ; 13 mois d’activité, tous les statuts ; briqueterie et atelier dans chaque magasin (README §28.4).
 5. **Cloisonnement** :
    - connecté en `vendeur.kaloum`, `GET /api/ventes?store=<id MAT>` doit renvoyer 403 ;
    - une vente créée doit avoir `store_id` = KAL.

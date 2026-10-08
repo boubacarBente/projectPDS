@@ -1451,9 +1451,11 @@ export default function ParametresPage() {
         isSubmitting={isWorking}
         message={
           <>
-            Toutes les ventes, achats, clients, produits, mouvements de caisse et de stock seront{' '}
-            <strong>définitivement supprimés</strong>. Les paramètres de l’entreprise, les magasins et les comptes
-            utilisateurs sont conservés. Refusé sur un poste relié au serveur central.
+            Toutes les tables de la base sont <strong>vidées</strong> : ventes, achats, clients, fournisseurs,
+            produits, catégories, caisse, stock, chantiers, atelier, briqueterie, journal… et tous les magasins
+            sauf le <strong>magasin principal</strong>. Seuls les comptes utilisateurs (rattachés au magasin
+            principal) et les paramètres de l’entreprise sont conservés. Refusé sur un poste relié au serveur
+            central.
             <br />
             <span className="text-sm">Cette action est irréversible.</span>
           </>
