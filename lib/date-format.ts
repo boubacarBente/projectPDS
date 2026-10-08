@@ -36,6 +36,15 @@ export function formatMonthYear(value: string | Date | null | undefined): string
   return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 }
 
+const SHORT_MONTHS = ['Janv', 'Févr', 'Mars', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sept', 'Oct', 'Nov', 'Déc'];
+
+/** « Nov 25 » : axe d'un graphique sur 12 mois, où chaque mois doit rester lisible. */
+export function formatMonthShort(value: string | Date | null | undefined): string {
+  const d = toDate(value);
+  if (!d) return '—';
+  return `${SHORT_MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
+}
+
 export function formatDateTime(value: string | Date | null | undefined): string {
   const d = toDate(value);
   if (!d) return '—';

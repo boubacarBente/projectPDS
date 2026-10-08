@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { fail, ok, requireAction, scopeFromRequest } from '@/lib/api';
 import { getDashboardSnapshot, resolvePeriod, type PeriodKey } from '@/lib/dashboard';
+import { canViewSalesProfit } from '@/lib/sales';
 
 const PERIODS: PeriodKey[] = ['day', 'week', 'month', 'year', 'total'];
 
@@ -25,6 +26,8 @@ export async function GET(request: NextRequest) {
 
     const snapshot = await getDashboardSnapshot(periodKey, scope, {
       includeCentralActivity: user.allStores && scope.length > 1,
+      // Bénéfice mensuel : seulement pour un compte qui a le droit de voir les bénéfices.
+      includeMonthlyProfit: await canViewSalesProfit(user),
     });
 
     if (from && to) {

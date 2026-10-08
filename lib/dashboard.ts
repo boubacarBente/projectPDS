@@ -125,6 +125,12 @@ export type DashboardSnapshot = {
     paymentStatus: string;
   }[];
   monthly: { month: string; revenue: number; purchases: number; expenses: number }[];
+  /**
+   * Bénéfice net de chacun des 12 mois de `monthly` (même calcul que `/soldes`,
+   * `getPeriodResult`). `null` pour un compte sans `balances.view` : le
+   * bénéfice est une donnée sensible, gardée côté serveur (AGENTS.md, invariant 13).
+   */
+  monthlyProfit: { month: string; netProfit: number }[] | null;
   /** Comparaison entre magasins (vue consolidée, §6) — un objet par magasin. */
   stores: {
     storeId: number;
@@ -168,7 +174,7 @@ export type DashboardSnapshot = {
 export async function getDashboardSnapshot(
   periodKey: PeriodKey,
   scope: StoreScope,
-  options: { includeCentralActivity?: boolean } = {},
+  options: { includeCentralActivity?: boolean; includeMonthlyProfit?: boolean } = {},
 ): Promise<DashboardSnapshot> {
   const period = resolvePeriod(periodKey);
   const { from, to } = period;
@@ -364,6 +370,19 @@ export async function getDashboardSnapshot(
     cursor.setMonth(cursor.getMonth() + 1);
   }
 
+  // Bénéfice mois par mois : `getPeriodResult()` sur les bornes de chaque mois,
+  // pour que la barre d'un mois soit exactement le « Bénéfice net » de /soldes.
+  const monthlyProfit = options.includeMonthlyProfit
+    ? await Promise.all(
+        monthKeys.map(async (month) => {
+          const [year, m] = month.split('-').map(Number);
+          const lastDay = new Date(year, m, 0).getDate();
+          const result = await getPeriodResult(`${month}-01`, `${month}-${String(lastDay).padStart(2, '0')}`, scope);
+          return { month, netProfit: result.netProfit };
+        }),
+      )
+    : null;
+
   const salesByMonth = new Map(monthlySales.map((r) => [r.month, Number(r.revenue ?? 0)]));
   const purchasesByMonth = new Map(monthlyPurchases.map((r) => [r.month, Number(r.total ?? 0)]));
   const expensesByMonth = new Map(monthlyExpenses.map((r) => [r.month, Number(r.total ?? 0)]));
@@ -524,6 +543,7 @@ export async function getDashboardSnapshot(
       purchases: purchasesByMonth.get(month) ?? 0,
       expenses: expensesByMonth.get(month) ?? 0,
     })),
+    monthlyProfit,
     stores,
     alerts: {
       transfersToApprove: Number(alertRow?.to_approve ?? 0),

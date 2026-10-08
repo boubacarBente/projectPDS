@@ -39,8 +39,10 @@ import {
 } from '@/components/design-system';
 import {
   MonthlyEvolutionChart,
+  MonthlyProfitChart,
   TopProductsChart,
 } from '@/components/dashboard/dashboard-charts';
+import type { Action } from '@/lib/permissions';
 import { RoleGate } from '@/components/role-gate';
 import { Tooltip } from '@/components/tooltip';
 import { useSettings } from '@/app/parametres/page';
@@ -146,7 +148,46 @@ const CARD_TOOLTIPS = {
     'Les huit dernières ventes enregistrées, avec leur statut de paiement. Les brouillons n’y figurent pas.',
   'Clients débiteurs':
     'Les clients qui doivent encore de l’argent, du plus gros encours au plus petit, avec leur échéance la plus ancienne.',
+  'Bénéfice mensuel':
+    'Le bénéfice net de chacun des douze derniers mois : chiffre d’affaires − coût des marchandises − dépenses − main-d’œuvre. Chaque barre est exactement le « Bénéfice net » de la page Soldes pour ce mois. Une barre rouge sous zéro est un mois en perte. Ce graphique ne dépend pas de la période choisie en haut de page.',
+  'Actions rapides':
+    'Raccourcis vers les opérations les plus fréquentes. Seules celles que votre compte a le droit de faire sont affichées.',
 } as const;
+
+/**
+ * Raccourcis du tableau de bord. Chacun n'apparaît que si le compte a le droit
+ * correspondant (`RoleGate`) : un vendeur ne voit pas « Nouvel achat ».
+ */
+const QUICK_ACTIONS: { label: string; href: string; action: Action; tone: PastilleTone; icon: string }[] = [
+  {
+    label: 'Enregistrer une vente',
+    href: '/ventes/nouvelle',
+    action: 'sales.create',
+    tone: 'primary',
+    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+  },
+  {
+    label: 'Saisir un achat',
+    href: '/achats/nouvelle',
+    action: 'purchases.create',
+    tone: 'info',
+    icon: 'M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z',
+  },
+  {
+    label: 'Voir les ventes',
+    href: '/ventes',
+    action: 'sales.view',
+    tone: 'accent',
+    icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
+  },
+  {
+    label: 'Gérer les clients',
+    href: '/clients',
+    action: 'customers.view',
+    tone: 'warning',
+    icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
+  },
+];
 
 /* ------------------------------------------------------------------ *
  * Briques visuelles locales (maquette) — copiées des pages ventes et
@@ -762,6 +803,55 @@ export default function DashboardPage() {
               </div>
             )}
           </Card>
+
+          {/* ----------------- Bénéfice mensuel et actions rapides ---------------- */}
+          {/* Le graphique n'existe que pour un compte qui voit les bénéfices
+              (`monthlyProfit` vaut null sinon) : les actions prennent alors
+              toute la largeur. */}
+          <div className={`grid gap-5 ${data!.monthlyProfit ? 'lg:grid-cols-3' : ''}`}>
+            {data!.monthlyProfit && (
+              <Card className="min-w-0 lg:col-span-2">
+                <CardTitle
+                  icon={<Icon d={ICONS.trend} />}
+                  tone="success"
+                  title="Bénéfice mensuel"
+                  subtitle="12 derniers mois."
+                />
+                <div className="mt-4">
+                  <MonthlyProfitChart data={data!.monthlyProfit} />
+                </div>
+              </Card>
+            )}
+
+            <Card className="min-w-0">
+              <CardTitle
+                icon={<Icon d={ICONS.dashboard} />}
+                tone="primary"
+                title="Actions rapides"
+                subtitle="Accès direct."
+              />
+              <ul
+                className={`mt-4 grid gap-3 ${data!.monthlyProfit ? '' : 'sm:grid-cols-2 xl:grid-cols-4'}`}
+              >
+                {QUICK_ACTIONS.map((item) => (
+                  <RoleGate key={item.href} action={item.action}>
+                    <li>
+                      <Link
+                        href={item.href}
+                        className="flex min-h-[44px] items-center gap-3 rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 transition-colors hover:bg-base-200"
+                      >
+                        <Pastille tone={item.tone} className="h-9 w-9">
+                          <Icon d={item.icon} />
+                        </Pastille>
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.label}</span>
+                        <Icon d="M9 5l7 7-7 7" className="h-4 w-4 shrink-0 text-base-content/40" />
+                      </Link>
+                    </li>
+                  </RoleGate>
+                ))}
+              </ul>
+            </Card>
+          </div>
 
           {/* ------------------------------ Graphiques ---------------------------- */}
           <div className="grid gap-5 lg:grid-cols-2">

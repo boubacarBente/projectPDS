@@ -18,7 +18,7 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut, Line } from 'react-chartjs-2';
 import { formatCurrencyCompact } from '@/lib/format';
-import { formatMonthYear } from '@/lib/date-format';
+import { formatMonthShort, formatMonthYear } from '@/lib/date-format';
 
 /**
  * Graphiques du tableau de bord et des rapports (Chart.js, repris du projet Gaz).
@@ -208,6 +208,69 @@ export function MonthlyEvolutionChart({
   return (
     <div className="h-56 sm:h-64">
       <Bar data={chartData} options={BASE_OPTIONS} />
+    </div>
+  );
+}
+
+/**
+ * Bénéfice net mois par mois (12 derniers mois). Un mois en perte est en
+ * couleur d'erreur : la barre descend sous zéro **et** change de teinte, et
+ * l'infobulle donne le montant signé — la couleur n'est jamais seule.
+ */
+export function MonthlyProfitChart({ data }: { data: { month: string; netProfit: number }[] }) {
+  const colors = useMemo(() => palette(), []);
+  const hasLoss = data.some((d) => d.netProfit < 0);
+
+  const chartData = useMemo(
+    () => ({
+      // Mois courts (« Nov 25 ») : en toutes lettres, Chart.js en masquait un sur deux.
+      labels: data.map((d) => formatMonthShort(`${d.month}-01`)),
+      datasets: [
+        {
+          label: 'Bénéfice',
+          data: data.map((d) => d.netProfit),
+          backgroundColor: data.map((d) => (d.netProfit < 0 ? colors[4] : colors[1])),
+          borderRadius: 6,
+          maxBarThickness: 34,
+        },
+      ],
+    }),
+    [data, colors],
+  );
+
+  // Les barres n'ont pas toutes la même couleur : la légende par défaut prenait
+  // celle de la première (rouge si le premier mois est en perte). On la décrit.
+  const options = useMemo<ChartOptions<'bar'>>(
+    () => ({
+      ...BASE_OPTIONS,
+      scales: {
+        ...BASE_OPTIONS.scales,
+        x: { ...BASE_OPTIONS.scales.x, ticks: { font: { size: 10 }, maxRotation: 45, minRotation: 0, autoSkip: false } },
+      },
+      plugins: {
+        ...BASE_OPTIONS.plugins,
+        legend: {
+          ...BASE_OPTIONS.plugins.legend,
+          labels: {
+            ...BASE_OPTIONS.plugins.legend.labels,
+            generateLabels: () => [
+              { text: 'Bénéfice', fillStyle: colors[1], strokeStyle: colors[1], pointStyle: 'circle', datasetIndex: 0 },
+              ...(hasLoss
+                ? [{ text: 'Perte', fillStyle: colors[4], strokeStyle: colors[4], pointStyle: 'circle' as const, datasetIndex: 0 }]
+                : []),
+            ],
+          },
+          // Un seul jeu de données : cliquer la légende ne doit rien masquer.
+          onClick: () => {},
+        },
+      },
+    }),
+    [colors, hasLoss],
+  );
+
+  return (
+    <div className="h-56 sm:h-64">
+      <Bar data={chartData} options={options} />
     </div>
   );
 }
