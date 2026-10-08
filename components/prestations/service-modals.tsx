@@ -6,14 +6,19 @@ import { Modal } from '@/components/modal';
 import { FormField } from '@/components/design-system';
 import { useSettings } from '@/app/parametres/page';
 import { jobCategoryOptions } from '@/components/chantiers/chantiers-modals';
-import { SERVICE_UNITS, readApiError, type ServiceRow } from '@/components/prestations/shared';
+import { readApiError, type ServiceRow } from '@/components/prestations/shared';
 
 /**
  * Création / modification d'une prestation du catalogue **du magasin actif**.
  *
- * Le code est facultatif : laissé vide, il est attribué automatiquement
- * (`PRE-001`, `PRE-002`… propre au magasin). Un changement de prix est
- * historisé côté serveur et ne modifie aucun devis ni chantier existant.
+ * Le **code** est toujours attribué automatiquement (`PRE-001`, `PRE-002`…
+ * propre au magasin) : il ne se saisit pas. Pas d'**unité** à choisir : une
+ * nouvelle prestation se compte au forfait (les anciennes gardent la leur).
+ *
+ * Le prix est **estimatif** : c'est le prix de départ proposé quand on ajoute
+ * la prestation à un devis ou un chantier, où il se modifie librement — une
+ * même prestation n'a pas le même prix d'un chantier à l'autre. Un changement
+ * de ce prix est historisé et ne modifie aucun devis ni chantier existant.
  */
 export function ServiceFormModal({
   isOpen,
@@ -29,9 +34,7 @@ export function ServiceFormModal({
 }) {
   const { settings } = useSettings();
   const [name, setName] = useState('');
-  const [code, setCode] = useState('');
   const [category, setCategory] = useState('');
-  const [unit, setUnit] = useState('forfait');
   const [unitPrice, setUnitPrice] = useState('');
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -40,9 +43,7 @@ export function ServiceFormModal({
   useEffect(() => {
     if (!isOpen) return;
     setName(service?.name ?? '');
-    setCode(service?.code ?? '');
     setCategory(service?.category ?? '');
-    setUnit(service?.unit ?? 'forfait');
     setUnitPrice(service ? String(service.unitPrice) : '');
     setDescription(service?.description ?? '');
     setFormError(null);
@@ -56,7 +57,7 @@ export function ServiceFormModal({
     if (!name.trim()) return setFormError('Le nom de la prestation est obligatoire.');
     if (!category) return setFormError('Choisissez une catégorie.');
     const price = Number(String(unitPrice).replace(',', '.'));
-    if (!Number.isFinite(price) || price < 0) return setFormError('Le prix indicatif doit être un nombre positif.');
+    if (!Number.isFinite(price) || price < 0) return setFormError('Le prix estimatif doit être un nombre positif.');
 
     setFormError(null);
     setIsSubmitting(true);
@@ -66,10 +67,9 @@ export function ServiceFormModal({
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
+          // Ni code (automatique) ni unité (forfait par défaut, inchangée en modification).
           name: name.trim(),
-          code: code.trim() || (service ? service.code : null),
           category,
-          unit: unit.trim() || 'forfait',
           unitPrice: price,
           description: description.trim() || null,
         }),
@@ -110,7 +110,7 @@ export function ServiceFormModal({
           pas et fixent leurs propres prix.
         </p>
 
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
           <FormField label="Nom de la prestation" htmlFor="service-name" required>
             <input
               id="service-name"
@@ -122,20 +122,16 @@ export function ServiceFormModal({
               disabled={isSubmitting}
             />
           </FormField>
-          <FormField label="Code" htmlFor="service-code" hint="Vide = attribué automatiquement.">
-            <input
-              id="service-code"
-              type="text"
-              className="input input-bordered min-h-11 w-full uppercase"
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              placeholder="PRE-…"
-              disabled={isSubmitting}
-            />
-          </FormField>
+          {/* Code en lecture seule : toujours attribué par le logiciel. */}
+          <div>
+            <p className="mb-1 text-sm font-medium text-base-content/70">Code</p>
+            <p className="flex min-h-11 items-center rounded-lg border border-dashed border-base-300 bg-base-200/40 px-3 text-sm tabular text-base-content/70">
+              {service ? service.code : 'Automatique (PRE-…)'}
+            </p>
+          </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <FormField label="Catégorie" htmlFor="service-category" required hint="Liste commune, modifiable dans les paramètres.">
             <select
               id="service-category"
@@ -152,30 +148,19 @@ export function ServiceFormModal({
               ))}
             </select>
           </FormField>
-          <FormField label="Unité" htmlFor="service-unit">
-            <input
-              id="service-unit"
-              type="text"
-              list="service-units"
-              className="input input-bordered min-h-11 w-full"
-              value={unit}
-              onChange={(event) => setUnit(event.target.value)}
-              disabled={isSubmitting}
-            />
-            <datalist id="service-units">
-              {SERVICE_UNITS.map((u) => (
-                <option key={u} value={u} />
-              ))}
-            </datalist>
-          </FormField>
-          <FormField label="Prix indicatif (GNF)" htmlFor="service-price" required>
+          <FormField
+            label="Prix estimatif (GNF)"
+            htmlFor="service-price"
+            required
+            hint="Prix de départ, modifiable sur chaque devis ou chantier."
+          >
             <input
               id="service-price"
               type="number"
               inputMode="decimal"
               min="0"
               step="any"
-              className="input input-bordered min-h-11 w-full text-right tabular"
+              className="input input-bordered min-h-11 w-full tabular"
               value={unitPrice}
               onChange={(event) => setUnitPrice(event.target.value)}
               placeholder="0"
@@ -183,6 +168,12 @@ export function ServiceFormModal({
             />
           </FormField>
         </div>
+
+        <p className="rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm">
+          <strong>Prix estimatif :</strong> il sera proposé quand vous ajouterez cette prestation à un devis ou à un
+          chantier, et vous pourrez l’y changer. Une même prestation n’a pas forcément le même prix d’un chantier à l’autre
+          (surface, accès, client…) : chaque chantier garde son propre prix.
+        </p>
 
         {priceChanged && (
           <p className="rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm">

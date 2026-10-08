@@ -23,6 +23,7 @@ import { StoreScopeSelect, StoreTag, scopeShowsStore, useStoreScope } from '@/co
 import { jobCategoryOptions } from '@/components/chantiers/chantiers-modals';
 import { clampPage, useViewStateRehydration, writeViewState } from '@/lib/view-state';
 import { formatNumber, formatQuantity } from '@/lib/format';
+import { formatDateShort } from '@/lib/date-format';
 import {
   ServiceStatusBadge,
   readApiError,
@@ -58,7 +59,9 @@ const STATUS_OPTIONS = [
   { value: 'inactive', label: 'Désactivées' },
   { value: 'archived', label: 'Archivées' },
 ];
+// Sans choix : la dernière prestation créée en tête (tri serveur par défaut).
 const SORT_OPTIONS = [
+  { value: 'name', label: 'Ordre alphabétique' },
   { value: 'revenue', label: 'Les plus rentables' },
   { value: 'usage', label: 'Les plus utilisées' },
   { value: 'price', label: 'Prix décroissant' },
@@ -164,6 +167,12 @@ export default function PrestationsPage() {
   const columns: Column<ServiceRow>[] = useMemo(
     () => [
       {
+        key: 'createdAt',
+        label: 'Créée le',
+        className: 'whitespace-nowrap',
+        render: (service) => <span className="tabular text-base-content/70">{formatDateShort(service.createdAt)}</span>,
+      },
+      {
         key: 'name',
         label: 'Prestation',
         primary: true,
@@ -186,7 +195,7 @@ export default function PrestationsPage() {
       },
       {
         key: 'price',
-        label: 'Prix indicatif',
+        label: 'Prix estimatif',
         className: 'text-right whitespace-nowrap',
         render: (service) => (
           <span className="block">
@@ -320,7 +329,7 @@ export default function PrestationsPage() {
               options={STATUS_OPTIONS}
               placeholder="Actives et désactivées"
             />
-            <FilterSelect value={sort} onChange={setSort} options={SORT_OPTIONS} placeholder="Ordre alphabétique" />
+            <FilterSelect value={sort} onChange={setSort} options={SORT_OPTIONS} placeholder="Les plus récentes" />
           </>
         }
         secondaryCount={activeFilters}
@@ -358,7 +367,7 @@ export default function PrestationsPage() {
               canManage
                 ? (service) =>
                     service.storeId === activeStoreId ? (
-                      <div className="flex flex-wrap justify-end gap-1">
+                      <div className="flex flex-wrap justify-end gap-1 sm:flex-nowrap">
                         <button
                           type="button"
                           className="btn btn-ghost btn-sm min-h-11"

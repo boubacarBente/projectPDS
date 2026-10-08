@@ -61,35 +61,46 @@ export function DocumentShell({
 }) {
   return (
     <div id={id} className="print-area mx-auto w-full max-w-4xl rounded-2xl border border-base-200 bg-base-100 p-5 shadow-sm sm:p-8">
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-base-200 pb-5">
-        <div className="flex min-w-0 items-start gap-3">
-          {company.logo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={company.logo} alt={`Logo ${company.name}`} className="h-14 w-14 shrink-0 rounded-xl border border-base-200 object-contain" />
-          ) : null}
-          <div className="min-w-0">
-            <p className="text-lg font-bold">{company.name}</p>
-            {company.branch ? <p className="text-sm text-base-content/60">{company.branch}</p> : null}
-            {company.address ? <p className="text-sm text-base-content/60">{company.address}</p> : null}
-            <p className="text-sm text-base-content/60">{[company.phone, company.email].filter(Boolean).join(' · ')}</p>
-            {company.taxId ? <p className="text-xs text-base-content/50">NIF : {company.taxId}</p> : null}
+      {/*
+        Même disposition que la facture de vente (components/ventes/invoice-document.tsx)
+        et que l'export (renderExportDocument) : identité à gauche, titre à droite,
+        puis les coordonnées sur toute la largeur. Sous le nom, la ligne des
+        téléphones élargissait le bloc de gauche et rejetait le titre au milieu.
+      */}
+      <header className="border-b-2 border-primary/70 pb-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            {company.logo ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={company.logo} alt={`Logo ${company.name}`} className="h-14 w-14 shrink-0 rounded-xl border border-base-200 object-contain sm:h-16 sm:w-16" />
+            ) : null}
+            <div className="min-w-0">
+              <p className="text-base font-bold leading-tight wrap-break-word sm:text-lg">{company.name}</p>
+              {company.branch ? <p className="text-xs text-base-content/70 sm:text-sm">{company.branch}</p> : null}
+            </div>
+          </div>
+          <div className="shrink-0 sm:text-right">
+            <p className="text-xl font-extrabold uppercase leading-none tracking-[0.12em] text-primary sm:text-2xl">{title}</p>
+            <p className="tabular mt-1.5 text-sm font-semibold leading-tight sm:text-base">{number}</p>
+            {dateLines.map((line) => (
+              <p key={line} className="tabular mt-0.5 text-xs text-base-content/60">
+                {line}
+              </p>
+            ))}
+            {badge && (
+              <div className="mt-2 flex sm:justify-end">
+                <Badge tone={badge.tone}>{badge.label}</Badge>
+              </div>
+            )}
           </div>
         </div>
-        <div className="text-right">
-          <p className="text-xl font-bold uppercase tracking-wide text-primary">{title}</p>
-          <p className="tabular text-sm font-semibold">{number}</p>
-          {dateLines.map((line) => (
-            <p key={line} className="tabular text-sm text-base-content/60">
-              {line}
-            </p>
-          ))}
-          {badge && (
-            <div className="mt-2 flex justify-end">
-              <Badge tone={badge.tone}>{badge.label}</Badge>
-            </div>
-          )}
+        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4 text-base-content/70">
+          {company.address ? <span>{company.address}</span> : null}
+          {company.phone ? <span className="tabular">Tél. : {company.phone}</span> : null}
+          {company.email ? <span>{company.email}</span> : null}
+          {company.taxId ? <span>NIF : {company.taxId}</span> : null}
         </div>
-      </div>
+      </header>
       {children}
       <p className="mt-6 border-t border-base-200 pt-4 text-center text-xs text-base-content/50">
         {footer || company.footerNote || 'Merci pour votre confiance.'}

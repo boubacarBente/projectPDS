@@ -135,59 +135,74 @@ export function InvoiceDocument({
       className={`mx-auto max-w-full rounded-2xl border border-base-200 bg-white p-4 text-[13px] text-black shadow-sm sm:p-6 print:max-w-none print:rounded-none print:border-0 print:p-0 print:shadow-none ${className}`.trim()}
     >
       {/* ── En-tête : identité de l'entreprise ───────────────────────────── */}
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-primary/70 pb-4">
-        <div className="flex min-w-0 items-start gap-3">
-          {/*
-            Le logo de l'entreprise est téléversé dans les paramètres (stocké en
-            base64). Tant qu'aucun logo n'a été téléversé, on affiche le logo
-            livré avec l'application plutôt qu'un bloc d'initiales : le client a
-            fourni son logo, une facture sans logo serait un recul.
-          */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={company.companyLogo || DEFAULT_COMPANY_LOGO}
-            alt={`Logo ${company.companyName}`}
-            className="h-14 w-14 shrink-0 rounded-xl object-contain sm:h-16 sm:w-16"
-          />
-          <div className="min-w-0">
-            <p className="text-base font-bold leading-tight break-words sm:text-lg">
-              {company.companyName}
-            </p>
-            {company.companyBranch ? (
-              <p className="text-xs text-base-content/70">{company.companyBranch}</p>
-            ) : null}
-            <div className="mt-1 space-y-0.5 text-[11px] leading-4 text-base-content/70">
-              {company.companyAddress ? <p>{company.companyAddress}</p> : null}
-              <p className="tabular">
-                {company.companyPhone ? `Tél. : ${company.companyPhone}` : null}
-                {company.companyPhone && company.companyEmail ? ' · ' : null}
-                {company.companyEmail ?? null}
+      {/*
+        Deux étages : identité à gauche et titre du document à droite, puis les
+        coordonnées sur toute la largeur. Les coordonnées ne sont plus sous le
+        nom : la ligne des trois téléphones élargissait le bloc de gauche et
+        rejetait le titre « Facture » à la ligne, flottant au milieu.
+      */}
+      <header className="border-b-2 border-primary/70 pb-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            {/*
+              Le logo de l'entreprise est téléversé dans les paramètres (stocké en
+              base64). Tant qu'aucun logo n'a été téléversé, on affiche le logo
+              livré avec l'application plutôt qu'un bloc d'initiales : le client a
+              fourni son logo, une facture sans logo serait un recul.
+            */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={company.companyLogo || DEFAULT_COMPANY_LOGO}
+              alt={`Logo ${company.companyName}`}
+              className="h-14 w-14 shrink-0 rounded-xl object-contain sm:h-16 sm:w-16"
+            />
+            <div className="min-w-0">
+              <p className="text-base font-bold leading-tight break-words sm:text-lg">
+                {company.companyName}
               </p>
-              {company.companyTaxId ? <p>NIF : {company.companyTaxId}</p> : null}
+              {company.companyBranch ? (
+                <p className="text-xs text-base-content/70">{company.companyBranch}</p>
+              ) : null}
             </div>
+          </div>
+  
+          <div className="shrink-0 sm:text-right">
+            <p className="text-xl font-extrabold uppercase leading-none tracking-[0.12em] text-primary sm:text-2xl">
+              Facture
+            </p>
+            <p className="tabular mt-1.5 text-sm font-semibold leading-tight sm:text-base">
+              {invoice.invoiceNumber}
+            </p>
           </div>
         </div>
 
-        <div className="text-right">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-            Facture
-          </p>
-          <p className="tabular text-lg font-bold leading-tight sm:text-xl">
-            {invoice.invoiceNumber}
-          </p>
-          <p className="tabular mt-1 text-xs text-base-content/70">
-            Date : {formatDateLong(invoice.date)}
-          </p>
-          {invoice.dueDate ? (
-            <p className="tabular text-xs text-base-content/70">
-              Échéance : {formatDateShort(invoice.dueDate)}
-            </p>
-          ) : null}
-          {documentStatusLabel ? (
-            <p className="mt-1 text-xs font-semibold text-base-content/70">{documentStatusLabel}</p>
-          ) : null}
+        <div className="mt-3 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] leading-4 text-base-content/70">
+          {company.companyAddress ? <span>{company.companyAddress}</span> : null}
+          {company.companyPhone ? <span className="tabular">Tél. : {company.companyPhone}</span> : null}
+          {company.companyEmail ? <span>{company.companyEmail}</span> : null}
+          {company.companyTaxId ? <span>NIF : {company.companyTaxId}</span> : null}
         </div>
       </header>
+
+      {/* ── Références du document : date, échéance, statut ──────────────── */}
+      <section className="mt-3 flex flex-wrap gap-x-8 gap-y-2 rounded-xl bg-base-200/50 px-3 py-2 print:bg-transparent print:px-0">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-base-content/50">Date</p>
+          <p className="tabular text-xs font-semibold">{formatDateLong(invoice.date)}</p>
+        </div>
+        {invoice.dueDate ? (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-base-content/50">Échéance</p>
+            <p className="tabular text-xs font-semibold">{formatDateShort(invoice.dueDate)}</p>
+          </div>
+        ) : null}
+        {documentStatusLabel ? (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-base-content/50">Statut</p>
+            <p className="text-xs font-semibold">{documentStatusLabel}</p>
+          </div>
+        ) : null}
+      </section>
 
       {/* ── Bloc client + règlement ──────────────────────────────────────── */}
       <section className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -7,12 +7,14 @@ import { toast } from 'react-toastify';
 import { PageHeader } from '@/components/page-header';
 import { ResponsiveTable } from '@/components/responsive-table';
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { SectionTabs } from '@/components/section-tabs';
 import {
   Badge,
   Card,
   EmptyState,
   ErrorState,
   InfoRow,
+  MiniStat,
   MoneyText,
   PageSection,
   SkeletonCards,
@@ -34,6 +36,7 @@ import {
   JobRemoveMaterialDialog,
   JobRemoveWorkerDialog,
   JobStatusBadges,
+  jobNeedsPrice,
   JobWorkerModal,
   STAGE_STATUS_LABELS,
   STAGE_STATUS_TONES,
@@ -67,9 +70,10 @@ import { HistoryTimeline, ProgressBar } from '@/components/prestations/shared';
  * renvoyée par le serveur qu'à qui détient `balances.view`.
  * ================================================================== */
 
-type Tab = 'overview' | 'items' | 'progress' | 'team' | 'materials' | 'subcontracts' | 'expenses' | 'payments' | 'documents' | 'history';
+type Tab = 'dashboard' | 'overview' | 'items' | 'progress' | 'team' | 'materials' | 'subcontracts' | 'expenses' | 'payments' | 'documents' | 'history';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'dashboard', label: 'Tableau de bord' },
   { key: 'overview', label: 'Vue générale' },
   { key: 'items', label: 'Prestations' },
   { key: 'progress', label: 'Avancement' },
@@ -105,7 +109,7 @@ export default function ChantierDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [httpStatus, setHttpStatus] = useState<number | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>('dashboard');
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isMaterialOpen, setIsMaterialOpen] = useState(false);
@@ -224,7 +228,30 @@ export default function ChantierDetailPage() {
   const { items, materials, workers: team, stages, subcontracts, expenses, payments, costs } = detail;
   const isCancelled = job.status === 'cancelled';
   const remainingPayable = !isCancelled && job.remainingAmount > 0.001;
+  // Chantier ouvert sans prix : planifier, démarrer et facturer attendent un montant.
+  const needsPrice = jobNeedsPrice(job);
   const directExpenses = expenses.filter((e) => e.referenceType === 'service_job');
+  // Carte « Dépenses » : même règle que le coût (`computeJobCosts`, lib/jobs.ts) —
+  // dépenses directes, comptées dès qu'elles sont validées (décaissées ou à décaisser).
+  const expenseSummary = directExpenses.reduce(
+    (acc, e) => {
+      acc.count += 1;
+      if (e.approvalStatus === 'approved' || e.approvalStatus === 'to_pay') acc.validated += e.amount;
+      else if (e.approvalStatus === 'pending') acc.pending += 1;
+      return acc;
+    },
+    { count: 0, validated: 0, pending: 0 },
+  );
+  // Compteurs des onglets : on voit ce que contient chaque rubrique avant de l'ouvrir.
+  const tabCounts: Partial<Record<Tab, number>> = {
+    items: items.length,
+    progress: stages.length,
+    team: team.length,
+    materials: materials.length,
+    subcontracts: subcontracts.length,
+    expenses: expenses.length,
+    payments: payments.length,
+  };
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
@@ -234,9 +261,11 @@ export default function ChantierDetailPage() {
         description={`${job.title ? `${job.title} · ` : ''}${job.customerName}${job.storeName ? ` · ${job.storeName}` : ''}`}
         actions={
           <>
-            <Link href={`/chantiers/${job.id}/document`} className="btn btn-ghost min-h-11 border border-base-300">
-              Facture
-            </Link>
+            {!needsPrice && (
+              <Link href={`/chantiers/${job.id}/document`} className="btn btn-ghost min-h-11 border border-base-300">
+                Facture
+              </Link>
+            )}
             {editable && (
               <button type="button" className="btn btn-outline min-h-11" onClick={() => setIsEditOpen(true)}>
                 Modifier
@@ -247,7 +276,7 @@ export default function ChantierDetailPage() {
                 Reprendre
               </button>
             )}
-            {editable && job.status !== 'suspended' && nextStage && (
+            {editable && job.status !== 'suspended' && nextStage && !needsPrice && (
               <button type="button" className="btn btn-primary min-h-11" disabled={isWorking} onClick={() => void changeStatus(nextStage.key)}>
                 {nextStage.key === 'in_progress' ? 'Démarrer' : nextStage.key === 'completed' ? 'Terminer' : 'Planifier'}
               </button>
@@ -261,6 +290,28 @@ export default function ChantierDetailPage() {
         }
       />
 
+      {/* Onglets juste sous l'en-tête : sous les cartes chiffrées, on ne
+          voyait pas que la fiche se pilote par rubriques. */}
+      <SectionTabs
+        label="Rubriques du chantier"
+        value={tab}
+        onChange={setTab}
+        tabs={TABS.map((entry) => ({ ...entry, count: tabCounts[entry.key] }))}
+      />
+
+      {needsPrice && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <span>
+            <strong>Montant à définir :</strong> ce chantier n’a encore ni prestation ni montant forfaitaire. Il reste « En
+            préparation » : ajoutez un prix pour pouvoir le planifier, le démarrer, l’encaisser et éditer sa facture.
+          </span>
+          {editable && (
+            <button type="button" className="btn btn-warning min-h-11" onClick={() => setTab('items')}>
+              Ajouter une prestation
+            </button>
+          )}
+        </div>
+      )}
       {isCancelled && (
         <div className="rounded-2xl border border-error/30 bg-error/10 p-4 text-sm text-error">
           <div className="flex flex-wrap items-center gap-2">
@@ -285,80 +336,77 @@ export default function ChantierDetailPage() {
         </p>
       )}
 
-      {/* En-tête chiffré (cahier §24) */}
-      <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${costs ? '2xl:grid-cols-5' : ''}`}>
-        <StatCardDelta
-          label="Montant"
-          tooltip="Ce que le client paie : la somme des prestations du chantier (ou le montant forfaitaire d’un chantier sans prestation)."
-          tone="primary"
-          value={<MoneyText value={job.total} />}
-          hint={`${job.itemsCount} prestation${job.itemsCount > 1 ? 's' : ''}`}
-        />
-        <StatCardDelta
-          label="Payé"
-          tooltip="Acomptes et paiements déjà reçus du client pour ce chantier."
-          tone="success"
-          value={<MoneyText value={job.amountPaid} />}
-          hint={`${payments.length} reçu${payments.length > 1 ? 's' : ''}`}
-        />
-        <StatCardDelta
-          label="Reste à payer"
-          tooltip="Ce que le client doit encore : montant du chantier moins ce qu’il a payé."
-          tone={remainingPayable ? 'error' : 'neutral'}
-          value={<MoneyText value={job.remainingAmount} remaining={!isCancelled} bold />}
-          hint={isCancelled ? 'Chantier annulé' : remainingPayable ? 'À encaisser' : 'Soldé'}
-        />
-        {costs && (
-          <>
+      {/* Onglet « Tableau de bord » : chiffres du chantier (cahier §24) et étapes. */}
+      {tab === 'dashboard' && (
+        <>
+          <div className={`grid gap-4 sm:grid-cols-2 ${costs ? 'lg:grid-cols-3 2xl:grid-cols-6' : 'lg:grid-cols-4'}`}>
             <StatCardDelta
-              label="Coûts engagés"
-              tooltip="Matériaux sortis du stock (prix d’achat) + main-d’œuvre de l’équipe + montants convenus avec les sous-traitants + autres dépenses validées."
-              tone="warning"
-              value={<MoneyText value={costs.totalCost} />}
-              hint="Matériaux, équipe, sous-traitance, dépenses"
+              label="Montant"
+              tooltip="Ce que le client paie : la somme des prestations du chantier (ou le montant forfaitaire d’un chantier sans prestation)."
+              tone="primary"
+              value={<MoneyText value={job.total} />}
+              hint={`${job.itemsCount} prestation${job.itemsCount > 1 ? 's' : ''}`}
             />
             <StatCardDelta
-              label="Bénéfice estimatif"
-              tooltip="Montant du chantier moins les coûts engagés. Estimatif : il évolue tant que le chantier n’est pas terminé."
-              tone={costs.margin >= 0 ? 'success' : 'error'}
-              value={<MoneyText value={costs.margin} colored />}
-              hint={costs.billed > 0 ? `Marge ${costs.marginPercent.toLocaleString('fr-FR')} %` : undefined}
+              label="Payé"
+              tooltip="Acomptes et paiements déjà reçus du client pour ce chantier."
+              tone="success"
+              value={<MoneyText value={job.amountPaid} />}
+              hint={`${payments.length} reçu${payments.length > 1 ? 's' : ''}`}
             />
-          </>
-        )}
-      </div>
-
-      <Card className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <JobStatusBadges job={job} />
-            {job.responsibleName && <span className="text-sm text-base-content/60">Responsable : {job.responsibleName}</span>}
+            <StatCardDelta
+              label="Reste à payer"
+              tooltip="Ce que le client doit encore : montant du chantier moins ce qu’il a payé."
+              tone={remainingPayable ? 'error' : 'neutral'}
+              value={<MoneyText value={job.remainingAmount} remaining={!isCancelled} bold />}
+              hint={isCancelled ? 'Chantier annulé' : needsPrice ? 'Montant à définir' : remainingPayable ? 'À encaisser' : 'Soldé'}
+            />
+            <StatCardDelta
+              label="Dépenses"
+              tooltip="Dépenses directes du chantier déjà validées (décaissées ou à décaisser) : transport, location, fournitures hors stock… Les paiements des sous-traitants n’y sont pas : ils comptent dans « Sous-traitance ». Le détail est dans l’onglet Dépenses."
+              tone="info"
+              value={<MoneyText value={expenseSummary.validated} />}
+              hint={
+                expenseSummary.pending > 0
+                  ? `${expenseSummary.count} dépense${expenseSummary.count > 1 ? 's' : ''} · ${expenseSummary.pending} en attente`
+                  : `${expenseSummary.count} dépense${expenseSummary.count > 1 ? 's' : ''}`
+              }
+            />
+            {costs && (
+              <>
+                <StatCardDelta
+                  label="Coûts engagés"
+                  tooltip="Matériaux sortis du stock (prix d’achat) + main-d’œuvre de l’équipe + montants convenus avec les sous-traitants + autres dépenses validées."
+                  tone="warning"
+                  value={<MoneyText value={costs.totalCost} />}
+                  hint="Matériaux, équipe, sous-traitance, dépenses"
+                />
+                <StatCardDelta
+                  label="Bénéfice estimatif"
+                  tooltip="Montant du chantier moins les coûts engagés. Estimatif : il évolue tant que le chantier n’est pas terminé."
+                  tone={costs.margin >= 0 ? 'success' : 'error'}
+                  value={<MoneyText value={costs.margin} colored />}
+                  hint={costs.billed > 0 ? `Marge ${costs.marginPercent.toLocaleString('fr-FR')} %` : undefined}
+                />
+              </>
+            )}
           </div>
-          <ProgressBar value={job.progress} late={job.isLate} className="w-full sm:w-72" />
-        </div>
-        {!isCancelled && job.status !== 'suspended' && <StageTracker stages={JOB_STAGES} current={job.status === 'quote' ? 'pending' : job.status} />}
-        {job.status === 'suspended' && (
-          <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm">Chantier suspendu — « Reprendre » le remet en cours.</p>
-        )}
-      </Card>
-
-      {/* Onglets : barre défilante sur téléphone (aucun débordement de la page). */}
-      <div className="-mx-1 overflow-x-auto px-1">
-        <div role="tablist" aria-label="Sections du chantier" className="tabs tabs-boxed inline-flex min-w-max">
-          {TABS.map((entry) => (
-            <button
-              key={entry.key}
-              type="button"
-              role="tab"
-              aria-selected={tab === entry.key}
-              className={`tab min-h-11 whitespace-nowrap ${tab === entry.key ? 'tab-active' : ''}`}
-              onClick={() => setTab(entry.key)}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
-      </div>
+    
+          <Card className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <JobStatusBadges job={job} />
+                {job.responsibleName && <span className="text-sm text-base-content/60">Responsable : {job.responsibleName}</span>}
+              </div>
+              <ProgressBar value={job.progress} late={job.isLate} className="w-full sm:w-72" />
+            </div>
+            {!isCancelled && job.status !== 'suspended' && <StageTracker stages={JOB_STAGES} current={job.status === 'quote' ? 'pending' : job.status} />}
+            {job.status === 'suspended' && (
+              <p className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-2.5 text-sm">Chantier suspendu — « Reprendre » le remet en cours.</p>
+            )}
+          </Card>
+        </>
+      )}
 
       {tab === 'overview' && (
         <div className="grid gap-4 lg:grid-cols-3">
@@ -761,13 +809,45 @@ export default function ChantierDetailPage() {
           title="Paiements du client"
           subtitle="Un reçu numéroté est émis pour chaque encaissement ; le reste à payer est recalculé."
           actions={
-            canPay && own && remainingPayable ? (
-              <button type="button" className="btn btn-success min-h-11" onClick={() => setIsPaymentOpen(true)}>
+            // Toujours visible (sauf annulé ou autre magasin) : grisé avec sa raison
+            // plutôt que masqué, on ne cherche pas le bouton.
+            canPay && own && !isCancelled ? (
+              <button
+                type="button"
+                className="btn btn-success min-h-11"
+                disabled={!remainingPayable}
+                onClick={() => setIsPaymentOpen(true)}
+              >
                 Encaisser
               </button>
             ) : null
           }
         >
+          {canViewPayments && (
+            <div className="mb-4 space-y-2">
+              <div className="grid gap-2 sm:grid-cols-3">
+                <MiniStat label="Montant du chantier" tone="primary" value={needsPrice ? 'À définir' : <MoneyText value={job.total} />} />
+                <MiniStat label="Déjà payé" tone="success" value={<MoneyText value={job.amountPaid} />} />
+                <MiniStat
+                  label="Reste à payer"
+                  tone={remainingPayable ? 'error' : 'neutral'}
+                  value={<MoneyText value={Math.max(job.remainingAmount, 0)} />}
+                />
+              </div>
+              {canPay && own && !isCancelled && !remainingPayable && (
+                <p className="text-xs text-base-content/60">
+                  {needsPrice
+                    ? 'Encaissement impossible pour l’instant : montant à définir. Ajoutez une prestation ou un montant forfaitaire.'
+                    : 'Chantier soldé : le client a tout payé, il n’y a plus rien à encaisser.'}
+                </p>
+              )}
+              {remainingPayable && (
+                <p className="text-xs text-base-content/60">
+                  Chaque somme reçue (acompte, avance, solde) s’enregistre avec « Encaisser » : le reste à payer se recalcule.
+                </p>
+              )}
+            </div>
+          )}
           {!canViewPayments ? (
             <Card>
               <EmptyState title="Paiements non consultables" description="Votre rôle ne permet pas de consulter les encaissements." />

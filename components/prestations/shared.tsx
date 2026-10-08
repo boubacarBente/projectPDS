@@ -295,7 +295,8 @@ export function useCustomers(enabled = true) {
     if (!enabled) return;
     const controller = new AbortController();
     setIsLoading(true);
-    fetch('/api/clients?limit=500&page=1&sort=name', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
+    // Dernier client créé en tête (règle « dernière insertion d'abord », lib/list-sort.ts).
+    fetch('/api/clients?limit=500&page=1&sort=recent', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
       .then(async (response) => (response.ok ? ((await response.json()) as Paginated<CustomerOption>) : { data: [] }))
       .then((payload) => setCustomers(Array.isArray(payload.data) ? payload.data : []))
       .catch(() => {})
@@ -366,7 +367,6 @@ export function CustomerPicker({
             onChange={onChange}
             options={options}
             placeholder="Rechercher un client (nom, téléphone)…"
-            emptyLabel="Aucun client ne correspond"
             ariaLabel="Client"
             disabled={disabled}
           />
@@ -473,7 +473,7 @@ export function ServiceLinesEditor({
       services.map((s) => ({
         value: String(s.id),
         label: `${s.name}`,
-        hint: `${s.code} · ${formatCurrency(s.unitPrice)} / ${s.unit}`,
+        hint: `${s.code} · env. ${formatCurrency(s.unitPrice)} / ${s.unit}`,
       })),
     [services],
   );
@@ -498,9 +498,9 @@ export function ServiceLinesEditor({
     <div className="space-y-3">
       <div className="hidden grid-cols-[minmax(0,1fr)_6rem_8.5rem_5.5rem_8.5rem_2.75rem] gap-2 px-1 text-xs font-semibold uppercase tracking-wide text-base-content/50 lg:grid">
         <span>Prestation</span>
-        <span className="text-right">Quantité</span>
-        <span className="text-right">Prix unitaire</span>
-        <span className="text-right">Remise %</span>
+        <span>Quantité</span>
+        <span>Prix unitaire</span>
+        <span>Remise %</span>
         <span className="text-right">Montant</span>
         <span className="sr-only">Retirer</span>
       </div>
@@ -517,16 +517,26 @@ export function ServiceLinesEditor({
               <Combobox
                 id={`line-${line.key}`}
                 value={line.serviceId}
-                onChange={(value) => update(line.key, { serviceId: value, unitPrice: '' })}
+                // Le prix estimatif du catalogue est **pré-rempli** (et non plus en grisé) :
+                // on voit que c'est une vraie valeur, à ajuster pour ce chantier.
+                onChange={(value) => {
+                  const picked = services.find((s) => String(s.id) === value);
+                  update(line.key, { serviceId: value, unitPrice: picked ? String(picked.unitPrice) : '' });
+                }}
                 options={options}
                 placeholder={isLoading ? 'Chargement du catalogue…' : 'Choisir une prestation…'}
-                emptyLabel="Aucune prestation ne correspond"
+                emptyLabel="— Aucune prestation (ligne vide) —"
                 ariaLabel={`Prestation de la ligne ${index + 1}`}
                 disabled={disabled}
               />
               {resolved.service && (
-                <span className="mt-1 block truncate text-xs text-base-content/55">
-                  {resolved.service.category} · par {resolved.service.unit}
+                <span className="mt-1 block text-xs text-base-content/55">
+                  {resolved.service.category} · prix estimatif {formatCurrency(resolved.service.unitPrice)} / {resolved.service.unit}
+                  {resolved.unitPrice !== resolved.service.unitPrice ? (
+                    <strong className="text-info"> · prix ajusté pour ce document</strong>
+                  ) : (
+                    <> · modifiable ci-contre</>
+                  )}
                 </span>
               )}
             </div>
@@ -538,7 +548,7 @@ export function ServiceLinesEditor({
                   inputMode="decimal"
                   min="0"
                   step="any"
-                  className="input input-bordered min-h-11 w-full text-right tabular"
+                  className="input input-bordered min-h-11 w-full tabular"
                   value={line.quantity}
                   onChange={(event) => update(line.key, { quantity: event.target.value })}
                   aria-label={`Quantité de la ligne ${index + 1}`}
@@ -552,7 +562,7 @@ export function ServiceLinesEditor({
                   inputMode="decimal"
                   min="0"
                   step="any"
-                  className="input input-bordered min-h-11 w-full text-right tabular"
+                  className="input input-bordered min-h-11 w-full tabular"
                   value={line.unitPrice}
                   placeholder={resolved.service ? String(resolved.service.unitPrice) : '0'}
                   onChange={(event) => update(line.key, { unitPrice: event.target.value })}
@@ -568,7 +578,7 @@ export function ServiceLinesEditor({
                   min="0"
                   max="100"
                   step="any"
-                  className="input input-bordered min-h-11 w-full text-right tabular"
+                  className="input input-bordered min-h-11 w-full tabular"
                   value={line.discountPercent}
                   placeholder="0"
                   onChange={(event) => update(line.key, { discountPercent: event.target.value })}

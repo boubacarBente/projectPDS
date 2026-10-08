@@ -250,7 +250,7 @@ function SuffixedInput({
         step={step}
         inputMode="decimal"
         aria-label={ariaLabel}
-        className="input input-bordered field-rounded h-11 w-full bg-base-100 pr-12 text-right text-sm tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:h-9"
+        className="input input-bordered field-rounded h-11 w-full bg-base-100 pr-12 text-sm tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:h-9"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -1447,7 +1447,7 @@ function NouvelleVenteForm() {
                           min={0}
                           step={1000}
                           inputMode="decimal"
-                          className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 text-right tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
+                          className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
                           value={amountPaid}
                           onChange={(event) => {
                             setAmountPaid(event.target.value);
@@ -1487,7 +1487,7 @@ function NouvelleVenteForm() {
                           min={0}
                           step="any"
                           inputMode="decimal"
-                          className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-10 text-right tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
+                          className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-10 tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
                           value={taxRate}
                           onChange={(event) => {
                             taxTouchedRef.current = true;
@@ -1512,7 +1512,7 @@ function NouvelleVenteForm() {
                           min={0}
                           step={1000}
                           inputMode="decimal"
-                          className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 text-right tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
+                          className="input input-bordered field-rounded min-h-11 w-full bg-base-100 pl-10 pr-14 tabular [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none sm:min-h-0"
                           value={discountAmount}
                           onChange={(event) => setDiscountAmount(event.target.value)}
                           placeholder="0"

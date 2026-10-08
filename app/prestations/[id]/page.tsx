@@ -154,7 +154,7 @@ export default function PrestationDetailPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCardDelta
-          label="Prix indicatif"
+          label="Prix estimatif"
           tooltip="Prix proposé par défaut dans un nouveau devis. Il peut être négocié ligne par ligne ; les documents déjà établis gardent leur prix."
           tone="primary"
           value={<MoneyText value={service.unitPrice} />}

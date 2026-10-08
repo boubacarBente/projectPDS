@@ -98,7 +98,7 @@ export function JobItemModal({
   const price = unitPrice === '' ? (service?.unitPrice ?? item?.unitPrice ?? 0) : num(unitPrice);
   const amount = lineAmount(num(quantity) || 0, price || 0, num(discount) || 0);
   const options = useMemo(
-    () => services.map((s) => ({ value: String(s.id), label: s.name, hint: `${formatCurrency(s.unitPrice)} / ${s.unit}` })),
+    () => services.map((s) => ({ value: String(s.id), label: s.name, hint: `env. ${formatCurrency(s.unitPrice)} / ${s.unit}` })),
     [services],
   );
 
@@ -143,24 +143,30 @@ export function JobItemModal({
               value={serviceId}
               onChange={(value) => {
                 setServiceId(value);
-                setUnitPrice('');
+                // Prix estimatif du catalogue pré-rempli, à ajuster pour ce chantier.
+                const picked = services.find((s) => String(s.id) === value);
+                setUnitPrice(picked ? String(picked.unitPrice) : '');
               }}
               options={options}
               placeholder={isLoading ? 'Chargement…' : 'Rechercher une prestation…'}
-              emptyLabel="Aucune prestation ne correspond"
+              emptyLabel="— Aucune prestation —"
               ariaLabel="Prestation"
             />
           </FormField>
         )}
         <div className="grid grid-cols-3 gap-3">
           <FormField label={`Quantité${service ? ` (${service.unit})` : item ? ` (${item.unit})` : ''}`} htmlFor="item-qty" required>
-            <input id="item-qty" type="number" inputMode="decimal" min="0" step="any" className="input input-bordered min-h-11 w-full text-right tabular" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+            <input id="item-qty" type="number" inputMode="decimal" min="0" step="any" className="input input-bordered min-h-11 w-full tabular" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
           </FormField>
-          <FormField label="Prix unitaire" htmlFor="item-price">
-            <input id="item-price" type="number" inputMode="decimal" min="0" step="any" className="input input-bordered min-h-11 w-full text-right tabular" value={unitPrice} placeholder={service ? String(service.unitPrice) : ''} onChange={(e) => setUnitPrice(e.target.value)} />
+          <FormField
+            label="Prix unitaire"
+            htmlFor="item-price"
+            hint={service ? `Estimatif : ${formatCurrency(service.unitPrice)} — modifiable pour ce chantier.` : undefined}
+          >
+            <input id="item-price" type="number" inputMode="decimal" min="0" step="any" className="input input-bordered min-h-11 w-full tabular" value={unitPrice} placeholder={service ? String(service.unitPrice) : ''} onChange={(e) => setUnitPrice(e.target.value)} />
           </FormField>
           <FormField label="Remise %" htmlFor="item-discount">
-            <input id="item-discount" type="number" inputMode="decimal" min="0" max="100" step="any" className="input input-bordered min-h-11 w-full text-right tabular" value={discount} placeholder="0" onChange={(e) => setDiscount(e.target.value)} />
+            <input id="item-discount" type="number" inputMode="decimal" min="0" max="100" step="any" className="input input-bordered min-h-11 w-full tabular" value={discount} placeholder="0" onChange={(e) => setDiscount(e.target.value)} />
           </FormField>
         </div>
         <div className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">

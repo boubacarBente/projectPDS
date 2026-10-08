@@ -362,10 +362,16 @@ export function nextJobStage(status: JobStatus): { key: JobStatus; label: string
 }
 
 /** Badge de statut d'un chantier, avec « En retard » en plus quand il l'est. */
-export function JobStatusBadges({ job }: { job: Pick<ServiceJobRow, 'status' | 'isLate'> }) {
+/** Chantier ouvert sans prix : ni prestation ni montant forfaitaire (règle `assertJobPriced`, lib/jobs.ts). */
+export function jobNeedsPrice(job: { status: string; total?: number | null }): boolean {
+  return job.status !== 'cancelled' && job.total !== undefined && !(Number(job.total) > 0.001);
+}
+
+export function JobStatusBadges({ job }: { job: Pick<ServiceJobRow, 'status' | 'isLate'> & { total?: number | null } }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       <Badge tone={JOB_STATUS_TONES[job.status]}>{jobStatusLabel(job.status)}</Badge>
+      {jobNeedsPrice(job) && <Badge tone="warning">Montant à définir</Badge>}
       {job.isLate && <Badge tone="error">En retard</Badge>}
     </span>
   );
@@ -657,7 +663,9 @@ export const jobPaymentColumns: Column<PaymentRow>[] = [
  * habituel) ou modification de ses informations.
  *
  * À la création, le montant vient des **prestations du catalogue** du magasin
- * (ou d'un montant forfaitaire si aucune n'est saisie). En modification, les
+ * (ou d'un montant forfaitaire si aucune n'est saisie). Les deux sont
+ * facultatifs : sans prix, le chantier s'ouvre « En préparation » avec la mention
+ * « Montant à définir » (`assertJobPriced`, lib/jobs.ts). En modification, les
  * prestations se gèrent dans l'onglet « Prestations » de la fiche ; le montant
  * forfaitaire ne reste modifiable que pour un chantier sans ligne.
  */
@@ -728,14 +736,19 @@ export function JobFormModal({
 
   const items = linesPayload(lines);
   const linesTotal = lines.reduce((sum, line) => sum + resolveLine(line, services).amount, 0);
+  const hasPrice = items.length > 0 || Number(String(amount).replace(',', '.')) > 0;
 
   async function submit() {
     if (isSubmitting) return;
     if (!customerId) return setFormError('Le client est obligatoire pour un chantier.');
     if (!category) return setFormError('Choisissez le type de prestation.');
     if (endDate && startDate && endDate < startDate) return setFormError('La fin prévue ne peut pas précéder le début prévu.');
-    if (!job && items.length === 0 && !(Number(amount) > 0)) {
-      return setFormError('Ajoutez au moins une prestation, ou indiquez un montant forfaitaire.');
+    // Sans prix, le chantier s'ouvre seulement « En préparation » (même règle
+    // que le serveur, `assertJobPriced` dans lib/jobs.ts).
+    if (!job && !hasPrice && status !== 'pending') {
+      return setFormError(
+        'Sans prestation ni montant forfaitaire, le chantier s’ouvre « En préparation ». Ajoutez un prix ou choisissez ce statut.',
+      );
     }
 
     setFormError(null);
@@ -966,6 +979,13 @@ export function JobFormModal({
                   placeholder="0"
                 />
               </FormField>
+            )}
+            {!hasPrice && (
+              <p className="rounded-lg bg-info/10 px-3 py-2 text-xs text-base-content/80">
+                Prix pas encore connu ? Ouvrez le chantier sans montant : il restera « En préparation » avec la mention
+                « Montant à définir ». Ajoutez les prestations plus tard depuis sa fiche (onglet Prestations) ; il faudra un
+                montant pour le planifier, le démarrer ou l’encaisser.
+              </p>
             )}
           </div>
         )}

@@ -161,6 +161,26 @@ export default function FactureChantierPage() {
     );
   }
 
+  // Chantier ouvert sans prix : pas de facture à 0 GNF (règle `assertJobPriced`, lib/jobs.ts).
+  if (job.status !== 'cancelled' && !(job.total > 0.001)) {
+    return (
+      <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
+        <PageHeader eyebrow="Chantiers" title={`Facture ${job.reference}`} description="Facture d’un chantier." />
+        <Card>
+          <ErrorState
+            title="Montant à définir"
+            description="Ce chantier n’a encore ni prestation ni montant forfaitaire : sa facture sera disponible dès qu’un prix sera saisi."
+          />
+        </Card>
+        <div className="flex justify-center">
+          <Link href={`/chantiers/${job.id}`} className="btn btn-primary min-h-11">
+            Ajouter un prix depuis la fiche du chantier
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
       <div className="no-print">

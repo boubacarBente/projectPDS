@@ -225,6 +225,13 @@ async function createPaymentInTx(input: Parameters<typeof createPayment>[0]): Pr
   const total = Number(document.total ?? 0);
   const remaining = Math.round((total - alreadyPaid) * 100) / 100;
 
+  // Chantier ouvert sans prix (« Montant à définir », lib/jobs.ts) : rien à encaisser
+  // tant qu'aucune prestation ni montant forfaitaire n'est saisi.
+  if (input.type === 'service_job' && total <= 0.001) {
+    throw new PaymentError(
+      'Montant à définir : ajoutez une prestation ou un montant forfaitaire au chantier avant d’encaisser.',
+    );
+  }
   if (remaining <= 0.001) {
     throw new PaymentError('Ce document est déjà entièrement réglé');
   }

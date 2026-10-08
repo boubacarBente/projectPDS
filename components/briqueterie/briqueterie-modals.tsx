@@ -1935,7 +1935,7 @@ export function ProductionExpenseModal({
                 min={0}
                 step="any"
                 inputMode="decimal"
-                className="input input-bordered h-11 w-full pr-14 text-right tabular sm:h-9"
+                className="input input-bordered h-11 w-full pr-14 tabular sm:h-9"
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
                 placeholder="0"

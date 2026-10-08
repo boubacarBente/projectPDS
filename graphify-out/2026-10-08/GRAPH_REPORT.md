@@ -1,82 +1,82 @@
 # Graph Report - projetPDS  (2026-10-08)
 
 ## Corpus Check
-- 486 files · ~793,491 words
+- 487 files · ~797,834 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 14 file(s) not represented in the graph (top: (none) 9, .cmd 1, .dot 1)
 
 ## Summary
-- 4629 nodes · 17459 edges · 206 communities (172 shown, 34 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 404 edges (avg confidence: 0.93)
+- 4643 nodes · 17501 edges · 225 communities (191 shown, 34 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 409 edges (avg confidence: 0.93)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `564a3c84`
+- Built from commit: `8377b4f1`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- formatNumber
+- EmptyState
 - chantiers-modals.tsx
-- formatDateShort
+- stock/page.tsx
 - MoneyText
 - schema.ts
-- ok
-- design-system.tsx
-- api.ts
-- withTransaction
-- NotFoundError
+- requireAction
+- productions/[id]/route.ts
+- fail
+- produits/[id]/route.ts
+- users/[id]/route.ts
 - briqueterie-modals.tsx
 - furniture.ts
 - stores.ts
-- today
+- jobs.ts
 - brick-orders.ts
 - server.cjs
-- fail
+- next
 - permissions.ts
-- brick.ts
+- NotFoundError
 - Planète Déco Sarlu — Filiale Meubles
 - commandes-modals.tsx
 - ventes/nouvelle/page.tsx
-- users.ts
+- user-permissions.ts
 - atelier-modals.tsx
-- scopeSql
-- users/route.ts
+- 7. Modules fonctionnels
+- user-scope.ts
 - report-sender.ts
-- stock/page.tsx
+- formatNumber
 - Subagent-Driven Development
-- purchases.ts
+- api.ts
 - sales.ts
 - products.ts
 - sync-engine.ts
 - transfers.ts
-- requireAction
+- service-requests.ts
 - Installation
 - package.json
 - scripts
 - Test-Driven Development (TDD)
-- ValidationError
+- app-shell.tsx
 - services.ts
 - build
 - settings-schema.ts
-- assertStoreVisible
-- clients/[id]/page.tsx
+- users.ts
+- design-system.tsx
 - index.mjs
-- suppliers.ts
+- rawRun
 - scroll-engine.ts
 - backup.ts
-- caisse.ts
+- ValidationError
 - briqueterie/rapport-export.tsx
 - brick-analytics.ts
 - index.ts
 - ref_fs
 - 6. Pages, une par une
 - main.js
+- purchases.ts
+- user-detail.tsx
 - audit.ts
-- workers.ts
-- app-shell.tsx
 - triggers.ts
-- productions/[id]/route.ts
+- fournisseurs/[id]/route.ts
 - quantity
 - chrome-devtools-cli/SKILL.md
 - Visual Companion Guide
@@ -88,13 +88,13 @@
 - release.js
 - compilerOptions
 - Workflow Patterns
-- inventaires/[id]/page.tsx
+- withTransaction
 - Code Review Reception
 - Testing CLAUDE.md Skills Documentation
-- stock.ts
+- scopeSql
 - schema-dbml.mjs
 - verify-ui.js
-- balances.ts
+- Card
 - Common Memory Leaks
 - Root Cause Tracing
 - Systematic Debugging
@@ -104,10 +104,10 @@
 - Condition-Based Waiting
 - Using Git Worktrees
 - Writing Skills
-- Guide multi-magasins — procédure complète, page par page
-- server/package.json
-- Invariants à ne pas casser
-- produits/[id]/route.ts
+- export-document.ts
+- atelier/commandes/[id]/route.ts
+- AGENTS.md — repères pour un agent qui travaille sur ce dépôt
+- inventories.ts
 - Dispatching Parallel Agents
 - devDependencies
 - 23. Synchronisation avec PostgreSQL (option en ligne)
@@ -116,26 +116,26 @@
 - Testing Skills With Subagents
 - Conventions de développement — Planète Déco
 - Parcours de démonstration — chantiers, briqueterie, atelier
-- device.ts
+- SectionTabs
 - verify-export-image.js
 - verify-sales-draft-e2e.js
-- CloseCashSessionModal
-- theme-provider.tsx
-- parametres/page.tsx
+- OpenCashSessionModal
+- 27. Annexes : pages, API REST, scripts
+- verify-comptes-e2e.js
 - Defense-in-Depth Validation
 - Writing Plans
 - [Analysis Title]
 - Workflow Patterns
 - Brainstorming Ideas Into Designs
 - Returns: "OK" or lists conflicts
-- 7. Modules fonctionnels
+- render-graphs.js
 - generate-icons.js
 - verify-chantiers-e2e.js
 - Verification Before Completion
 - Skill structure
-- applyThemeColors
+- theme-provider.tsx
 - verify-briqueterie-e2e.js
-- clients/[id]/route.ts
+- server/package.json
 - Workflow Patterns
 - helper.js
 - codex-tools.md
@@ -143,8 +143,8 @@
 - GitHub
 - verify-atelier-e2e.js
 - issue.md
-- update-status.tsx
-- ✅ Fait
+- applyThemeColors
+- suppliers.ts
 - Frontend Design
 - stop-server.sh
 - Diagnosing Superpowers
@@ -155,7 +155,7 @@
 - REFACTOR Phase: Close Loopholes (Stay Green)
 - allowScripts
 - 5. Architecture et structure du projet
-- scope.test.mjs
+- 19. Prestations de chantier (multi-magasins)
 - ref_node_fs
 - verify-purchases-e2e.js
 - LCP Optimization Strategies
@@ -187,8 +187,8 @@
 - File Organization
 - Skill Types
 - Example: TDD Skill Bulletproofing
-- 6.1 `/login` — Connexion, première installation, choix du magasin ✅
-- 28. Multi-magasins (v2)
+- workers/[id]/route.ts
+- send
 - start-server.sh
 - Antigravity CLI (`agy`) Tool Mapping
 - Claude Code Tool Notes
@@ -204,12 +204,31 @@
 - test-academic.md
 - typescript-lsp/README.md
 - postcss.config.mjs
+- update-status.tsx
+- 4. Stack technique
+- 8. La manière d'utiliser les modales
+- 20. Gestion de la briqueterie
+- 30. Briqueterie par magasin (v2)
+- caisse.ts
+- 6. Base de données
+- 16. Rapports et envoi SMS / WhatsApp
+- Guide multi-magasins — procédure complète, page par page
+- 3. Héritage du projet Gaz — ce qu'on reprend, et pourquoi
+- seed-data.ts
+- 28. Multi-magasins (v2)
+- scope.test.mjs
+- formatDetailValue
+- preload.js
+- 6.1 `/login` — Connexion, première installation, choix du magasin ✅
+- 29. Atelier de meubles par magasin (v2)
+- readViewState
+- 17. Utilisateurs, rôles et historique des actions
 
 ## God Nodes (most connected - your core abstractions)
 1. `fail()` - 303 edges
 2. `ok()` - 302 edges
 3. `requireAction()` - 298 edges
-4. `ValidationError` - 244 edges
+4. `ValidationError` - 245 edges
 5. `writeAudit()` - 189 edges
 6. `NotFoundError` - 185 edges
 7. `next` - 176 edges
@@ -232,155 +251,155 @@
 ## Import Cycles
 - None detected.
 
-## Communities (206 total, 34 thin omitted)
+## Communities (225 total, 34 thin omitted)
 
-### Community 0 - "formatNumber"
+### Community 0 - "EmptyState"
 Cohesion: 0.05
-Nodes (193): AchatsPage(), isPaymentStatusFilter(), isStatsPeriod(), PAYMENT_STATUS_OPTIONS, PaymentStatusFilter, PERIODS, PurchaseStats, StatsPeriod (+185 more)
+Nodes (201): AchatsPage(), isPaymentStatusFilter(), isStatsPeriod(), PAYMENT_STATUS_OPTIONS, PaymentStatusFilter, PERIODS, PurchaseStats, StatsPeriod (+193 more)
 
 ### Community 1 - "chantiers-modals.tsx"
-Cohesion: 0.03
-Nodes (187): DemandeDetailPage(), setStatus(), MANUAL, ConvertModal(), submit(), post(), NouveauDevisPage(), submit() (+179 more)
-
-### Community 2 - "formatDateShort"
 Cohesion: 0.04
-Nodes (149): AchatDetailPage(), LoadedPurchase, BAR_TONES, BrickRapportsPage(), ChartPanel, dateColumn(), EvolutionBarsChart(), LossRow (+141 more)
+Nodes (143): DemandeDetailPage(), setStatus(), MANUAL, ConvertModal(), submit(), NouveauDevisPage(), submit(), ChantierDetailPage() (+135 more)
+
+### Community 2 - "stock/page.tsx"
+Cohesion: 0.13
+Nodes (22): BrickStockLine, BrickStockPayload, BrickStockSummary, buildStockColumns(), MOVEMENT_LABELS, MOVEMENT_TONES, movementColumns, MovementType (+14 more)
 
 ### Community 3 - "MoneyText"
-Cohesion: 0.04
-Nodes (120): CARD_TOOLTIPS, CardTitle(), CHIP_TONES, ChipTone, DashboardHeader(), DashboardPage(), Icon(), ICONS (+112 more)
+Cohesion: 0.05
+Nodes (96): CARD_TOOLTIPS, CardTitle(), CHIP_TONES, ChipTone, DashboardHeader(), DashboardPage(), Icon(), ICONS (+88 more)
 
 ### Community 4 - "schema.ts"
 Cohesion: 0.02
 Nodes (115): AuditLog, auditLogRelations, auditLogs, BRICK_ORDER_STATUS_VALUES, BRICK_STAGE_VALUES, brickProductions, brickProductionWorkers, brickTypes (+107 more)
 
-### Community 5 - "ok"
+### Community 5 - "requireAction"
 Cohesion: 0.07
-Nodes (90): POST(), DELETE(), GET(), modelFor(), Params, PUT(), POST(), Params (+82 more)
+Nodes (91): PUT(), POST(), DELETE(), GET(), modelFor(), Params, PUT(), POST() (+83 more)
 
-### Community 6 - "design-system.tsx"
-Cohesion: 0.04
-Nodes (79): ClientDetailLoading(), TopProduct, ViewState, LoginPage(), AuditEntry, MagasinFichePage(), StatusChange, StoreUser (+71 more)
+### Community 6 - "productions/[id]/route.ts"
+Cohesion: 0.11
+Nodes (26): DELETE(), detailFor(), GET(), Params, rowFor(), GET(), GET(), GET() (+18 more)
 
-### Community 7 - "api.ts"
-Cohesion: 0.08
-Nodes (58): GET(), GET(), GET(), GET(), GET(), GET(), GET(), GET() (+50 more)
-
-### Community 8 - "withTransaction"
-Cohesion: 0.05
-Nodes (85): SettingsProvider(), withTransaction(), inventories, inventoryItems, settings, 3. Règles métier à ne jamais casser, createBrickProduction(), createCustomer() (+77 more)
-
-### Community 9 - "NotFoundError"
+### Community 7 - "fail"
 Cohesion: 0.07
-Nodes (74): 3. Règle d'or : toute écriture passe par `lib/`, ConflictError, NotFoundError, addJobItem(), addJobMaterialInTx(), addJobStage(), addJobSubcontract(), assertJobEditable() (+66 more)
+Nodes (43): GET(), PERIODS, GET(), GET(), GET(), GET(), GET(), GET() (+35 more)
+
+### Community 8 - "produits/[id]/route.ts"
+Cohesion: 0.26
+Nodes (12): Params, DELETE(), GET(), Params, PUT(), canEditCentralData(), canEditProductCatalog(), CatalogEditError (+4 more)
+
+### Community 9 - "users/[id]/route.ts"
+Cohesion: 0.13
+Nodes (18): PUT(), Params, POST(), Params, PUT(), DELETE(), DELETE(), GET() (+10 more)
 
 ### Community 10 - "briqueterie-modals.tsx"
-Cohesion: 0.06
-Nodes (69): ACTION_LABELS, BrickProductionDetailPage(), advance(), cancelProduction(), removeExpense(), removeMaterial(), removeWorker(), saveTeam() (+61 more)
+Cohesion: 0.05
+Nodes (77): ACTION_LABELS, BrickProductionDetailPage(), advance(), cancelProduction(), removeExpense(), removeMaterial(), removeWorker(), saveTeam() (+69 more)
 
 ### Community 11 - "furniture.ts"
 Cohesion: 0.08
-Nodes (69): PUT(), BrickStage, recalculateCashBalances(), assertCustomerInStore(), roundMoney(), addOrderMaterial(), addOrderWorker(), advanceFurnitureStage() (+61 more)
+Nodes (73): handleAdvance(), runAction(), addDays(), roundMoney(), addOrderMaterial(), addOrderWorker(), advanceFurnitureStage(), assertModelInStore() (+65 more)
 
 ### Community 12 - "stores.ts"
-Cohesion: 0.07
-Nodes (55): POST(), registerFailure(), POST(), GET(), GET(), POST(), stores, userStores (+47 more)
+Cohesion: 0.14
+Nodes (26): GET(), POST(), stores, userStores, createUser(), hasAdminUser(), normalizeDocumentPhones(), assertCodeAvailable() (+18 more)
 
-### Community 13 - "today"
+### Community 13 - "jobs.ts"
 Cohesion: 0.06
-Nodes (61): db, customers, serviceRequests, CustomerStats, today(), jobCategoryStoredValues(), Filters, getJobsDashboard() (+53 more)
+Nodes (80): assertCustomerInStore(), today(), jobCategoryStoredValues(), addJobItem(), addJobMaterialInTx(), addJobStage(), assertJobEditable(), assertJobPriced() (+72 more)
 
 ### Community 14 - "brick-orders.ts"
-Cohesion: 0.07
-Nodes (61): brickOrderItems, brickOrders, furnitureOrders, payments, purchaseInvoices, salesInvoices, serviceJobs, assertOrderEditable() (+53 more)
+Cohesion: 0.13
+Nodes (36): brickOrderItems, payments, 3. Règle d'or : toute écriture passe par `lib/`, ConflictError, assertOrderEditable(), assertOrderInStore(), BRICK_ORDER_STATUS_LABELS, BrickOrderDetail (+28 more)
 
 ### Community 15 - "server.cjs"
-Cohesion: 0.05
-Nodes (57): bootstrapPage(), brandMarkup(), broadcast(), browserLauncherForPlatform(), chmodOwnerOnly(), clients, companionUrl(), computeAcceptKey() (+49 more)
+Cohesion: 0.06
+Nodes (55): bootstrapPage(), brandMarkup(), broadcast(), chmodOwnerOnly(), clients, companionUrl(), computeAcceptKey(), CONTENT_DIR (+47 more)
 
-### Community 16 - "fail"
-Cohesion: 0.07
-Nodes (42): POST(), SwitchForbiddenError, GET(), GET(), Params, POST(), POST(), GET() (+34 more)
+### Community 16 - "next"
+Cohesion: 0.10
+Nodes (46): GET(), GET(), GET(), POST(), GET(), GET(), GET(), POST() (+38 more)
 
 ### Community 17 - "permissions.ts"
-Cohesion: 0.07
-Nodes (52): PasswordInput(), PasswordInputProps, AccessChoices, AccessEditor(), AccessSummary(), actionsFromChoices(), AreaChoice, choicesFromActions() (+44 more)
+Cohesion: 0.11
+Nodes (26): AccessEditor(), AccessSummary(), actionsFromChoices(), AreaChoice, LEVEL_TONE, levelDetail(), LevelPill(), ACCESS_AREAS (+18 more)
 
-### Community 18 - "brick.ts"
-Cohesion: 0.08
-Nodes (58): PUT(), addProductionExpense(), addProductionWorker(), advanceStage(), assertBrickTypeInStore(), assertExpenseOfProduction(), assertProductionEditable(), assertWorkerAvailable() (+50 more)
+### Community 18 - "NotFoundError"
+Cohesion: 0.09
+Nodes (59): PUT(), NotFoundError, addProductionExpense(), addProductionWorker(), advanceStage(), assertBrickTypeInStore(), assertExpenseOfProduction(), assertProductionEditable() (+51 more)
 
 ### Community 19 - "Planète Déco Sarlu — Filiale Meubles"
-Cohesion: 0.04
-Nodes (57): 12. Stock et inventaire, 13. Caisse et solde, 14. Achats et dépenses, 16.1 Rapports affichés et exportés (§11), 16.2 Envoi automatique des rapports (§11), 16.3 Canaux, 16. Rapports et envoi SMS / WhatsApp, 18. Sauvegarde, restauration et sécurité (+49 more)
+Cohesion: 0.12
+Nodes (16): 12. Stock et inventaire, 13. Caisse et solde, 14. Achats et dépenses, 18. Sauvegarde, restauration et sécurité, 1. Contexte et objectif, 21. Gestion de l'atelier de meubles, 24. Points à valider / questions ouvertes, 25.1 Ce qui reste ouvert (+8 more)
 
 ### Community 20 - "commandes-modals.tsx"
-Cohesion: 0.10
-Nodes (47): BrickOrderDetailPage(), BrickOrdersPage(), buildQuery(), OrdersSummary, OrdersViewState, BRICK_ORDER_NEXT_STATUSES, BRICK_ORDER_STATUS_ACTIONS, BRICK_ORDER_STATUS_LABELS (+39 more)
+Cohesion: 0.08
+Nodes (47): BrickOrderDetailPage(), BRICK_ORDER_NEXT_STATUSES, BRICK_ORDER_STATUS_ACTIONS, BRICK_ORDER_STATUS_LABELS, BRICK_ORDER_STATUS_OPTIONS, BRICK_ORDER_STATUS_TONES, BrickOrderCancelDialog(), BrickOrderDeliveryModal() (+39 more)
 
 ### Community 21 - "ventes/nouvelle/page.tsx"
 Cohesion: 0.06
-Nodes (48): AchatsNouvelleContent(), CardTitle(), ComputedLine, computeLine(), DEFAULT_PAYMENT_METHODS, FieldLabel(), Icon(), ICONS (+40 more)
+Nodes (47): AchatsNouvelleContent(), CardTitle(), ComputedLine, computeLine(), DEFAULT_PAYMENT_METHODS, FieldLabel(), Icon(), ICONS (+39 more)
 
-### Community 22 - "users.ts"
-Cohesion: 0.09
-Nodes (45): Params, PUT(), DELETE(), GET(), Params, GET(), users, deactivateUser() (+37 more)
+### Community 22 - "user-permissions.ts"
+Cohesion: 0.17
+Nodes (20): OPTIONS(), Params, 9.1 Permissions par utilisateur (surcharges), Action, ACTION_META, ALL_ACTIONS, isAction(), isRole() (+12 more)
 
 ### Community 23 - "atelier-modals.tsx"
-Cohesion: 0.10
-Nodes (46): AtelierOrderPage(), handleAdvance(), runAction(), reactivate(), bomFromMaterials(), BomLine, CancelOrderDialog(), CustomerOption (+38 more)
+Cohesion: 0.07
+Nodes (56): AtelierOrderPage(), reactivate(), bomFromMaterials(), BomLine, CancelOrderDialog(), CustomerOption, DeactivateModelDialog(), DeliveryTiming() (+48 more)
 
-### Community 24 - "scopeSql"
-Cohesion: 0.11
-Nodes (47): rawAll(), rawGet(), getMonthlyTrend(), getCustomersSummary(), listDebtors(), getExpensesSummary(), endOfMonth(), parseBusinessDate() (+39 more)
+### Community 24 - "7. Modules fonctionnels"
+Cohesion: 0.18
+Nodes (11): 7.11 Rapports (§11), 7.12 Utilisateurs (§12) · 7.13 Paramètres (§13) · 7.14 Sauvegarde et sécurité (§14), 7.15 Livraison et évolutions (§15), 7.16 Prestations, briqueterie, atelier, 7.1 Tableau de bord (§1), 7.2 Clients (§2), 7.3 Fournisseurs (§3), 7.6 Ventes (§6) (+3 more)
 
-### Community 25 - "users/route.ts"
-Cohesion: 0.12
-Nodes (39): GET(), Params, PUT(), DELETE(), GET(), OPTIONS(), Params, PUT() (+31 more)
+### Community 25 - "user-scope.ts"
+Cohesion: 0.26
+Nodes (17): GET(), Params, PUT(), PUT(), revokeUserSessions(), listUserAssignments(), setUserAssignments(), ADMIN_ONLY_ACTIONS (+9 more)
 
 ### Community 26 - "report-sender.ts"
 Cohesion: 0.06
-Nodes (45): reportDeliveries, RapportCashMethod, RapportCollectedMethod, RapportComparison, RapportComparisonMetric, RapportDeliveryChannel, RapportDeliveryRow, RapportDeliveryStatus (+37 more)
+Nodes (46): reportDeliveries, RapportCashMethod, RapportCollectedMethod, RapportComparison, RapportComparisonMetric, RapportData, RapportDeliveryChannel, RapportDeliveryRow (+38 more)
 
-### Community 27 - "stock/page.tsx"
-Cohesion: 0.07
-Nodes (43): BrickStockLine, BrickStockPayload, BrickStockSummary, buildStockColumns(), MOVEMENT_LABELS, MOVEMENT_TONES, movementColumns, MovementType (+35 more)
+### Community 27 - "formatNumber"
+Cohesion: 0.04
+Nodes (146): AchatDetailPage(), LoadedPurchase, BAR_TONES, BrickRapportsPage(), ChartPanel, dateColumn(), EvolutionBarsChart(), LossRow (+138 more)
 
 ### Community 28 - "Subagent-Driven Development"
 Cohesion: 0.04
 Nodes (39): 1. Take the task, 2. Work the steps, 3. The completion contract, 4. Complete the task, Common Rationalizations, Example Workflow, Executing Plans, Final Review (+31 more)
 
-### Community 29 - "purchases.ts"
-Cohesion: 0.08
-Nodes (44): purchaseInvoiceItems, SnapshotPeriod, applyStockDelta(), areQuantityMapsEqual(), assertSameStore(), auditUser(), buildPurchaseItems(), cancelPurchaseInvoice() (+36 more)
+### Community 29 - "api.ts"
+Cohesion: 0.06
+Nodes (48): DELETE(), GET(), Params, PUT(), GET(), POST(), POST(), SwitchForbiddenError (+40 more)
 
 ### Community 30 - "sales.ts"
-Cohesion: 0.09
-Nodes (45): applyStockDelta(), areQuantityMapsEqual(), assertBrickProducts(), assertSameStore(), auditUser(), buildSalesItems(), cancelSalesInvoice(), computeTotals() (+37 more)
+Cohesion: 0.07
+Nodes (56): salesInvoiceItems, applyStockDelta(), areQuantityMapsEqual(), assertBrickProducts(), assertSameStore(), auditUser(), buildSalesItems(), cancelSalesInvoice() (+48 more)
 
 ### Community 31 - "products.ts"
-Cohesion: 0.09
-Nodes (42): categories, products, sqlOrderBy(), assertNameAvailable(), assertProductNameAvailable(), buildProductWhere(), CatalogEditError, CATEGORY_KINDS (+34 more)
+Cohesion: 0.06
+Nodes (63): categories, products, ✅ Fait, assertNameAvailable(), assertProductNameAvailable(), buildProductWhere(), CATEGORY_KINDS, CategoryInput (+55 more)
 
 ### Community 32 - "sync-engine.ts"
-Cohesion: 0.10
-Nodes (40): POST(), rawRun(), syncedTable, getDeviceConfig(), applyChange(), ApplyContext, ApplyOutcome, call() (+32 more)
+Cohesion: 0.07
+Nodes (53): POST(), GET(), GET(), usePermissionAny(), dbClient, syncedTable, register(), DeviceConfig (+45 more)
 
 ### Community 33 - "transfers.ts"
-Cohesion: 0.14
-Nodes (40): ACTION_PERMISSION, GET(), Params, POST(), withActions(), TRANSFER_EVENT_LABELS, TRANSFER_STAGES, TRANSFER_STATUS (+32 more)
+Cohesion: 0.13
+Nodes (41): ACTION_PERMISSION, GET(), Params, POST(), withActions(), TRANSFER_EVENT_LABELS, TRANSFER_STAGES, TRANSFER_STATUS (+33 more)
 
-### Community 34 - "requireAction"
-Cohesion: 0.08
-Nodes (27): GET(), PERIODS, GET(), GET(), PERIODS, GET(), POST(), POST() (+19 more)
+### Community 34 - "service-requests.ts"
+Cohesion: 0.19
+Nodes (19): serviceRequests, assertCustomer(), assertRequestEditable(), cleanDate(), createServiceRequest(), getServiceRequest(), isRequestStatus(), itemsByRequest() (+11 more)
 
 ### Community 35 - "Installation"
 Cohesion: 0.06
 Nodes (33): Antigravity, Claude Code, Codex App, Codex CLI, Commercial Services, Community, Contributing, Cursor (+25 more)
 
 ### Community 36 - "package.json"
-Cohesion: 0.06
-Nodes (29): { contextBridge, ipcRenderer }, on(), eslintConfig, author, description, main, name, private (+21 more)
+Cohesion: 0.08
+Nodes (24): eslintConfig, author, description, main, name, private, version, chart.js (+16 more)
 
 ### Community 37 - "scripts"
 Cohesion: 0.06
@@ -390,65 +409,65 @@ Nodes (33): scripts, build, build:desktop:linux, build:desktop:mac, build:deskto
 Cohesion: 0.06
 Nodes (29): Common Rationalizations, Debugging Integration, Example: Bug Fix, Final Rule, Good Tests, GREEN - Minimal Code, Overview, Red Flags - STOP and Start Over (+21 more)
 
-### Community 39 - "ValidationError"
-Cohesion: 0.14
-Nodes (28): ValidationError, addCashMovement(), assertSameStore(), cancelExpense(), cashRelevantChanges(), COUNTED_EXPENSE_SQL, createExpense(), decideExpense() (+20 more)
+### Community 39 - "app-shell.tsx"
+Cohesion: 0.17
+Nodes (16): AppShell(), NavIcon(), PATHS, StoreSwitcher(), SyncIndicator(), SyncSummary, useTheme(), ThemeToggle() (+8 more)
 
 ### Community 40 - "services.ts"
 Cohesion: 0.12
-Nodes (29): jobCategoryLabel(), LEGACY_JOB_CATEGORY_LABELS, matchJobCategory(), assertOwnService(), cleanCode(), cleanPrice(), codeTaken(), createService() (+21 more)
+Nodes (30): jobCategoryLabel(), LEGACY_JOB_CATEGORY_LABELS, matchJobCategory(), assertOwnService(), assertServiceUsable(), cleanCode(), cleanPrice(), codeTaken() (+22 more)
 
 ### Community 41 - "build"
 Cohesion: 0.06
 Nodes (31): build, afterPack, appId, asar, directories, files, linux, mac (+23 more)
 
 ### Community 42 - "settings-schema.ts"
-Cohesion: 0.12
-Nodes (25): DocumentPhonesEditor(), phonesToRows(), rowsToPhones(), FormValues, initialValues(), STORE_KIND_LABELS, STORE_STATUS_LABELS, StoreFormModal() (+17 more)
+Cohesion: 0.18
+Nodes (14): rowsToPhones(), documentPhonesFromSettings(), formatDocumentPhones(), PhoneSettings, phonesOf(), ARRAY_SETTINGS_KEYS, BOOLEAN_SETTINGS_KEYS, DocumentPhone (+6 more)
 
-### Community 43 - "assertStoreVisible"
-Cohesion: 0.12
-Nodes (24): DELETE(), GET(), Params, PUT(), POST(), GET(), Params, Params (+16 more)
+### Community 43 - "users.ts"
+Cohesion: 0.13
+Nodes (28): deactivateUser(), hashPassword(), listUsers(), compareByListSort(), ROLES, assertAdministratorChange(), assertNotLastActiveAdmin(), assertUsernameAvailable() (+20 more)
 
-### Community 44 - "clients/[id]/page.tsx"
-Cohesion: 0.12
-Nodes (27): CardTitle(), ClientDetailPage(), EXPORT_DOCUMENT_STATUS, EXPORT_PAYMENT_STATUS, Icon(), ICONS, InvoiceRow, lastMonths() (+19 more)
+### Community 44 - "design-system.tsx"
+Cohesion: 0.03
+Nodes (148): ClientDetailLoading(), loadSummary(), loadSummary(), TopProduct, ViewState, Draft, Filter, InventaireFichePage() (+140 more)
 
 ### Community 45 - "index.mjs"
-Cohesion: 0.14
-Nodes (24): authenticate(), authorizedScope(), checkEnrollRate(), createEnrollCode(), createServer(), enroll(), enrollAttempts, generateCode() (+16 more)
+Cohesion: 0.16
+Nodes (21): authenticate(), checkEnrollRate(), createEnrollCode(), createServer(), enroll(), enrollAttempts, generateCode(), handlePull() (+13 more)
 
-### Community 46 - "suppliers.ts"
-Cohesion: 0.15
-Nodes (24): GET(), Params, DELETE(), GET(), Params, PUT(), GET(), assertSupplierVisible() (+16 more)
+### Community 46 - "rawRun"
+Cohesion: 0.13
+Nodes (27): POST(), registerFailure(), POST(), rawRun(), users, getSessionPermissions(), getSessionUser(), getUserByUsername() (+19 more)
 
 ### Community 47 - "scroll-engine.ts"
-Cohesion: 0.17
-Nodes (26): ScrollRestoration(), applyScroll(), captureNow(), currentEntryKey(), currentUrl(), disposeScrollEngine(), EXCLUDED_PATHS, flushCapture() (+18 more)
+Cohesion: 0.18
+Nodes (25): applyScroll(), canGoBack(), captureNow(), currentEntryKey(), currentUrl(), disposeScrollEngine(), EXCLUDED_PATHS, flushCapture() (+17 more)
 
 ### Community 48 - "backup.ts"
-Cohesion: 0.12
-Nodes (24): dbClient, getDbPath(), BackupError, BUSINESS_TABLES, DailyBackupResult, DEVICE_KEYS, ensureDailyBackup(), getBackupsDir() (+16 more)
-
-### Community 49 - "caisse.ts"
 Cohesion: 0.13
-Nodes (25): cashMovements, cashSessions, CASH_REFERENCE_LABELS, CashCountByMethod, CashMovementRow, CashMovementType, CashReferenceType, CashSessionError (+17 more)
+Nodes (23): getDbPath(), BackupError, BUSINESS_TABLES, createBackup(), DailyBackupResult, DEVICE_KEYS, ensureDailyBackup(), getBackupsDir() (+15 more)
+
+### Community 49 - "ValidationError"
+Cohesion: 0.14
+Nodes (29): ValidationError, addCashMovement(), assertSameStore(), cancelExpense(), cashRelevantChanges(), COUNTED_EXPENSE_SQL, createExpense(), decideExpense() (+21 more)
 
 ### Community 50 - "briqueterie/rapport-export.tsx"
 Cohesion: 0.12
-Nodes (25): BRICK_RAPPORT_DOCUMENT_ID, BrickCell, BrickDocumentSection, BrickProfitabilityIndicator, brickProfitabilityIndicators(), BrickRapportExportCompany, BrickRapportExportDocument(), BrickReports (+17 more)
+Nodes (24): BRICK_RAPPORT_DOCUMENT_ID, BrickCell, BrickDocumentSection, BrickProfitabilityIndicator, brickProfitabilityIndicators(), BrickRapportExportCompany, BrickRapportExportDocument(), BrickReports (+16 more)
 
 ### Community 51 - "brick-analytics.ts"
-Cohesion: 0.12
-Nodes (24): periodRange(), periodRange(), periodRange(), periodRange(), readApiError(), load(), BrickDashboard, BrickPeriod (+16 more)
+Cohesion: 0.13
+Nodes (22): periodRange(), periodRange(), periodRange(), periodRange(), readApiError(), load(), BrickDashboard, BrickPeriod (+14 more)
 
 ### Community 52 - "index.ts"
 Cohesion: 0.12
-Nodes (21): acquireMigrationLock(), AppDatabase, backupsDir(), baseDb, currentExecutor(), dbDir, dbError(), dbLog() (+13 more)
+Nodes (20): acquireMigrationLock(), AppDatabase, backupsDir(), baseDb, currentExecutor(), dbDir, dbError(), dbLog() (+12 more)
 
 ### Community 53 - "ref_fs"
-Cohesion: 0.11
-Nodes (18): combineGraphs(), extractDotBlocks(), extractGraphBody(), main(), renderToSvg(), @libsql/client, default(), externalAliasPackages (+10 more)
+Cohesion: 0.13
+Nodes (13): @libsql/client, default(), externalAliasPackages, externalAliasSubpaths, fs, path, walk(), writeAliasPackage() (+5 more)
 
 ### Community 54 - "6. Pages, une par une"
 Cohesion: 0.08
@@ -458,29 +477,29 @@ Nodes (24): 6.10 `/clients`, `/fournisseurs` ⏳, 6.11 `/chantiers` ✅, 6.12 `/
 Cohesion: 0.13
 Nodes (21): { app, BrowserWindow, shell, dialog, ipcMain, session }, appToken, createWindow(), crypto, findFreePort(), { fork }, fs, getErrorMessage() (+13 more)
 
-### Community 56 - "audit.ts"
-Cohesion: 0.12
-Nodes (16): DOCUMENTS, GET(), LABELS, Params, DOCUMENTS, GET(), LABELS, Params (+8 more)
+### Community 56 - "purchases.ts"
+Cohesion: 0.05
+Nodes (72): Invariants à ne pas casser, brickOrders, furnitureOrders, purchaseInvoiceItems, purchaseInvoices, salesInvoices, serviceJobs, SnapshotPeriod (+64 more)
 
-### Community 57 - "workers.ts"
-Cohesion: 0.15
-Nodes (21): DELETE(), GET(), Params, PUT(), workers, DEFAULT_LIST_SORT, ListSort, deactivateWorker() (+13 more)
+### Community 57 - "user-detail.tsx"
+Cohesion: 0.11
+Nodes (32): isTab(), PasswordInput(), PasswordInputProps, AccessChoices, choicesFromActions(), RoleChooser(), AssignmentDraft, periodLabel() (+24 more)
 
-### Community 58 - "app-shell.tsx"
-Cohesion: 0.17
-Nodes (16): AppShell(), NavIcon(), PATHS, StoreSwitcher(), SyncIndicator(), SyncSummary, useTheme(), ThemeToggle() (+8 more)
+### Community 58 - "audit.ts"
+Cohesion: 0.13
+Nodes (19): GET(), DELETE(), detailFor(), GET(), Params, PUT(), POST(), DOCUMENTS (+11 more)
 
 ### Community 59 - "triggers.ts"
-Cohesion: 0.11
-Nodes (20): LOCAL_TABLES, SYNCED_TABLE_NAMES, SYNCED_TABLES, SyncScope, Executor, installSyncTriggers(), quote(), TRIGGERS_VERSION (+12 more)
+Cohesion: 0.24
+Nodes (9): LOCAL_TABLES, SYNCED_TABLE_NAMES, SYNCED_TABLES, SyncScope, Executor, installSyncTriggers(), TRIGGERS_VERSION, triggerStatements() (+1 more)
 
-### Community 60 - "productions/[id]/route.ts"
-Cohesion: 0.14
-Nodes (18): DELETE(), detailFor(), GET(), Params, DELETE(), detailFor(), GET(), Params (+10 more)
+### Community 60 - "fournisseurs/[id]/route.ts"
+Cohesion: 0.27
+Nodes (10): GET(), Params, DELETE(), GET(), Params, PUT(), assertSupplierVisible(), deactivateSupplier() (+2 more)
 
 ### Community 61 - "quantity"
-Cohesion: 0.15
-Nodes (20): quantity(), 6.2 Correspondance schéma client → schéma cible, 6.3 Tables cibles métier (32), Atelier de meubles (§18), Briqueterie (§17), Caisse et dépenses, Partenaires, Prestations et main-d'œuvre (+12 more)
+Cohesion: 0.21
+Nodes (13): quantity(), quote(), 19.6 Chantiers — `lib/jobs.ts`, `/chantiers`, `/chantiers/[id]`, 6.3 Tables cibles métier (32), Atelier de meubles (§18), Briqueterie (§17), Caisse et dépenses, Partenaires (+5 more)
 
 ### Community 62 - "chrome-devtools-cli/SKILL.md"
 Cohesion: 0.10
@@ -522,9 +541,9 @@ Nodes (18): compilerOptions, allowJs, esModuleInterop, incremental, isolatedModu
 Cohesion: 0.11
 Nodes (16): 1. Find Orphaned Form Inputs, 2. Measure Tap Target Size, 3. Check Color Contrast, 4. Global Page Checks, Accessibility Debugging Snippets, 1. Automated Audit (Lighthouse), 2. Browser Issues & Audits, 3. Semantics & Structure (+8 more)
 
-### Community 72 - "inventaires/[id]/page.tsx"
-Cohesion: 0.18
-Nodes (14): Draft, Filter, InventaireFichePage(), parse(), toDraft(), INVENTORY_STATUS, InventoryDetailRecord, InventoryRecord (+6 more)
+### Community 72 - "withTransaction"
+Cohesion: 0.09
+Nodes (51): withTransaction(), addJobMaterial(), addJobSubcontract(), addJobTeam(), addJobWorker(), cancelServiceJob(), createServiceJob(), JobItemInput (+43 more)
 
 ### Community 73 - "Code Review Reception"
 Cohesion: 0.12
@@ -534,9 +553,9 @@ Nodes (16): Acknowledging Correct Feedback, Code Review Reception, Common Mistak
 Cohesion: 0.12
 Nodes (16): Documentation Variants to Test, Expected Results, Next Steps, NULL (Baseline - no skills doc), Scenario 1: Time Pressure + Confidence, Scenario 2: Sunk Cost + Works Already, Scenario 3: Authority + Speed Bias, Scenario 4: Familiarity + Efficiency (+8 more)
 
-### Community 75 - "stock.ts"
-Cohesion: 0.15
-Nodes (14): AddStockMovementOptions, AssortmentError, recomputeStocks(), recomputeStoreStock(), round3(), setProductListed(), STOCK_MOVEMENT_LABELS, STOCK_REFERENCE_LABELS (+6 more)
+### Community 75 - "scopeSql"
+Cohesion: 0.10
+Nodes (57): GET(), PERIODS, rawAll(), rawGet(), withRawTransaction(), BalancesByMonth, clientBalanceCte(), getBalancesSummary() (+49 more)
 
 ### Community 76 - "schema-dbml.mjs"
 Cohesion: 0.13
@@ -546,9 +565,9 @@ Nodes (15): blocks, colors, complet, defaultSetting(), enums, groupBlocks, group
 Cohesion: 0.18
 Nodes (16): ERROR_MARKERS, evaluate(), fs, listeners, main(), os, path, pending (+8 more)
 
-### Community 78 - "balances.ts"
-Cohesion: 0.24
-Nodes (14): GET(), PERIODS, BalancesByMonth, clientBalanceCte(), getBalancesSummary(), getClientBalances(), getMargins(), getSupplierBalances() (+6 more)
+### Community 78 - "Card"
+Cohesion: 0.13
+Nodes (33): SectionCard(), ConflictRow, ConflictsSection(), DeviceCard(), diffFields(), EnrollKind, EnrollmentCodesSection(), EnrollSection() (+25 more)
 
 ### Community 79 - "Common Memory Leaks"
 Cohesion: 0.12
@@ -586,21 +605,21 @@ Nodes (14): 1a. Native Worktree Tools (preferred), 1b. Git Worktree Fallback, Co
 Cohesion: 0.13
 Nodes (15): Code Examples, Common Rationalizations for Skipping Testing, Directory Structure, Discovery Workflow, Flowchart Usage, Match the Form to the Failure, Overview, Skill Creation Checklist (TDD Adapted) (+7 more)
 
-### Community 88 - "Guide multi-magasins — procédure complète, page par page"
-Cohesion: 0.13
-Nodes (11): 10. Ordre de travail recommandé pour terminer, 1. Architecture retenue (option B), 2. État d'avancement, 5. Rôles et permissions, 7. Serveur central : installation sur VPS, 8. Mise en service d'un réseau de magasins, 9. Vérifications et tests, Guide multi-magasins — procédure complète, page par page (+3 more)
+### Community 88 - "export-document.ts"
+Cohesion: 0.16
+Nodes (16): badgeStyles(), captureHtml(), COLORS, escapeHtml(), ExportBlock, ExportCompany, exportDocumentAsBlob(), ExportDocumentInput (+8 more)
 
-### Community 89 - "server/package.json"
-Cohesion: 0.13
-Nodes (14): pg, dependencies, pg, description, engines, node, main, name (+6 more)
+### Community 89 - "atelier/commandes/[id]/route.ts"
+Cohesion: 0.33
+Nodes (8): DELETE(), detailFor(), GET(), Params, GET(), hideDetailCosts(), hideOrderCosts(), isFurnitureStage()
 
-### Community 90 - "Invariants à ne pas casser"
-Cohesion: 0.18
-Nodes (13): AGENTS.md — repères pour un agent qui travaille sur ce dépôt, Commandes, Conventions d'écriture, Invariants à ne pas casser, Le projet, Organisation, This is NOT the Next.js you know, Vérifier par exécution, pas par lecture (+5 more)
+### Community 90 - "AGENTS.md — repères pour un agent qui travaille sur ce dépôt"
+Cohesion: 0.25
+Nodes (7): AGENTS.md — repères pour un agent qui travaille sur ce dépôt, Commandes, Conventions d'écriture, Le projet, Organisation, This is NOT the Next.js you know, Vérifier par exécution, pas par lecture
 
-### Community 91 - "produits/[id]/route.ts"
-Cohesion: 0.24
-Nodes (11): GET(), POST(), PUT(), DELETE(), GET(), Params, PUT(), CentralDataError (+3 more)
+### Community 91 - "inventories.ts"
+Cohesion: 0.19
+Nodes (11): INVENTORY_STATUS, InventoryDetailRecord, InventoryRecord, inventories, inventoryItems, INVENTORY_STATUS_LABELS, InventoryItemRow, InventoryRow (+3 more)
 
 ### Community 92 - "Dispatching Parallel Agents"
 Cohesion: 0.14
@@ -628,15 +647,15 @@ Nodes (13): Common Mistakes (Same as TDD), GREEN Phase: Write Minimal Skill (Mak
 
 ### Community 98 - "Conventions de développement — Planète Déco"
 Cohesion: 0.15
-Nodes (13): 10. Formatage, 11 bis. ⚠️ Séparation serveur / navigateur — la faute qui casse le build, 11. Synchronisation — 4 règles à respecter sans exception, 11 ter. Logo et icônes, 1. Le projet en une page, 2. Structure et propriété des fichiers, 4. Le patron de `lib/<module>.ts`, 6. Base de données — règles non négociables (+5 more)
+Nodes (9): 11 bis. ⚠️ Séparation serveur / navigateur — la faute qui casse le build, 11 quater. Export de documents (PDF, image, WhatsApp), 11. Synchronisation — 4 règles à respecter sans exception, 11 ter. Logo et icônes, 1. Le projet en une page, 2. Structure et propriété des fichiers, 6. Base de données — règles non négociables, 9. Permissions (+1 more)
 
 ### Community 99 - "Parcours de démonstration — chantiers, briqueterie, atelier"
 Cohesion: 0.15
 Nodes (13): 1. Générer les données, 2.1 La liste, 2.2 La fiche d'un chantier (`/chantiers/[id]`), 2. Parcours conseillé — Chantiers (`/chantiers`), 3.1 La liste, 3.2 La fiche d'un lot (`/briqueterie/[id]`), 3. Parcours conseillé — Briqueterie (`/briqueterie`), 4. Parcours conseillé — Atelier (`/atelier`) (+5 more)
 
-### Community 100 - "device.ts"
-Cohesion: 0.21
-Nodes (10): register(), DeviceConfig, DeviceMode, invalidateDeviceConfig(), KEYS, setDeviceConfig(), startScheduler(), tick() (+2 more)
+### Community 100 - "SectionTabs"
+Cohesion: 0.50
+Nodes (4): SectionTab, SectionTabs(), focusAt(), onKeyDown()
 
 ### Community 101 - "verify-export-image.js"
 Cohesion: 0.18
@@ -646,17 +665,17 @@ Nodes (10): fs, main(), os, OUT, path, pending, PORT, send() (+2 more)
 Cohesion: 0.28
 Nodes (12): api(), check(), cookieHeader(), currentStock(), fs, jar, main(), openDatabase() (+4 more)
 
-### Community 103 - "CloseCashSessionModal"
-Cohesion: 0.29
-Nodes (11): loadMovements(), loadSessions(), handleSubmit(), validate(), CloseCashSessionModal(), handleSubmit(), OpenCashSessionModal(), handleSubmit() (+3 more)
+### Community 103 - "OpenCashSessionModal"
+Cohesion: 0.33
+Nodes (10): loadMovements(), loadSessions(), handleSubmit(), validate(), handleSubmit(), OpenCashSessionModal(), handleSubmit(), validate() (+2 more)
 
-### Community 104 - "theme-provider.tsx"
-Cohesion: 0.21
-Nodes (9): metadata, RootLayout(), viewport, defaultSettings, AuthProvider(), ThemeContext, ThemeContextType, ThemeProvider() (+1 more)
+### Community 104 - "27. Annexes : pages, API REST, scripts"
+Cohesion: 0.50
+Nodes (4): 27.1 Pages, 27.2 API REST, 27.3 Scripts npm, 27. Annexes : pages, API REST, scripts
 
-### Community 105 - "parametres/page.tsx"
-Cohesion: 0.24
-Nodes (10): FormState, ParametresPage(), SettingsContext, SettingsContextType, StorageInfo, TagListEditor(), toForm(), ColorField() (+2 more)
+### Community 105 - "verify-comptes-e2e.js"
+Cohesion: 0.42
+Nodes (8): check(), err(), login(), main(), refused(), RUN, session(), SUPER
 
 ### Community 106 - "Defense-in-Depth Validation"
 Cohesion: 0.17
@@ -682,9 +701,9 @@ Nodes (10): After the Design (architectural path), Anti-Pattern: "Too Simple To 
 Cohesion: 0.18
 Nodes (11): Avoid assuming tools are installed, Create verifiable intermediate outputs, MCP tool references, Next steps, Package dependencies, Returns: "OK" or lists conflicts, Runtime environment, Technical notes (+3 more)
 
-### Community 112 - "7. Modules fonctionnels"
-Cohesion: 0.18
-Nodes (11): 7.11 Rapports (§11), 7.12 Utilisateurs (§12) · 7.13 Paramètres (§13) · 7.14 Sauvegarde et sécurité (§14), 7.15 Livraison et évolutions (§15), 7.16 Prestations, briqueterie, atelier, 7.2 Clients (§2), 7.3 Fournisseurs (§3), 7.5 Achats (§5), 7.6 Ventes (§6) (+3 more)
+### Community 112 - "render-graphs.js"
+Cohesion: 0.33
+Nodes (7): browserLauncherForPlatform(), maybeOpenBrowser(), combineGraphs(), extractDotBlocks(), extractGraphBody(), main(), renderToSvg()
 
 ### Community 113 - "generate-icons.js"
 Cohesion: 0.24
@@ -702,17 +721,17 @@ Nodes (9): Common Failures, Key Patterns, Overview, Rationalization Prevention, 
 Cohesion: 0.20
 Nodes (10): Avoid deeply nested references, Naming conventions, Pattern 1: High-level guide with references, Pattern 2: Domain-specific organization, Pattern 3: Conditional details, Progressive disclosure patterns, Skill structure, Structure longer reference files with table of contents (+2 more)
 
-### Community 117 - "applyThemeColors"
-Cohesion: 0.49
-Nodes (9): applyThemeColors(), getContrastColor(), getContrastOklch(), hexToOklch(), hexToRgb(), lightenHex(), rgbToOklch(), shiftHue() (+1 more)
+### Community 117 - "theme-provider.tsx"
+Cohesion: 0.19
+Nodes (11): metadata, RootLayout(), viewport, defaultSettings, AuthProvider(), ScrollRestoration(), ThemeContext, ThemeContextType (+3 more)
 
 ### Community 118 - "verify-briqueterie-e2e.js"
 Cohesion: 0.38
 Nodes (9): ADMIN, check(), err(), login(), main(), near(), put(), session() (+1 more)
 
-### Community 119 - "clients/[id]/route.ts"
-Cohesion: 0.39
-Nodes (8): DELETE(), GET(), Params, PUT(), assertCustomerVisible(), deactivateCustomer(), reactivateCustomer(), updateCustomer()
+### Community 119 - "server/package.json"
+Cohesion: 0.13
+Nodes (14): pg, dependencies, pg, description, engines, node, main, name (+6 more)
 
 ### Community 120 - "Workflow Patterns"
 Cohesion: 0.22
@@ -742,13 +761,13 @@ Nodes (8): ADMIN, check(), err(), login(), main(), near(), session(), stockOf()
 Cohesion: 0.25
 Nodes (7): Actual behavior, Debug log or conversation transcript, Environment (required), Expected behavior, Is this a Superpowers issue or a platform issue?, Steps to reproduce, What happened?
 
-### Community 127 - "update-status.tsx"
-Cohesion: 0.39
-Nodes (7): AppVersionDisplay(), formatVersion(), getPayloadVersion(), getProgress(), statusBadgeClass, UpdateState, UpdateStatus()
+### Community 127 - "applyThemeColors"
+Cohesion: 0.49
+Nodes (9): applyThemeColors(), getContrastColor(), getContrastOklch(), hexToOklch(), hexToRgb(), lightenHex(), rgbToOklch(), shiftHue() (+1 more)
 
-### Community 128 - "✅ Fait"
-Cohesion: 0.32
-Nodes (8): ✅ Fait, getCustomer(), getCustomerStats(), listCustomers(), mapCustomerRow(), searchCustomers(), storeFilter(), getEffectiveSalePrice()
+### Community 128 - "suppliers.ts"
+Cohesion: 0.07
+Nodes (47): db, customers, suppliers, workers, 4. Le patron de `lib/<module>.ts`, Enveloppe paginée — format imposé, Tri des listes — la dernière insertion d'abord, createCustomer() (+39 more)
 
 ### Community 129 - "Frontend Design"
 Cohesion: 0.29
@@ -789,6 +808,10 @@ Nodes (7): allowScripts, core-js@3.50.0, electron-winstaller@5.4.0, esbuild@0.18
 ### Community 138 - "5. Architecture et structure du projet"
 Cohesion: 0.29
 Nodes (7): 5.1 Architecture d'exécution, 5.2 Structure des dossiers, 5.3 Design system — une identité d'entreprise, cohérente sur toutes les pages, 5.4 Le sidebar et la navigation, 5.5 Responsive — la règle des 5 largeurs, 5. Architecture et structure du projet, Jetons de design (source unique de vérité)
+
+### Community 139 - "19. Prestations de chantier (multi-magasins)"
+Cohesion: 0.22
+Nodes (9): 19.1 Décisions (et écarts assumés avec le cahier), 19.2 Données (migration `0006_prestations_chantier`, purement additive), 19.3 Catalogue de prestations — `lib/services.ts`, `/prestations`, 19.4 Demandes — `lib/service-requests.ts`, `/chantiers/demandes`, 19.5 Devis — `lib/quotes.ts`, `/chantiers/devis`, 19.7 Rentabilité (cahier §15) — calculée, jamais stockée, 19.8 Pilotage, planning, ouvriers, sous-traitants, 19.9 Cloisonnement et recette (+1 more)
 
 ### Community 140 - "ref_node_fs"
 Cohesion: 0.29
@@ -914,33 +937,105 @@ Nodes (4): Pattern, Reference, Skill Types, Technique
 Cohesion: 0.50
 Nodes (4): Example: TDD Skill Bulletproofing, Initial Test (Failed), Iteration 1 - Add Counter, Iteration 2 - Add Foundational Principle
 
-### Community 171 - "6.1 `/login` — Connexion, première installation, choix du magasin ✅"
+### Community 171 - "workers/[id]/route.ts"
+Cohesion: 0.43
+Nodes (7): DELETE(), GET(), Params, PUT(), deactivateWorker(), getWorker(), reactivateWorker()
+
+### Community 172 - "send"
+Cohesion: 0.47
+Nodes (6): submit(), submit(), num(), send(), submit(), submit()
+
+### Community 206 - "update-status.tsx"
+Cohesion: 0.33
+Nodes (8): AppVersionDisplay(), formatVersion(), getPayloadVersion(), getProgress(), statusBadgeClass, UpdateState, UpdateStatus(), 9.3 Sections de la page Paramètres
+
+### Community 207 - "4. Stack technique"
+Cohesion: 0.33
+Nodes (6): 4.1 Dépendances de production, 4.2 Dépendances de développement, 4.3 Ajouts envisagés (à valider — voir Q9), 4.4 Dépendances du service de synchronisation (côté serveur uniquement), 4.5 Politique de versions et procédure d'installation, 4. Stack technique
+
+### Community 208 - "8. La manière d'utiliser les modales"
+Cohesion: 0.33
+Nodes (6): 8.1 Le composant (`components/modal.tsx`) — repris tel quel, 8.2 Les 4 familles de modales, 8.3 Conventions obligatoires, 8.4 Modèle de référence — confirmation destructive, 8.5 Modales prévues, module par module, 8. La manière d'utiliser les modales
+
+### Community 209 - "20. Gestion de la briqueterie"
+Cohesion: 0.50
+Nodes (4): 20.1 Les six écrans du module, 20.3 Décisions de conception à connaître, 20.4 Vérification, 20. Gestion de la briqueterie
+
+### Community 210 - "30. Briqueterie par magasin (v2)"
+Cohesion: 0.40
+Nodes (5): 30.2 Rentabilité, 30.3 Droits (domaine « Briqueterie »), 30.4 Données, migration, API, 30.5 Recette, 30. Briqueterie par magasin (v2)
+
+### Community 211 - "caisse.ts"
+Cohesion: 0.13
+Nodes (21): cashMovements, cashSessions, CASH_REFERENCE_LABELS, CashCountByMethod, CashMovementRow, CashMovementType, CashReferenceType, CashSessionError (+13 more)
+
+### Community 212 - "6. Base de données"
+Cohesion: 0.40
+Nodes (5): 6.2 Correspondance schéma client → schéma cible, 6.4 Relations Drizzle, 6.6 Ce que l'on ne crée **pas** (choix assumé), 6.7 Colonnes de synchronisation (option PostgreSQL), 6. Base de données
+
+### Community 213 - "16. Rapports et envoi SMS / WhatsApp"
+Cohesion: 0.50
+Nodes (4): 16.1 Rapports affichés et exportés (§11), 16.2 Envoi automatique des rapports (§11), 16.3 Canaux, 16. Rapports et envoi SMS / WhatsApp
+
+### Community 214 - "Guide multi-magasins — procédure complète, page par page"
+Cohesion: 0.18
+Nodes (11): 10. Ordre de travail recommandé pour terminer, 2. État d'avancement, 3. Règles métier à ne jamais casser, 5. Rôles et permissions, 7. Serveur central : installation sur VPS, 8. Mise en service d'un réseau de magasins, 9. Vérifications et tests, Guide multi-magasins — procédure complète, page par page (+3 more)
+
+### Community 215 - "3. Héritage du projet Gaz — ce qu'on reprend, et pourquoi"
+Cohesion: 0.50
+Nodes (4): 3.2 Repris et **adapté** au métier Planète Déco, 3.3 Le schéma de base de données fourni par le client, 3.4 Ce qu'on ne reprend **PAS** du projet Gaz (dette technique identifiée), 3. Héritage du projet Gaz — ce qu'on reprend, et pourquoi
+
+### Community 216 - "seed-data.ts"
+Cohesion: 0.09
+Nodes (40): SettingsProvider(), assertStore(), cancelInventory(), getInventory(), openInventory(), recordCounts(), round3(), validateInventory() (+32 more)
+
+### Community 217 - "28. Multi-magasins (v2)"
+Cohesion: 0.33
+Nodes (6): 28.1 Architecture retenue (option B), 28.4 Outils de recette, 28. Multi-magasins (v2), authorizedScope(), handlePush(), inStoreScope()
+
+### Community 219 - "formatDetailValue"
+Cohesion: 0.60
+Nodes (5): DetailsCell(), formatDetailValue(), labelForKey(), truncate(), 7.5 Achats (§5)
+
+### Community 220 - "preload.js"
+Cohesion: 0.50
+Nodes (3): { contextBridge, ipcRenderer }, on(), electron
+
+### Community 221 - "6.1 `/login` — Connexion, première installation, choix du magasin ✅"
 Cohesion: 0.50
 Nodes (4): 6.1 `/login` — Connexion, première installation, choix du magasin ✅, A. Première installation (`needsSetup = true`), B. Connexion, C. Choix du magasin (comptes multi-magasins)
 
-### Community 172 - "28. Multi-magasins (v2)"
+### Community 222 - "29. Atelier de meubles par magasin (v2)"
 Cohesion: 0.50
-Nodes (4): 28.1 Architecture retenue (option B), 28.3 État d'avancement, 28.4 Outils de recette, 28. Multi-magasins (v2)
+Nodes (4): 29.2 Rentabilité (`lib/profit.ts`), 29.3 Droits (domaine « Atelier de meubles »), 29.5 Recette, 29. Atelier de meubles par magasin (v2)
+
+### Community 223 - "readViewState"
+Cohesion: 0.50
+Nodes (4): isTraverseNavigation(), currentUrl(), readViewState(), slotKey()
+
+### Community 224 - "17. Utilisateurs, rôles et historique des actions"
+Cohesion: 0.67
+Nodes (3): 17.1 Authentification, 17.3 Historique des actions, 17. Utilisateurs, rôles et historique des actions
 
 ## Knowledge Gaps
-- **1737 isolated node(s):** `context7`, `crypto`, `http`, `fs`, `path` (+1732 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1881 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **1744 isolated node(s):** `context7`, `crypto`, `http`, `fs`, `path` (+1739 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1888 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **34 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `next` connect `api.ts` to `formatNumber`, `chantiers-modals.tsx`, `formatDateShort`, `MoneyText`, `ok`, `design-system.tsx`, `briqueterie-modals.tsx`, `stores.ts`, `fail`, `permissions.ts`, `commandes-modals.tsx`, `ventes/nouvelle/page.tsx`, `users.ts`, `atelier-modals.tsx`, `users/route.ts`, `stock/page.tsx`, `sync-engine.ts`, `transfers.ts`, `requireAction`, `proxy.ts`, `package.json`, `assertStoreVisible`, `clients/[id]/page.tsx`, `suppliers.ts`, `scroll-engine.ts`, `audit.ts`, `workers.ts`, `app-shell.tsx`, `productions/[id]/route.ts`, `inventaires/[id]/page.tsx`, `balances.ts`, `produits/[id]/route.ts`, `theme-provider.tsx`, `parametres/page.tsx`, `clients/[id]/route.ts`?**
-  _High betweenness centrality (0.094) - this node is a cross-community bridge._
+- **Why does `next` connect `next` to `EmptyState`, `chantiers-modals.tsx`, `stock/page.tsx`, `MoneyText`, `requireAction`, `productions/[id]/route.ts`, `fail`, `produits/[id]/route.ts`, `users/[id]/route.ts`, `briqueterie-modals.tsx`, `stores.ts`, `commandes-modals.tsx`, `ventes/nouvelle/page.tsx`, `user-permissions.ts`, `atelier-modals.tsx`, `user-scope.ts`, `formatNumber`, `api.ts`, `sync-engine.ts`, `transfers.ts`, `proxy.ts`, `package.json`, `app-shell.tsx`, `workers/[id]/route.ts`, `design-system.tsx`, `rawRun`, `user-detail.tsx`, `audit.ts`, `fournisseurs/[id]/route.ts`, `scopeSql`, `Card`, `atelier/commandes/[id]/route.ts`, `theme-provider.tsx`?**
+  _High betweenness centrality (0.088) - this node is a cross-community bridge._
 - **Are the 3 inferred relationships involving `requireAction()` (e.g. with `9.1 Permissions par utilisateur (surcharges)` and `9. Permissions`) actually correct?**
   _`requireAction()` has 3 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `context7`, `crypto`, `http` to the rest of the system?**
-  _1737 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `formatNumber` be split into smaller, more focused modules?**
-  _Cohesion score 0.0489842415037023 - nodes in this community are weakly interconnected._
-- **Why does `Planète Déco Sarlu — Filiale Meubles` connect `Planète Déco Sarlu — Filiale Meubles` to `formatNumber`, `withTransaction`, `5. Architecture et structure du projet`, `28. Multi-magasins (v2)`, `7. Modules fonctionnels`, `23. Synchronisation avec PostgreSQL (option en ligne)`, `main.js`, `Guide multi-magasins — procédure complète, page par page`, `scopeSql`, `Invariants à ne pas casser`, `triggers.ts`, `users/route.ts`?**
-  _High betweenness centrality (0.043) - this node is a cross-community bridge._
+  _1744 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `EmptyState` be split into smaller, more focused modules?**
+  _Cohesion score 0.04790645039607695 - nodes in this community are weakly interconnected._
+- **Why does `drizzle-orm` connect `rawRun` to `suppliers.ts`, `schema.ts`, `furniture.ts`, `stores.ts`, `jobs.ts`, `brick-orders.ts`, `NotFoundError`, `user-permissions.ts`, `sales.ts`, `products.ts`, `transfers.ts`, `service-requests.ts`, `package.json`, `services.ts`, `users.ts`, `backup.ts`, `ValidationError`, `index.ts`, `ref_fs`, `purchases.ts`, `audit.ts`, `withTransaction`, `schema-dbml.mjs`, `caisse.ts`, `inventories.ts`?**
+  _High betweenness centrality (0.049) - this node is a cross-community bridge._
 - **Should `chantiers-modals.tsx` be split into smaller, more focused modules?**
-  _Cohesion score 0.028469583978237418 - nodes in this community are weakly interconnected._
-- **Why does `drizzle-orm` connect `today` to `schema.ts`, `withTransaction`, `NotFoundError`, `furniture.ts`, `stores.ts`, `brick-orders.ts`, `brick.ts`, `users.ts`, `users/route.ts`, `purchases.ts`, `sales.ts`, `products.ts`, `transfers.ts`, `package.json`, `ValidationError`, `services.ts`, `suppliers.ts`, `backup.ts`, `caisse.ts`, `index.ts`, `ref_fs`, `audit.ts`, `workers.ts`, `stock.ts`, `schema-dbml.mjs`?**
-  _High betweenness centrality (0.040) - this node is a cross-community bridge._
+  _Cohesion score 0.03579779085705071 - nodes in this community are weakly interconnected._
+- **Why does `today()` connect `jobs.ts` to `EmptyState`, `chantiers-modals.tsx`, `suppliers.ts`, `MoneyText`, `requireAction`, `productions/[id]/route.ts`, `fail`, `briqueterie-modals.tsx`, `furniture.ts`, `brick-orders.ts`, `next`, `NotFoundError`, `commandes-modals.tsx`, `ventes/nouvelle/page.tsx`, `atelier-modals.tsx`, `formatNumber`, `api.ts`, `service-requests.ts`, `services.ts`, `design-system.tsx`, `ValidationError`, `brick-analytics.ts`, `purchases.ts`, `withTransaction`, `scopeSql`, `caisse.ts`, `seed-data.ts`?**
+  _High betweenness centrality (0.032) - this node is a cross-community bridge._

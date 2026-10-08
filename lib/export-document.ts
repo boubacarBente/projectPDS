@@ -247,10 +247,10 @@ export function renderExportDocument(input: ExportDocumentInput): string {
   const primary = safeHex(input.company.primaryColor);
   const currency = input.company.currencySymbol?.trim() || 'GNF';
 
-  const companyLines = [
-    input.company.branch,
+  // Coordonnées : une seule ligne sous l'identité (la filiale reste sous le nom).
+  const contactLines = [
     input.company.address,
-    input.company.phone,
+    input.company.phone?.trim() ? `Tél. : ${input.company.phone}` : null,
     input.company.email,
     input.company.taxId ? `NIF : ${input.company.taxId}` : null,
   ].filter((line): line is string => Boolean(line && String(line).trim()));
@@ -278,16 +278,28 @@ export function renderExportDocument(input: ExportDocumentInput): string {
   .num, table td.num, table th.right, table td.right { font-variant-numeric: tabular-nums; }
 
   /* ── En-tête ─────────────────────────────────────────────────── */
+  /*
+   * Deux étages, comme le document à l'écran (components/ventes/invoice-document.tsx) :
+   * identité à gauche et titre à droite, puis les coordonnées sur toute la
+   * largeur. Sous le nom, la ligne des trois téléphones élargissait le bloc de
+   * gauche et tassait le titre du document.
+   */
   header {
+    padding-bottom: 12px;
+    border-bottom: 2px solid ${primary};
+    margin-bottom: 22px;
+  }
+  .header-top {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
     gap: 20px;
-    padding-bottom: 16px;
-    border-bottom: 2px solid ${primary};
-    margin-bottom: 22px;
   }
-  .company { display: flex; gap: 12px; align-items: flex-start; }
+  .company { display: flex; gap: 12px; align-items: center; min-width: 0; }
+  .company-contacts {
+    margin-top: 10px;
+    font-size: 11px; color: ${COLORS.muted};
+  }
   .logo {
     width: 62px; height: 62px; flex: 0 0 62px;
     border-radius: 10px; object-fit: contain;
@@ -295,9 +307,9 @@ export function renderExportDocument(input: ExportDocumentInput): string {
   }
   .company-name { font-size: 17px; font-weight: 700; color: ${COLORS.ink}; }
   .company-line { font-size: 11px; color: ${COLORS.muted}; }
-  .doc-id { text-align: right; }
+  .doc-id { text-align: right; flex: 0 0 auto; }
   .doc-title {
-    font-size: 19px; font-weight: 700; letter-spacing: 0.06em;
+    font-size: 24px; font-weight: 800; letter-spacing: 0.12em; line-height: 1;
     color: ${primary}; text-transform: uppercase;
   }
   .doc-number { font-size: 14px; font-weight: 600; margin-top: 2px; }
@@ -381,27 +393,30 @@ export function renderExportDocument(input: ExportDocumentInput): string {
 </head>
 <body>
   <header>
-    <div class="company">
-      ${
-        input.company.logo
-          ? `<img class="logo" src="${escapeHtml(input.company.logo)}" alt="" />`
-          : ''
-      }
-      <div>
-        <div class="company-name">${escapeHtml(input.company.name)}</div>
-        ${companyLines.map((line) => `<div class="company-line">${escapeHtml(line)}</div>`).join('')}
+    <div class="header-top">
+      <div class="company">
+        ${
+          input.company.logo
+            ? `<img class="logo" src="${escapeHtml(input.company.logo)}" alt="" />`
+            : ''
+        }
+        <div>
+          <div class="company-name">${escapeHtml(input.company.name)}</div>
+          ${input.company.branch?.trim() ? `<div class="company-line">${escapeHtml(input.company.branch)}</div>` : ''}
+        </div>
+      </div>
+      <div class="doc-id">
+        <div class="doc-title">${escapeHtml(input.documentTitle)}</div>
+        ${input.documentNumber ? `<div class="doc-number">${escapeHtml(input.documentNumber)}</div>` : ''}
+        ${input.documentDate ? `<div class="doc-date">${escapeHtml(input.documentDate)}</div>` : ''}
+        ${
+          input.badge
+            ? `<div class="badge" style="${badgeStyles(input.badge.tone ?? 'neutral', primary)}">${escapeHtml(input.badge.label)}</div>`
+            : ''
+        }
       </div>
     </div>
-    <div class="doc-id">
-      <div class="doc-title">${escapeHtml(input.documentTitle)}</div>
-      ${input.documentNumber ? `<div class="doc-number">${escapeHtml(input.documentNumber)}</div>` : ''}
-      ${input.documentDate ? `<div class="doc-date">${escapeHtml(input.documentDate)}</div>` : ''}
-      ${
-        input.badge
-          ? `<div class="badge" style="${badgeStyles(input.badge.tone ?? 'neutral', primary)}">${escapeHtml(input.badge.label)}</div>`
-          : ''
-      }
-    </div>
+    ${contactLines.length > 0 ? `<div class="company-contacts">${contactLines.map(escapeHtml).join(' &nbsp;·&nbsp; ')}</div>` : ''}
   </header>
 
   ${

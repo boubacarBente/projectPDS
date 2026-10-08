@@ -280,7 +280,7 @@ export type ServiceJobDetail = {
 export type JobItemInput = {
   serviceId: number;
   quantity: number;
-  /** Prix unitaire ; par défaut le prix indicatif du catalogue. */
+  /** Prix unitaire ; par défaut le prix estimatif du catalogue (modifiable par chantier). */
   unitPrice?: number | null;
   discountPercent?: number | null;
 };
@@ -1024,6 +1024,29 @@ export async function recomputeJobTotals(jobId: number): Promise<ServiceJobRow> 
   return refreshed;
 }
 
+/**
+ * « Montant à définir » : un chantier peut s'ouvrir **sans prix** (appel du client,
+ * visite à faire), mais il reste alors « En préparation ». Le prix — au moins une
+ * prestation ou un montant forfaitaire — devient obligatoire pour le planifier, le
+ * démarrer ou le terminer, comme pour l'encaisser (lib/payments.ts) et éditer sa
+ * facture. Règle serveur : le formulaire n'est qu'un confort.
+ */
+const PRICE_REQUIRED_STATUSES: Partial<Record<JobStatus, string>> = {
+  planned: 'planifier',
+  in_progress: 'démarrer',
+  completed: 'terminer',
+  suspended: 'suspendre',
+};
+
+export function assertJobPriced(status: JobStatus, total: number): void {
+  const action = PRICE_REQUIRED_STATUSES[status];
+  if (action && !(total > 0.001)) {
+    throw new ValidationError(
+      `Montant à définir : ajoutez une prestation ou un montant forfaitaire avant de ${action} le chantier.`,
+    );
+  }
+}
+
 /** Un montant facturé ne peut pas descendre sous ce que le client a déjà payé. */
 async function assertTotalCoversPayments(jobId: number): Promise<void> {
   const row = await rawGet<{ total: number; paid: number; count: number }>(
@@ -1152,6 +1175,7 @@ async function createServiceJobInTx(
   const total = lines.length > 0 ? roundMoney(lines.reduce((sum, l) => sum + l.amount, 0)) : manualAmount;
 
   const status = isJobStatus(input.status) && input.status !== 'cancelled' && input.status !== 'quote' ? input.status : 'pending';
+  assertJobPriced(status, total);
 
   const inserted = await db
     .insert(serviceJobs)
@@ -1287,6 +1311,12 @@ export async function updateServiceJob(id: number, patch: ServiceJobPatch, store
       }
     }
 
+    // Statut et montant après modification : un chantier lancé ne retombe pas à 0.
+    assertJobPriced(
+      (values.status as JobStatus | undefined) ?? job.status,
+      values.total !== undefined ? Number(values.total) : job.total,
+    );
+
     const updated = await db
       .update(serviceJobs)
       .set(values as any)
@@ -1330,6 +1360,7 @@ export async function updateStatus(id: number, status: JobStatus, storeId: numbe
   }
 
   const job = await assertJobEditable(id, storeId);
+  assertJobPriced(status, job.total);
 
   const values: Record<string, unknown> = { status, updatedAt: new Date() };
   if (status === 'in_progress' && !job.actualStartDate) values.actualStartDate = today();

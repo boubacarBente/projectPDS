@@ -49,9 +49,11 @@ export type JobsSeedContext = {
   hq: StoreRef;
   kaloum: StoreRef;
   matoto: StoreRef;
+  ratoma: StoreRef;
   admin: UserRef;
   gerantKal: UserRef;
   gerantMat: UserRef;
+  gerantRat: UserRef;
   /** Clients de chaque magasin (README §28.5 : chaque magasin a les siens), même ordre partout. */
   customersByStore: Record<number, number[]>;
   productIds: Map<string, number>;
@@ -59,7 +61,7 @@ export type JobsSeedContext = {
 
 export type JobsSeedReport = { services: number; requests: number; quotes: number; jobs: number; subcontractors: number };
 
-const CATALOG: Record<'KAL' | 'MAT' | 'SIEGE', { name: string; category: string; unit: string; price: number; description?: string }[]> = {
+const CATALOG: Record<'KAL' | 'MAT' | 'SIEGE' | 'RAT',{ name: string; category: string; unit: string; price: number; description?: string }[]> = {
   KAL: [
     { name: 'Habillage de façade Alucobond', category: 'Alucobond / façade', unit: 'm²', price: 180_000, description: 'Ossature aluminium, pose et joints. Panneaux fournis à part.' },
     { name: 'Peinture intérieure deux couches', category: 'Peinture', unit: 'm²', price: 23_000, description: 'Préparation, sous-couche et deux couches de finition.' },
@@ -81,12 +83,58 @@ const CATALOG: Record<'KAL' | 'MAT' | 'SIEGE', { name: string; category: string;
   SIEGE: [
     { name: 'Cuisine sur mesure', category: 'Menuiserie / meubles', unit: 'forfait', price: 12_000_000 },
     { name: 'Pose de meubles', category: 'Menuiserie / meubles', unit: 'jour', price: 350_000 },
+    { name: 'Peinture intérieure deux couches', category: 'Peinture', unit: 'm²', price: 24_000 },
+    { name: 'Pose de carrelage', category: 'Carrelage', unit: 'm²', price: 28_000 },
+    { name: 'Faux plafond placo', category: 'Placo / faux plafond', unit: 'm²', price: 90_000 },
+  ],
+  RAT: [
+    { name: 'Peinture intérieure deux couches', category: 'Peinture', unit: 'm²', price: 21_000 },
+    { name: 'Pose de carrelage', category: 'Carrelage', unit: 'm²', price: 27_000 },
+    { name: 'Faux plafond placo', category: 'Placo / faux plafond', unit: 'm²', price: 92_000 },
+    { name: 'Porte intérieure posée', category: 'Menuiserie / meubles', unit: 'unité', price: 800_000 },
+    { name: 'Point lumineux', category: 'Électricité', unit: 'point', price: 140_000 },
   ],
 };
 
+/**
+ * Jeu **complet** de chantiers posé dans chaque magasin (siège, Matoto, Ratoma ;
+ * Kaloum a son propre scénario détaillé) : chaque statut, chaque situation de
+ * paiement, un retard et un « Montant à définir », pour pouvoir tout tester
+ * quel que soit le magasin actif. Dates : décalages en jours depuis aujourd'hui.
+ */
+type StandardJob = {
+  title: string;
+  status: JobStatus | 'cancel';
+  start: number;
+  end: number;
+  actualStart?: number;
+  actualEnd?: number;
+  /** Part du montant encaissée (0 = rien). */
+  paid: number;
+  /** `false` = ouvert sans prix (« Montant à définir »). */
+  priced?: boolean;
+  progress?: number;
+  stages?: boolean;
+  expenses?: boolean;
+  notes?: string;
+};
+
+const STANDARD_JOBS: StandardJob[] = [
+  { title: 'Rénovation bureau — prix à définir après visite', status: 'pending', start: 5, end: 25, paid: 0, priced: false },
+  { title: 'Aménagement boutique — en préparation', status: 'pending', start: 10, end: 30, paid: 0 },
+  { title: 'Travaux appartement T3 — planifié', status: 'planned', start: 6, end: 21, paid: 0.3 },
+  { title: 'Réfection salle de réunion — en cours, rien encaissé', status: 'in_progress', start: -8, end: 15, actualStart: -7, paid: 0, stages: true, expenses: true },
+  { title: 'Immeuble de bureaux — en cours, acompte versé', status: 'in_progress', start: -15, end: 12, actualStart: -14, paid: 0.5, stages: true, expenses: true },
+  { title: 'Villa familiale — en retard', status: 'in_progress', start: -40, end: -5, actualStart: -38, paid: 0.4, stages: true, expenses: true },
+  { title: 'Peinture extérieure — suspendu', status: 'suspended', start: -20, end: 20, actualStart: -20, paid: 0.2, progress: 40, notes: 'Suspendu : le client attend la fin de la saison des pluies.' },
+  { title: 'Finitions maison — terminé et soldé', status: 'completed', start: -60, end: -42, actualStart: -60, actualEnd: -40, paid: 1, expenses: true },
+  { title: 'Carrelage terrasse — terminé, reste à payer', status: 'completed', start: -32, end: -18, actualStart: -32, actualEnd: -16, paid: 0.5, expenses: true },
+  { title: 'Cuisine équipée — annulé', status: 'cancel', start: -25, end: -5, paid: 0, notes: 'Le client a renoncé au projet' },
+];
+
 export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedReport> {
   const report: JobsSeedReport = { services: 0, requests: 0, quotes: 0, jobs: 0, subcontractors: 0 };
-  const { kaloum, matoto, hq, gerantKal, gerantMat, admin, productIds } = ctx;
+  const { kaloum, matoto, ratoma, hq, gerantKal, gerantMat, gerantRat, admin, productIds } = ctx;
   const customersOf = (store: StoreRef) => ctx.customersByStore[store.id] ?? [];
   const K = customersOf(kaloum);
   const M = customersOf(matoto);
@@ -107,6 +155,7 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
     ['KAL', kaloum, gerantKal],
     ['MAT', matoto, gerantMat],
     ['SIEGE', hq, admin],
+    ['RAT', ratoma, gerantRat],
   ];
   for (const [code, store, user] of stores) {
     for (const def of CATALOG[code]) {
@@ -535,6 +584,72 @@ export async function seedServiceJobs(ctx: JobsSeedContext): Promise<JobsSeedRep
   await expense(hq, admin, s1.id, 'Main-d’œuvre', 1_400_000, d(-120), 'Menuisiers et poseurs');
   await pay(hq, admin, s1.id, 1, d(-118));
   await jobAudit(admin, hq, s1.id, {});
+
+  /* ------------- Jeu complet par magasin (tous statuts, tous paiements) ------------- */
+  const qty = (unit: string) => (unit === 'forfait' ? 1 : unit === 'jour' || unit === 'unité' || unit === 'point' ? 4 : 60);
+  const standardSet = async (code: keyof typeof CATALOG, store: StoreRef, user: UserRef, only?: string[]) => {
+    const customers = customersOf(store);
+    // Sans les prestations désactivée / archivée plus haut : un chantier les refuserait.
+    const unusable = ['Crépissage extérieur', 'Staff décoratif (corniche)'];
+    const catalog = CATALOG[code].filter((def) => !unusable.includes(def.name));
+    let n = 0;
+    for (const def of STANDARD_JOBS) {
+      if (only && !only.includes(def.title)) continue;
+      // Deux prestations du catalogue du magasin, différentes d'un chantier à l'autre.
+      const a = catalog[n % catalog.length];
+      const b = catalog[(n + 2) % catalog.length];
+      const job = await createServiceJob({
+        storeId: store.id,
+        userId: user.id,
+        customerId: customers[n % customers.length],
+        category: a.category,
+        title: def.title,
+        siteAddress: `${store.name.replace(/^Magasin /, '')}, Conakry`,
+        startDate: d(def.start),
+        endDate: d(def.end),
+        actualStartDate: def.actualStart !== undefined ? d(def.actualStart) : null,
+        actualEndDate: def.actualEnd !== undefined ? d(def.actualEnd) : null,
+        status: def.status === 'cancel' ? 'pending' : def.status,
+        progress: def.progress ?? null,
+        responsibleUserId: user.id,
+        notes: def.status === 'cancel' ? null : def.notes ?? null,
+        items:
+          def.priced === false
+            ? []
+            : [
+                { serviceId: S(code, a.name), quantity: qty(a.unit) },
+                ...(a.name !== b.name ? [{ serviceId: S(code, b.name), quantity: qty(b.unit) }] : []),
+              ],
+      });
+      n += 1;
+      if (def.stages) {
+        const done = def.title.includes('retard') ? [100, 60, 10] : [100, 50, 0];
+        await stages(store, job.id, [
+          ['Préparation du site', done[0], def.start],
+          ['Travaux principaux', done[1], Math.round((def.start + def.end) / 2), `${code}:${a.name}`],
+          ['Finitions et réception', done[2], def.end],
+        ]);
+      }
+      if (def.expenses) {
+        const base = def.actualStart ?? def.start;
+        await expense(store, user, job.id, 'Main-d’œuvre', Math.round((job.total * 0.25) / 1000) * 1000, d(base + 2), 'Journaliers du chantier');
+        await expense(store, user, job.id, 'Transport', 150_000, d(base), 'Transport des matériaux sur site');
+      }
+      if (def.paid > 0) await pay(store, user, job.id, def.paid, d(def.actualStart ?? -1));
+      if (def.status === 'cancel') {
+        await cancelServiceJob(job.id, def.notes ?? 'Annulé', { id: user.id, name: user.name, storeId: store.id });
+      }
+      await jobAudit(user, store, job.id, {});
+    }
+  };
+  await standardSet('SIEGE', hq, admin);
+  await standardSet('MAT', matoto, gerantMat);
+  await standardSet('RAT', ratoma, gerantRat);
+  // Kaloum a déjà son scénario détaillé : il ne lui manque que ces deux situations.
+  await standardSet('KAL', kaloum, gerantKal, [
+    'Rénovation bureau — prix à définir après visite',
+    'Réfection salle de réunion — en cours, rien encaissé',
+  ]);
 
   return report;
 }

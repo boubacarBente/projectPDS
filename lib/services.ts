@@ -210,7 +210,10 @@ export async function listServices(
         ? 'jobs_count DESC, s.name'
         : options.sort === 'price'
           ? 's.unit_price DESC, s.name'
-          : 's.name COLLATE NOCASE, s.id';
+          : options.sort === 'name'
+            ? 's.name COLLATE NOCASE, s.id'
+            : // Par défaut : la dernière prestation créée en tête (règle lib/list-sort.ts).
+              's.created_at DESC, s.id DESC';
 
   const whereSql = `WHERE ${where.join(' AND ')}`;
   const rows = await rawAll<ServiceSqlRow>(
@@ -358,7 +361,7 @@ async function validateCategory(value: unknown): Promise<string> {
 
 function cleanPrice(value: unknown): number {
   const price = roundMoney(Number(value ?? 0));
-  if (!Number.isFinite(price) || price < 0) throw new ValidationError('Le prix indicatif doit être positif ou nul.');
+  if (!Number.isFinite(price) || price < 0) throw new ValidationError('Le prix estimatif doit être positif ou nul.');
   return price;
 }
 
@@ -398,14 +401,9 @@ export async function createService(
     const name = String(input.name ?? '').trim();
     if (!name) throw new ValidationError('Le nom de la prestation est obligatoire.');
 
-    let code = cleanCode(input.code);
-    if (code) {
-      if (await codeTaken(input.storeId, code)) {
-        throw new ConflictError(`Le code « ${code} » est déjà utilisé dans ce magasin.`);
-      }
-    } else {
-      code = await nextServiceCode(input.storeId);
-    }
+    // Code toujours attribué par le logiciel (PRE-001, PRE-002… du magasin) : un
+    // code envoyé par le client est ignoré, la numérotation reste continue.
+    const code = await nextServiceCode(input.storeId);
 
     const inserted = await db
       .insert(services)

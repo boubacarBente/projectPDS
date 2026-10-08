@@ -523,6 +523,8 @@ Exigence : **n'importe quelle page doit être utilisable de 360 px à 2560 px**,
 6. **Barres de filtres et de périodes** : `flex-wrap` systématique ; sur mobile les filtres secondaires se replient derrière un bouton **« Filtres (2) »**.
 7. **Pagination** : complète sur desktop, compacte sur mobile (« ‹ 3 / 12 › »).
 8. **Tableaux chiffrés** : montants alignés à droite avec `tabular-nums`, jamais de retour à la ligne d'un montant.
+   **Champs de saisie** (`<input type="number">`) : alignés à **gauche** (pas de `text-right`) — à droite, les
+   chiffres tapés partaient du bord droit, « comme de l'arabe », ce qui déroutait les utilisateurs.
 9. **Impression** : `print:` masque la sidebar, l'en-tête et les boutons ; les factures restent en `max-w-4xl`.
 10. **Desktop Electron** : fenêtre **minimum 1024 × 700** (`minWidth` / `minHeight`) ; en dessous, la sidebar se replie automatiquement.
 
@@ -1265,6 +1267,11 @@ Dans la carte **« Historique des paiements »** de `/ventes/[id]`, chaque **lig
 ## 11. Factures, reçus, impressions et exports
 
 - **En-tête** : logo (depuis `settings`), nom d'entreprise, filiale, adresse, téléphone, email, NIF.
+  Disposition sur deux étages, identique à l'écran (`components/ventes/invoice-document.tsx`,
+  et `DocumentShell` de `components/prestations/documents.tsx` pour la facture de
+  chantier et le devis) et dans les exports (`renderExportDocument`) : identité à gauche et titre du document
+  + numéro à droite, puis les coordonnées sur une seule ligne pleine largeur. Sous le
+  nom, la ligne des trois téléphones repoussait le titre au milieu de la page.
 - **Bloc client** : nom, téléphone, adresse ; mention « Client comptoir » sinon.
 - **Corps** : `#`, code, désignation, quantité, unité, prix unitaire, remise, montant.
 - **Pied** : sous-total, remise, **total HT**, TVA (taux + montant), **total à payer**, montant payé, **reste à payer**, statut.
@@ -1703,12 +1710,22 @@ croisés stockés auraient pointé vers de mauvaises lignes sur un autre poste. 
 ### 19.3 Catalogue de prestations — `lib/services.ts`, `/prestations`
 
 - Créer, modifier, **désactiver** (plus proposée), **archiver** (masquée) — jamais
-  supprimer. Code automatique `PRE-001`… (préfixe dans Paramètres) ou saisi.
+  supprimer. Code **toujours automatique** `PRE-001`… (préfixe dans Paramètres) :
+  il ne se saisit plus, un code envoyé à la création est ignoré par le serveur.
+- Plus de champ **Unité** dans le formulaire : une nouvelle prestation est au
+  forfait ; les anciennes gardent leur unité.
+- **Prix estimatif** (ex-« prix indicatif ») : c'est le prix de départ. Il est
+  **pré-rempli** (et non plus en grisé) quand on ajoute la prestation à un devis ou un
+  chantier, avec la mention « modifiable » ; chaque document garde son propre prix
+  (une même prestation n'a pas le même prix d'un chantier à l'autre).
 - Chaque changement de prix est historisé ; les documents existants **gardent
   leur prix** (critère n° 11).
 - `assertServiceUsable` : une ligne de devis, de chantier ou de demande n'accepte
   qu'une prestation **active de son magasin** (critère n° 5), même avec un
   identifiant forgé.
+- Liste `/prestations` : première colonne **« Créée le »** (format des autres listes,
+  `formatDateShort` : « Jeu 08/10/2026 ») ; tri par défaut **la dernière créée en
+  tête** (`created_at DESC, id DESC`), l'ordre alphabétique devient un tri au choix.
 - Fiche : prix, CA généré, chantiers qui l'utilisent, quantité réalisée, nombre de
   devis, historique des prix et des modifications (`/api/historique`).
 - Permission `services.manage` (administrateur, gérant).
@@ -1736,11 +1753,29 @@ souhaitées.
 - Statuts : en préparation, planifié, en cours, suspendu, terminé, annulé
   (`quote` = ancien chantier-devis v1, exclu du chiffre d'affaires partout).
   « En cours » renseigne le début réel, « Terminé » la fin réelle.
-- Fiche à onglets : vue générale, prestations, avancement (étapes ; avancement =
+- Fiche à onglets : tableau de bord (ouvert par défaut), vue générale, prestations, avancement (étapes ; avancement =
   moyenne des étapes), équipe (ouvrier ou **équipe entière**), matériaux (sortie de
   stock), sous-traitance, dépenses, paiements, documents, notes et historique.
-- En tête : montant, payé, reste, coûts engagés, bénéfice estimatif.
+  La barre d'onglets (`components/section-tabs.tsx`, réutilisable) est **juste sous
+  l'en-tête de page** : pastilles bordées, survol visible, onglet ouvert en couleur
+  primaire, compteur par rubrique, légende « cliquez pour afficher ». Sur téléphone
+  elle défile ; dès `sm` elle passe à la ligne.
+- Onglet « Tableau de bord » : montant, payé, reste, **dépenses** (dépenses directes
+  validées, même règle que `computeJobCosts` ; visible même sans `balances.view`,
+  avec le nombre en attente), coûts engagés, bénéfice estimatif, puis les étapes et l'avancement (plus au-dessus des autres onglets).
+  « Vue générale » garde les informations du chantier et la rentabilité.
 - Le montant ne peut pas descendre sous ce que le client a déjà payé.
+- Choix du client (chantier, devis, demande — `CustomerPicker`, `components/prestations/shared.tsx`) :
+  le **dernier client créé en tête** (`sort=recent`, règle `lib/list-sort.ts` ; il était
+  forcé en alphabétique). Plus d'option vide « Aucun client ne correspond » en tête de liste.
+- **Montant à définir** (règle corrigée : la création exigeait une prestation ou un
+  forfait). Un chantier s'ouvre **sans prix** quand le prix n'est pas encore connu
+  (appel du client, visite à faire) ; il reste alors « En préparation » avec la pastille
+  « Montant à définir » (liste, fiche, pilotage). Le prix devient obligatoire là où il
+  sert : planifier, démarrer, terminer, suspendre (`assertJobPriced`, `lib/jobs.ts` —
+  création, modification, changement de statut ; un chantier lancé ne retombe pas à 0),
+  encaisser (`lib/payments.ts`) et éditer la facture (la page document l'explique).
+  Contrôlé côté serveur ; recette API 7/7 sur une copie de la base.
 - Facture : `/chantiers/[id]/document` (prestations, paiements reçus, reste).
 
 ### 19.7 Rentabilité (cahier §15) — calculée, jamais stockée
@@ -1778,6 +1813,16 @@ convenu qui compte. Coûts et marges ne sont renvoyés qu'à qui détient
   ou un chantier, URL forgées → 403, prix figés après changement de catalogue,
   conversion unique, dépense et paiement étrangers refusés, rentabilité, retard,
   vue consolidée.
+- **Jeu de démonstration des chantiers** (`lib/seed-jobs.ts`, `STANDARD_JOBS`) : en plus
+  du scénario détaillé de Kaloum, **chaque magasin** (siège, Matoto, Ratoma) reçoit un
+  jeu complet — en préparation (avec prix et « Montant à définir »), planifié avec
+  acompte, en cours non payé / partiellement payé / **en retard**, suspendu, terminé
+  soldé, terminé avec reste à payer, annulé. Ratoma a désormais son catalogue de
+  prestations. 50 chantiers au total (18 avant), seed vérifié sur une base vierge.
+- Onglet **Paiements** de la fiche : récapitulatif Montant / Déjà payé / Reste à payer,
+  bouton « Encaisser » toujours visible (grisé avec sa raison si soldé ou montant à
+  définir). Chaque somme reçue (acompte, avance, solde) est un encaissement : le reste
+  se recalcule.
 - Critère 12 : migration d'une sauvegarde d'avant la v2 (3 → 7 migrations) —
   chantiers, montants, ventes, paiements, clients, dépenses **identiques**.
 

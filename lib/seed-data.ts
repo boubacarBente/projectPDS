@@ -654,9 +654,11 @@ export async function seedDemoData(options: { days?: number } = {}): Promise<See
     hq: { id: hq.id, name: hq.name },
     kaloum: { id: kaloum.id, name: kaloum.name },
     matoto: { id: matoto.id, name: matoto.name },
+    ratoma: { id: ratoma.id, name: ratoma.name },
     admin: adminRef,
     gerantKal: { id: gerantKal, name: 'Mariama Bangoura' },
     gerantMat: { id: gerantMat, name: 'Thierno Diallo' },
+    gerantRat: { id: gerantRat, name: 'Fatoumata Binta Bah' },
     customersByStore,
     productIds,
   });
