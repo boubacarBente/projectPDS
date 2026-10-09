@@ -12,6 +12,11 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 > Une IA ou un développeur qui reprend le travail commence par ces deux endroits.
 > La briqueterie et l'atelier de meubles ont été **retirés** en v2 (§20 et §21
 > décrivent l'ancienne version, conservée sur la branche `main`).
+>
+> **📝 À valider, non codé :** la briqueterie doit devenir un module générique de
+> **filiales de production** (Briqueterie, Vitrerie, Meubles… nommées par
+> l'administrateur) — cahier des charges dans
+> **[`docs/CAHIER-DES-CHARGES-FILIALES.md`](docs/CAHIER-DES-CHARGES-FILIALES.md)**.
 
 > **Statut (v1, branche `main`) : ✅ LOT 0 À 4 CONSTRUITS — v1.3.0**
 > Ce fichier reste le **contrat de conception**, mais il n'est plus seulement un
