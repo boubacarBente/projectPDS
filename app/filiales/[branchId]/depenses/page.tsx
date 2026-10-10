@@ -39,6 +39,8 @@ import { useSettings } from '@/app/parametres/page';
 import { BRANCH_EXPENSE_CATEGORIES, BRANCH_EXPENSE_REFERENCE } from '@/lib/branches-shared';
 import type { BranchExpensesSummary, ExpenseRow } from '@/lib/expenses';
 import { formatCurrency, formatNumber, today } from '@/lib/format';
+import { BranchExportButton } from '@/components/filiales/branch-export';
+import { exportCompanyFromSettings, exportFileName, type ExportDocumentInput } from '@/lib/export-document';
 import { formatDateShort } from '@/lib/date-format';
 
 const PAGE_SIZE = 15;
@@ -193,6 +195,68 @@ export default function BranchExpensesPage() {
     }
   }
 
+  /** État des dépenses de la filiale (README §31.7) : mêmes filtres, jusqu'à 500 lignes. */
+  async function buildExpensesReport(): Promise<ExportDocumentInput | null> {
+    const query = new URLSearchParams({ page: '1', limit: '500' });
+    if (kind) query.set('kind', kind);
+    if (status) query.set('approvalStatus', status);
+    if (debounced) query.set('search', debounced);
+    if (from) query.set('from', from);
+    if (to) query.set('to', to);
+    const response = await fetch(withStore(api(`/depenses?${query}`)), { cache: 'no-store', credentials: 'same-origin' });
+    if (!response.ok) throw new Error(await readApiError(response, 'Les dépenses n’ont pas pu être lues.'));
+    const data = (await response.json()) as ListPayload;
+    const s = data.summary;
+    const period = from || to ? `${from ? `du ${formatDateShort(from)}` : 'depuis le début'} ${to ? `au ${formatDateShort(to)}` : 'à ce jour'}` : 'toutes dates';
+    return {
+      documentTitle: 'État des dépenses',
+      documentNumber: branch.name,
+      documentDate: `Édité le ${formatDateShort(today())}`,
+      company: exportCompanyFromSettings(settings),
+      meta: [
+        ['Filiale', branch.name],
+        ['Période', period],
+        ['Nature', KIND_OPTIONS.find((o) => o.value === kind)?.label ?? 'Toutes natures'],
+      ],
+      blocks: [
+        {
+          kind: 'table',
+          title: 'Par catégorie (décaissées)',
+          columns: [{ label: 'Catégorie' }, { label: 'Écritures', align: 'right' }, { label: 'Montant', align: 'right' }],
+          numeric: [1, 2],
+          rows: s.byCategory.map((c) => [c.category, formatNumber(c.count), formatCurrency(c.total)]),
+        },
+        {
+          kind: 'table',
+          title: 'Dépenses',
+          columns: [{ label: 'Date' }, { label: 'Catégorie' }, { label: 'Nature' }, { label: 'Détail' }, { label: 'État' }, { label: 'Montant', align: 'right' }],
+          numeric: [5],
+          rows: data.data.map((e) => [
+            formatDateShort(e.date),
+            e.category,
+            e.referenceType === BRANCH_EXPENSE_REFERENCE ? 'Globale' : 'Production',
+            e.description ?? e.beneficiary ?? '',
+            e.cancelled ? 'Annulée' : STATUS_BADGE[e.approvalStatus].label,
+            formatCurrency(e.amount),
+          ]),
+        },
+        {
+          kind: 'totals',
+          rows: [
+            { label: 'Dépenses de production', value: formatCurrency(s.productionAmount) },
+            { label: 'Dépenses globales', value: formatCurrency(s.globalAmount) },
+            { label: 'Total décaissé', value: formatCurrency(s.totalAmount), tone: 'strong' },
+            { label: 'En attente', value: `${formatNumber(s.pendingCount)} · ${formatCurrency(s.pendingAmount)}`, tone: s.pendingCount ? 'warning' : 'normal' },
+          ],
+        },
+      ],
+      footer:
+        data.total > data.data.length
+          ? `${formatNumber(data.data.length)} dépenses sur ${formatNumber(data.total)} : resserrez la période pour tout imprimer.`
+          : `${formatNumber(data.total)} dépense(s).`,
+    };
+  }
+
   const summary = payload?.summary;
   const rows = payload?.data ?? [];
 
@@ -246,6 +310,7 @@ export default function BranchExpensesPage() {
         description="Dépenses de production (rattachées à un lot, dans son coût de revient) et dépenses globales de la filiale (loyer, salaires, entretien…), qui diminuent le bénéfice de la période. Un décaissement sort de la caisse du magasin."
         actions={
           <>
+            <BranchExportButton build={buildExpensesReport} fileBase={exportFileName('depenses', branch.name)} what="l’état des dépenses" />
             {canCreate && (
           <button type="button" className="btn btn-primary min-h-11" onClick={openForm}>
             Nouvelle dépense globale

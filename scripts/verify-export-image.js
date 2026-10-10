@@ -63,7 +63,15 @@ async function main() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pds-export-'));
   const chrome = spawn(
     CHROME,
-    ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, '--window-size=1366,900', 'about:blank'],
+    [
+      '--headless=new',
+      `--remote-debugging-port=${PORT}`,
+      `--user-data-dir=${profile}`,
+      '--window-size=1366,900',
+      // Conteneur Linux lancé en root (recette en ligne) : sans cela Chrome refuse de démarrer.
+      ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
+      'about:blank',
+    ],
     { stdio: 'ignore' },
   );
   let failures = 0;

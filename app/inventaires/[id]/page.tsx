@@ -306,7 +306,7 @@ export default function InventaireFichePage() {
           <>
             <ExportDropdown
               compact
-              label="Rapport"
+              label="Télécharger"
               onExportPDF={() => void exportReport('pdf')}
               onExportImage={() => void exportReport('image')}
             />

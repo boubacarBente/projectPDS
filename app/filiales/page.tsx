@@ -28,6 +28,9 @@ import {
   type ProductionBranch,
 } from '@/lib/branches-shared';
 import { formatCurrency, formatNumber, startOfMonth, today } from '@/lib/format';
+import { BranchExportButton } from '@/components/filiales/branch-export';
+import { useSettings } from '@/app/parametres/page';
+import { exportCompanyFromSettings, exportFileName, type ExportDocumentInput } from '@/lib/export-document';
 import { formatDateShort } from '@/lib/date-format';
 
 /**
@@ -99,6 +102,7 @@ export default function FilialesPage() {
   const canView = usePermission('brick.view');
   const canManage = usePermission('brick.branches');
   const { scope, setScope, param } = useStoreScope('filiales-synthese');
+  const { settings } = useSettings();
   const [from, setFrom] = useState(startOfMonth(today()));
   const [to, setTo] = useState(today());
   const [selected, setSelected] = useState<number[]>([]);
@@ -171,6 +175,75 @@ export default function FilialesPage() {
 
   const withCosts = overview?.totals.margin !== null && overview?.totals.margin !== undefined;
   const withCash = overview?.totals.cashBalance !== null && overview?.totals.cashBalance !== undefined;
+
+  /**
+   * Rapport consolidé de la direction (cahier §14) : document autonome, chiffres
+   * de l'API tels que reçus — coûts, bénéfice, caisse et dépenses n'y figurent
+   * que si le serveur les a envoyés (droits de l'utilisateur, invariant 13).
+   */
+  const buildConsolidatedReport = (): ExportDocumentInput | null => {
+    if (!overview) return null;
+    const t = overview.totals;
+    const money = (value: number | null) => (value === null ? '—' : formatCurrency(value));
+    const rows = overview.data;
+    return {
+      documentTitle: 'Rapport consolidé des filiales',
+      documentNumber: `${formatDateShort(overview.from)} – ${formatDateShort(overview.to)}`,
+      documentDate: `Édité le ${formatDateShort(today())}`,
+      company: exportCompanyFromSettings(settings),
+      meta: [
+        ['Période', `Du ${formatDateShort(overview.from)} au ${formatDateShort(overview.to)}`],
+        ['Filiales', rows.map((row) => row.name).join(', ') || '—'],
+      ],
+      blocks: [
+        {
+          kind: 'table',
+          title: 'Ventes et encaissements',
+          columns: [{ label: 'Filiale' }, { label: 'Ventes', align: 'right' }, { label: 'Encaissé', align: 'right' }, { label: 'Reste à encaisser', align: 'right' }, { label: 'Commandes en cours', align: 'right' }],
+          numeric: [1, 2, 3, 4],
+          rows: rows.map((row) => [row.name, formatCurrency(row.revenue), formatCurrency(row.collected), formatCurrency(row.outstanding), formatNumber(row.openOrders)]),
+        },
+        ...(t.profit !== null
+          ? [
+              {
+                kind: 'table' as const,
+                title: 'Coûts et bénéfice',
+                columns: [{ label: 'Filiale' }, { label: 'Coût de production', align: 'right' as const }, { label: 'Marge', align: 'right' as const }, { label: 'Dépenses globales', align: 'right' as const }, { label: 'Bénéfice', align: 'right' as const }],
+                numeric: [1, 2, 3, 4],
+                rows: rows.map((row) => [row.name, money(row.productionCost), money(row.margin), money(row.globalExpenses), money(row.profit)]),
+              },
+            ]
+          : []),
+        {
+          kind: 'table',
+          title: 'Production, stock et caisse',
+          columns: [{ label: 'Filiale' }, { label: 'Produit', align: 'right' }, { label: 'Productions', align: 'right' }, { label: 'Stock (prix de vente)', align: 'right' }, ...(t.cashBalance !== null ? [{ label: 'Solde caisse', align: 'right' as const }] : [])],
+          numeric: [1, 2, 3, 4],
+          rows: rows.map((row) => [
+            row.name,
+            `${formatNumber(row.producedQuantity)} ${row.unit}`,
+            formatNumber(row.productionsCount),
+            formatCurrency(row.stockSaleValue),
+            ...(t.cashBalance !== null ? [money(row.cashBalance)] : []),
+          ]),
+        },
+        {
+          kind: 'totals',
+          title: 'Totaux',
+          rows: [
+            { label: 'Chiffre d’affaires total', value: formatCurrency(t.revenue), tone: 'strong' },
+            { label: 'Encaissé', value: formatCurrency(t.collected), tone: 'success' },
+            { label: 'Reste à encaisser', value: formatCurrency(t.outstanding), tone: t.outstanding > 0 ? 'danger' : 'normal' },
+            ...(t.globalExpenses !== null ? [{ label: 'Dépenses globales', value: formatCurrency(t.globalExpenses) }] : []),
+            ...(t.profit !== null ? [{ label: 'Bénéfice global', value: formatCurrency(t.profit), tone: (t.profit < 0 ? 'danger' : 'success') as 'danger' | 'success' }] : []),
+            ...(t.cashBalance !== null ? [{ label: 'Solde caisse des filiales', value: formatCurrency(t.cashBalance) }] : []),
+            { label: 'Stock valorisé (prix de vente)', value: formatCurrency(t.stockSaleValue) },
+          ],
+        },
+      ],
+      footer: 'Ventes et productions de la période ; reste à encaisser toutes dates confondues.',
+    };
+  };
 
   const overviewColumns: Column<OverviewRow>[] = useMemo(
     () => [
@@ -356,6 +429,7 @@ export default function FilialesPage() {
                 </label>
               </div>
               <StoreScopeSelect value={scope} onChange={setScope} className="min-h-11 w-full sm:w-56" />
+              <BranchExportButton build={buildConsolidatedReport} fileBase={exportFileName('rapport-filiales', `${from}_${to}`)} what="le rapport consolidé" />
               {overview && overview.branches.length > 1 && (
                 <div className="flex flex-wrap gap-2" role="group" aria-label="Filiales comparées">
                   {overview.branches.map((branch) => {

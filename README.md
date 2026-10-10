@@ -3028,6 +3028,12 @@ individuels déjà enregistrés sur chaque poste.
   `stockPurchaseValue`.
 - Écrans ajoutés : `/filiales/[id]/inventaire`, `/depenses`, `/caisse`,
   `/parametres`, `/atelier`, `/atelier/[id]`.
+- **Téléchargement PDF / image** (document autonome, invariant 5 ;
+  `components/filiales/branch-export.tsx`) : rapport de la filiale (avec caisse et
+  inventaires), **rapport consolidé** de `/filiales` (ventes, coûts et bénéfice si
+  `balances.view`, production, stock, solde caisse si `cash.view`, totaux), **relevé
+  de caisse** et **état des dépenses** de la filiale (mêmes filtres que l'écran,
+  200 / 500 lignes au plus), rapport d'inventaire.
 - Démonstration (`npm run demo:seed`) : filiales Briqueterie, **Meuble** (modèles
   repris de l'atelier, productions avec matières et chutes) et Vitrerie, dépenses
   globales de chaque filiale, un inventaire de briqueterie validé avec écart justifié.

@@ -27,7 +27,10 @@ import { useBranch } from '@/components/filiales/branch-context';
 import { PageHeader } from '@/components/page-header';
 import { readApiError } from '@/components/caisse/caisse-modals';
 import type { BranchCashSummary, CashMovementRow } from '@/lib/caisse';
-import { formatCurrency, formatNumber } from '@/lib/format';
+import { formatCurrency, formatNumber, today } from '@/lib/format';
+import { BranchExportButton } from '@/components/filiales/branch-export';
+import { useSettings } from '@/app/parametres/page';
+import { exportCompanyFromSettings, exportFileName, type ExportDocumentInput } from '@/lib/export-document';
 import { formatDateShort } from '@/lib/date-format';
 
 const PAGE_SIZE = 20;
@@ -49,6 +52,7 @@ type Payload = { data: CashMovementRow[]; total: number; totalPages: number; sum
 
 export default function BranchCashPage() {
   const { branch, api } = useBranch();
+  const { settings } = useSettings();
   const canOpenCash = usePermission('cash.view');
   const { scope, setScope, withStore, showStore } = useBrickScope();
   const [type, setType] = useState('');
@@ -89,6 +93,65 @@ export default function BranchCashPage() {
   useEffect(() => {
     void load();
   }, [load, reload]);
+
+  /** Relevé de caisse de la filiale (README §31.8) : mêmes filtres, jusqu'à 200 mouvements. */
+  async function buildCashReport(): Promise<ExportDocumentInput | null> {
+    const query = new URLSearchParams({ page: '1', limit: '200' });
+    if (type) query.set('type', type);
+    if (debounced) query.set('search', debounced);
+    if (from) query.set('from', from);
+    if (to) query.set('to', to);
+    const response = await fetch(withStore(api(`/caisse?${query}`)), { cache: 'no-store', credentials: 'same-origin' });
+    if (!response.ok) throw new Error(await readApiError(response, 'La caisse de la filiale n’a pas pu être lue.'));
+    const data = (await response.json()) as Payload;
+    const s = data.summary;
+    const period = from || to ? `${from ? `du ${formatDateShort(from)}` : 'depuis le début'} ${to ? `au ${formatDateShort(to)}` : 'à ce jour'}` : 'toutes dates';
+    return {
+      documentTitle: 'Relevé de caisse',
+      documentNumber: branch.name,
+      documentDate: `Édité le ${formatDateShort(today())}`,
+      company: exportCompanyFromSettings(settings),
+      meta: [
+        ['Filiale', branch.name],
+        ['Période', period],
+      ],
+      blocks: [
+        {
+          kind: 'table',
+          title: 'Par moyen de paiement',
+          columns: [{ label: 'Moyen' }, { label: 'Entrées', align: 'right' }, { label: 'Sorties', align: 'right' }, { label: 'Net', align: 'right' }],
+          numeric: [1, 2, 3],
+          rows: s.byMethod.map((m) => [m.method, formatCurrency(m.income), formatCurrency(m.expense), formatCurrency(m.net)]),
+        },
+        {
+          kind: 'table',
+          title: 'Mouvements',
+          columns: [{ label: 'Date' }, { label: 'Mouvement' }, { label: 'Moyen' }, { label: 'Entrée', align: 'right' }, { label: 'Sortie', align: 'right' }],
+          numeric: [3, 4],
+          rows: data.data.map((m) => [
+            formatDateShort(m.date),
+            m.motif,
+            m.paymentMethod,
+            m.type === 'income' ? formatCurrency(m.amount) : '',
+            m.type === 'expense' ? formatCurrency(m.amount) : '',
+          ]),
+        },
+        {
+          kind: 'totals',
+          rows: [
+            { label: 'Entrées', value: formatCurrency(s.income), tone: 'success' },
+            { label: 'Sorties', value: formatCurrency(s.expense), tone: 'danger' },
+            { label: 'Net de la période', value: formatCurrency(s.net), tone: 'strong' },
+            { label: 'Solde cumulé de la filiale', value: formatCurrency(s.balance), tone: 'strong' },
+          ],
+        },
+      ],
+      footer:
+        data.total > data.data.length
+          ? `${formatNumber(data.data.length)} mouvements sur ${formatNumber(data.total)} : resserrez la période pour tout imprimer.`
+          : `${formatNumber(data.total)} mouvement(s). Caisse du magasin, mouvements marqués pour la filiale.`,
+    };
+  }
 
   const summary = payload?.summary;
   const rows = payload?.data ?? [];
@@ -131,6 +194,7 @@ export default function BranchCashPage() {
         description="L’argent de la filiale passe par la caisse du magasin ; chaque mouvement porte la filiale concernée. Ouverture et clôture de la journée se font dans la caisse du magasin."
         actions={
           <>
+            <BranchExportButton build={buildCashReport} fileBase={exportFileName('caisse', branch.name)} what="le relevé de caisse" />
             {canOpenCash && (
           <Link href="/caisse" className="btn btn-ghost min-h-11 border border-base-300">
             Caisse du magasin
