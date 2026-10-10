@@ -535,7 +535,7 @@ export default function BrickRapportsPage() {
   /* ---------------------------------- Rendu -------------------------------- */
 
   const summaryCards = report ? (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
       <StatCardDelta
         label="Production"
         tooltip="Pièces produites par les lots commencés sur la période (annulés exclus), et nombre de lots."
@@ -590,7 +590,7 @@ export default function BrickRapportsPage() {
   ) : null;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6">
       <PageHeader
         eyebrow={B.branch.name}
         title="Rapports de la filiale"
@@ -737,7 +737,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'label',
@@ -830,7 +830,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'brickTypeName',
@@ -884,7 +884,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={productionByDayColumns(currency)}
                   data={report.productionByDay}
                   getRowKey={(row) => row.date}
@@ -900,7 +900,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'brickTypeName',
@@ -950,7 +950,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     dateColumn<ProductionExpenseRow>(),
                     {
@@ -995,7 +995,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'category',
@@ -1028,7 +1028,7 @@ export default function BrickRapportsPage() {
               subtitle="Mouvements de la caisse du magasin marqués pour la filiale : encaissements de ses ventes et commandes, décaissements de ses dépenses."
             >
               <Card>
-                <div className="grid gap-3 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
                   <MiniStat label="Entrées" tone="success" value={<MoneyText value={report.cash.income} currency={currency} />} />
                   <MiniStat label="Sorties" tone="error" value={<MoneyText value={report.cash.expense} currency={currency} />} />
                   <MiniStat label="Net de la période" tone="info" value={<MoneyText value={report.cash.net} currency={currency} colored />} />
@@ -1042,7 +1042,7 @@ export default function BrickRapportsPage() {
             <PageSection title="Inventaires" subtitle="Inventaires de la filiale ouverts sur la période ; un écart validé reste visible dans l’historique.">
               <Card padded={false} className="overflow-hidden">
                 <div className="p-2">
-                  <ResponsiveTable
+                  <ResponsiveTable cardsBelow="xl"
                     columns={[
                       { key: 'date', label: 'Ouvert le', render: (row) => formatDateShort(row.createdAt) },
                       { key: 'reference', label: 'Inventaire', primary: true, render: (row) => <span className="text-sm font-medium">{row.reference}</span> },
@@ -1066,7 +1066,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     dateColumn<SalesPeriodRow>(),
                     {
@@ -1104,7 +1104,7 @@ export default function BrickRapportsPage() {
           <PageSection title="Ventes par produit" subtitle="Quantité vendue et chiffre d'affaires par produit.">
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'productName',
@@ -1134,7 +1134,7 @@ export default function BrickRapportsPage() {
           <PageSection title="Ventes par client" subtitle="Classement par chiffre d'affaires sur la période.">
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'customerName',
@@ -1175,7 +1175,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'customerName',
@@ -1227,7 +1227,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'paymentMethod',
@@ -1263,7 +1263,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     {
                       key: 'brickTypeName',
@@ -1287,18 +1287,21 @@ export default function BrickRapportsPage() {
                     },
                     {
                       key: 'stockMin',
+                      minScreen: '2xl',
                       label: 'Seuil',
                       hideOnMobile: true,
                       render: (row) => quantity(row.stockMin, row.unit),
                     },
                     {
                       key: 'averageUnitCost',
+                      minScreen: '2xl',
                       label: 'Coût unitaire moyen',
                       hideOnMobile: true,
                       render: (row) => <MoneyText value={row.averageUnitCost} currency={currency} />,
                     },
                     {
                       key: 'stockValue',
+                      minScreen: '2xl',
                       label: 'Valeur du stock',
                       render: (row) => <MoneyText value={row.stockValue} currency={currency} />,
                     },
@@ -1340,7 +1343,7 @@ export default function BrickRapportsPage() {
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={[
                     dateColumn<LossRow>(),
                     {
@@ -1382,12 +1385,20 @@ export default function BrickRapportsPage() {
             title="Document du rapport"
             subtitle="C'est ce document qui est exporté en PDF, en image ou partagé sur WhatsApp ; l'export tableur reprend les mêmes tableaux."
           >
-            <BrickRapportExportDocument
-              id={DOCUMENT_ID}
-              report={report}
-              company={exportCompany}
-              className="print-area"
-            />
+            {/*
+              Aperçu à la largeur du document exporté (48 rem) : sur tablette ou
+              téléphone il défile dans son cadre au lieu d'écraser ses tableaux.
+            */}
+            <div className="overflow-x-auto print:overflow-visible">
+              <div className="min-w-[48rem] print:min-w-0">
+                <BrickRapportExportDocument
+                  id={DOCUMENT_ID}
+                  report={report}
+                  company={exportCompany}
+                  className="print-area"
+                />
+              </div>
+            </div>
           </PageSection>
         </>
       )}

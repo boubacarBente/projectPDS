@@ -79,8 +79,17 @@ body {
   min-height: 100vh;
 }
 
-a {
+/*
+ * Lien neutre, sauf s'il est stylé en bouton : cette règle hors couche passait
+ * devant la couleur des `.btn` DaisyUI (couche de composants) — un
+ * `<Link className="btn btn-primary">` (« Nouvelle vente » des filiales) avait
+ * un texte sombre sur fond bleu, illisible.
+ */
+a:not(.btn) {
   color: inherit;
+}
+
+a {
   text-decoration: none;
 }
 

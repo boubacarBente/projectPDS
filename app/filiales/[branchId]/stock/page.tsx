@@ -259,12 +259,14 @@ const buildStockColumns = (stockShowsStore: boolean): Column<BrickStockLine>[] =
   },
   {
     key: 'stockMin',
+    minScreen: '2xl',
     label: 'Seuil min',
     hideOnMobile: true,
     render: (line) => <QuantityText value={line.stockMin} unit={line.unit} />,
   },
   {
     key: 'averageUnitCost',
+    minScreen: '2xl',
     label: 'Coût unitaire moyen',
     hideOnMobile: true,
     render: (line) =>
@@ -282,6 +284,7 @@ const buildStockColumns = (stockShowsStore: boolean): Column<BrickStockLine>[] =
   },
   {
     key: 'salePrice',
+    minScreen: '2xl',
     label: 'Prix de vente',
     hideOnMobile: true,
     render: (line) => <MoneyText value={line.salePrice} />,
@@ -331,6 +334,7 @@ const movementColumns: Column<StockMovementRow>[] = [
   },
   {
     key: 'stockBefore',
+    minScreen: '2xl',
     label: 'Stock avant',
     render: (movement) => <QuantityText value={movement.stockBefore} unit={movement.unit} />,
   },
@@ -800,7 +804,7 @@ function StockMovementsModal({
           />
         ) : (
           <>
-            <ResponsiveTable
+            <ResponsiveTable cardsBelow="xl"
               columns={movementColumns}
               data={movements}
               getRowKey={(movement) => movement.id}
@@ -980,7 +984,7 @@ export default function BriqueterieStockPage() {
 
   /* ── Rendu ────────────────────────────────────────────────────────── */
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={B.branch.name}
         title="Stock des produits finis"
@@ -1039,7 +1043,7 @@ export default function BriqueterieStockPage() {
           onRetry={refresh}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCardDelta
             label="Quantité en stock"
             tooltip="Total des pièces en stock dans les magasins affichés : le stock du produit lié à chaque modèle."
@@ -1196,7 +1200,7 @@ export default function BriqueterieStockPage() {
         />
       ) : (
         <>
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={buildStockColumns(showStore)}
             data={visibleLines}
             getRowKey={(line) => line.brickTypeId}

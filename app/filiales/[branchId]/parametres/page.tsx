@@ -42,7 +42,7 @@ export default function BranchSettingsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">

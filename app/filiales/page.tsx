@@ -388,7 +388,7 @@ export default function FilialesPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow="Fabrication"
         title="Filiales de production"
@@ -417,8 +417,9 @@ export default function FilialesPage() {
           }
         >
           <div className="space-y-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-              <div className="grid grid-cols-2 gap-3 sm:w-96">
+            {/* Filtres sur une ligne qui passe à la ligne ; les filiales comparées en dessous, pleine largeur. */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="grid w-full grid-cols-2 gap-3 sm:w-80">
                 <label className="text-sm">
                   <span className="mb-1 block text-base-content/70">Du</span>
                   <DatePicker value={from} onChange={(value) => value && setFrom(value)} />
@@ -431,7 +432,7 @@ export default function FilialesPage() {
               <StoreScopeSelect value={scope} onChange={setScope} className="min-h-11 w-full sm:w-56" />
               <BranchExportButton build={buildConsolidatedReport} fileBase={exportFileName('rapport-filiales', `${from}_${to}`)} what="le rapport consolidé" />
               {overview && overview.branches.length > 1 && (
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Filiales comparées">
+                <div className="flex w-full flex-wrap gap-2" role="group" aria-label="Filiales comparées">
                   {overview.branches.map((branch) => {
                     const on = selected.length === 0 || selected.includes(branch.id);
                     return (
@@ -463,7 +464,7 @@ export default function FilialesPage() {
               <ErrorState title="Vue consolidée indisponible" description={overviewError} onRetry={reload} />
             ) : overview ? (
               <>
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <StatCardDelta
                     label="Ventes des filiales"
                     tone="primary"
@@ -511,7 +512,7 @@ export default function FilialesPage() {
                     }
                   />
                 ) : (
-                  <ResponsiveTable columns={overviewColumns} data={overview.data} getRowKey={(row) => row.branchId} />
+                  <ResponsiveTable cardsBelow="xl" columns={overviewColumns} data={overview.data} getRowKey={(row) => row.branchId} />
                 )}
               </>
             ) : null}
@@ -544,7 +545,7 @@ export default function FilialesPage() {
             }
           />
         ) : (
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={adminColumns}
             data={branches}
             getRowKey={(branch) => branch.id}

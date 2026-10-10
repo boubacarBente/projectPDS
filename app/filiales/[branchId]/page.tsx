@@ -174,7 +174,6 @@ export default function BriqueterieDashboardPage() {
   const currency = settings.currency || 'GNF';
 
   const canCreate = usePermission('brick.create');
-  const canSell = usePermission('sales.create');
   const canOrder = usePermission('brick.create');
   const { scope, setScope, storeParam, withStore } = useBrickScope();
 
@@ -284,6 +283,7 @@ export default function BriqueterieDashboardPage() {
       },
       {
         key: 'stockMin',
+        minScreen: '2xl',
         label: 'Seuil minimum',
         hideOnMobile: true,
         render: (line) => <QuantityText value={line.stockMin} unit={line.unit} />,
@@ -315,7 +315,7 @@ export default function BriqueterieDashboardPage() {
   /* ── Rendu ────────────────────────────────────────────────────────── */
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={B.branch.name}
         title={B.branch.name}
@@ -334,11 +334,7 @@ export default function BriqueterieDashboardPage() {
                 Commandes
               </Link>
             )}
-            {canSell && (
-              <Link href={`/ventes/nouvelle?filiale=${B.branch.id}`} className="btn btn-primary min-h-11">
-                Nouvelle vente
-              </Link>
-            )}
+            {/* « Nouvelle vente » : dans la barre d'onglets, commune à tous les écrans de la filiale. */}
             {canCreate && (
               <button
                 type="button"
@@ -665,7 +661,7 @@ export default function BriqueterieDashboardPage() {
                 description="Créez un modèle lié à un produit pour suivre son stock ici."
               />
             ) : (
-              <ResponsiveTable
+              <ResponsiveTable cardsBelow="xl"
                 columns={stockColumns}
                 data={data.stock.lines}
                 getRowKey={(line) => line.brickTypeId}

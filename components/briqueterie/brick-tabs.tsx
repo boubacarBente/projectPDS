@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { usePermission } from '@/components/role-gate';
 import { useBranch } from '@/components/filiales/branch-context';
 import { StoreScopeSelect, scopeShowsStore, useStoreScope, type StoreScopeValue } from '@/components/store-scope';
@@ -69,6 +69,7 @@ export function BrickTabs({
   onScopeChange?: (value: StoreScopeValue) => void;
 } = {}) {
   const pathname = usePathname() ?? '';
+  const router = useRouter();
   const { branch, href, writable, canLevel } = useBranch();
   const canViewSales = usePermission('sales.view');
   const canCreateSales = usePermission('sales.create');
@@ -123,7 +124,25 @@ export function BrickTabs({
           )}
         </div>
       </div>
-      <nav aria-label={`Navigation de la filiale ${branch.name}`} className="-mb-px min-w-0 overflow-x-auto">
+      {/*
+        Téléphone : treize onglets ne tiennent pas sur 360 px et une barre qui
+        défile cache les derniers sans le dire — une liste déroulante les montre tous.
+      */}
+      <label className="sm:hidden">
+        <span className="sr-only">Écran de la filiale {branch.name}</span>
+        <select
+          className="select select-bordered min-h-11 w-full font-medium"
+          value={activePath ?? ''}
+          onChange={(event) => router.push(href(event.target.value))}
+        >
+          {visible.map((tab) => (
+            <option key={tab.path || 'dashboard'} value={tab.path}>
+              {tab.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <nav aria-label={`Navigation de la filiale ${branch.name}`} className="-mb-px hidden min-w-0 overflow-x-auto sm:block">
         <ul className="flex min-w-max items-center gap-1 border-b border-base-200">
           {visible.map((tab) => {
             const isActive = tab.path === activePath;

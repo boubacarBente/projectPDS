@@ -396,7 +396,7 @@ export default function BrickOrderDetailPage() {
    * ------------------------------------------------------------------ */
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={B.branch.name}
         title={order ? `Commande ${order.orderNumber}` : 'Commande de la filiale'}
@@ -672,7 +672,7 @@ export default function BrickOrderDetailPage() {
               </span>
             }
           >
-            <ResponsiveTable
+            <ResponsiveTable cardsBelow="xl"
               columns={columns}
               data={detail.items}
               getRowKey={(item) => item.id}
@@ -723,7 +723,7 @@ export default function BrickOrderDetailPage() {
               </div>
             ) : (
               <>
-                <ResponsiveTable
+                <ResponsiveTable cardsBelow="xl"
                   columns={paymentColumns}
                   data={detail.payments}
                   getRowKey={(payment) => payment.id}
@@ -779,7 +779,7 @@ export default function BrickOrderDetailPage() {
                 />
               </div>
             ) : (
-              <ResponsiveTable
+              <ResponsiveTable cardsBelow="xl"
                 columns={historyColumns}
                 data={history}
                 getRowKey={(entry) => entry.id}

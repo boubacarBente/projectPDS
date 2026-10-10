@@ -484,7 +484,7 @@ export default function VentesBriqueteriePage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6">
       <PageHeader
         eyebrow={B.branch.name}
         title="Ventes de la filiale"
@@ -678,6 +678,7 @@ export default function VentesBriqueteriePage() {
         </div>
       ) : (
         <VentesTable
+          cardsBelow="xl"
           data={invoices}
           isLoading={isLoading}
           canPay={canPay}

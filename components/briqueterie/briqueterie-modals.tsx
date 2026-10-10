@@ -497,11 +497,13 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
   },
   {
     key: 'shape',
+    minScreen: '2xl',
     label: 'Catégorie',
     render: (production) => <Badge tone="primary">{modelCategoryLabel(production)}</Badge>,
   },
   {
     key: 'dimensions',
+    minScreen: '2xl',
     label: 'Dimensions',
     hideOnMobile: true,
     render: (production) => <span className="text-sm">{production.dimensions || '—'}</span>,
@@ -520,6 +522,7 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
     // Le statut est une information métier (« enregistrée / terminée / annulée »),
     // distincte de l'étape : un lot annulé garde son étape d'origine.
     key: 'status',
+    minScreen: '2xl',
     label: 'Statut',
     render: (production) => (
       <Badge tone={BRICK_PRODUCTION_STATUS_TONES[production.status]}>
@@ -529,6 +532,7 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
   },
   {
     key: 'team',
+    minScreen: '2xl',
     label: 'Équipe',
     hideOnMobile: true,
     render: (production) => (
@@ -620,6 +624,7 @@ export const brickTypeColumns: Column<BrickTypeRow>[] = [
   },
   {
     key: 'productionsCount',
+    minScreen: '2xl',
     label: 'Productions',
     hideOnMobile: true,
     render: (type) => <span className="tabular">{type.productionsCount}</span>,
@@ -691,6 +696,7 @@ export const productionWorkerColumns: Column<BrickProductionWorkerRow>[] = [
   },
   {
     key: 'dailyRate',
+    minScreen: '2xl',
     label: 'Tarif / jour',
     hideOnMobile: true,
     className: 'text-right whitespace-nowrap',
@@ -735,18 +741,21 @@ export const productionExpenseColumns: Column<BrickProductionExpenseRow>[] = [
   },
   {
     key: 'beneficiary',
+    minScreen: '2xl',
     label: 'Bénéficiaire',
     hideOnMobile: true,
     render: (expense) => <span className="text-sm">{expense.beneficiary || '—'}</span>,
   },
   {
     key: 'paymentMethod',
+    minScreen: '2xl',
     label: 'Moyen',
     hideOnMobile: true,
     render: (expense) => <Badge tone="neutral">{expense.paymentMethod}</Badge>,
   },
   {
     key: 'userName',
+    minScreen: '2xl',
     label: 'Saisie par',
     hideOnMobile: true,
     render: (expense) => <span className="text-sm text-base-content/70">{expense.userName || '—'}</span>,
@@ -2794,7 +2803,7 @@ export function BrickTypesPanel({
               }
             />
           ) : (
-            <ResponsiveTable
+            <ResponsiveTable cardsBelow="xl"
               columns={columns}
               data={types}
               getRowKey={(type) => type.id}

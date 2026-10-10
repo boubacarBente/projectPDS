@@ -129,7 +129,7 @@ export default function BranchInventoryPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={branch.name}
         title="Inventaire"
@@ -206,7 +206,7 @@ export default function BranchInventoryPage() {
         />
       ) : (
         <>
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={columns}
             data={rows}
             getRowKey={(row) => row.id}

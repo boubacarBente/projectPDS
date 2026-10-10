@@ -3028,6 +3028,12 @@ individuels déjà enregistrés sur chaque poste.
   `stockPurchaseValue`.
 - Écrans ajoutés : `/filiales/[id]/inventaire`, `/depenses`, `/caisse`,
   `/parametres`, `/atelier`, `/atelier/[id]`.
+- **Affichage ordinateur, tablette, téléphone** (vérifié à 1920, 1366, 1024, 820,
+  400 et 360 px sur les 25 écrans des filiales, `verify:ui`) : listes en cartes sous
+  1280 px (`ResponsiveTable cardsBelow="xl"`), colonnes secondaires réservées aux
+  grands écrans (`minScreen: '2xl'`), onglets en liste déroulante sur téléphone,
+  indicateurs sur 2 colonnes jusqu'à 1280 px, aperçu du rapport à la largeur du
+  document (défile dans son cadre), contenu élargi à 100 rem sur très grand écran.
 - **Téléchargement PDF / image** (document autonome, invariant 5 ;
   `components/filiales/branch-export.tsx`) : rapport de la filiale (avec caisse et
   inventaires), **rapport consolidé** de `/filiales` (ventes, coûts et bénéfice si

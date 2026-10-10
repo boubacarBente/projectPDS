@@ -11,7 +11,34 @@ export interface Column<T> {
   /** Show at the top of the card, with emphasis */
   primary?: boolean;
   className?: string;
+  /**
+   * Colonne **secondaire** du tableau : affichée seulement à partir de cette
+   * largeur d'écran (elle reste dans la carte mobile). Sur un portable de
+   * 1366 px, le menu laisse ~1 000 px au contenu : une liste de 9 colonnes y
+   * cachait ses dernières colonnes (actions comprises) — `verify:ui`.
+   */
+  minScreen?: 'lg' | 'xl' | '2xl';
 }
+
+/**
+ * Classes **écrites en toutes lettres** (Tailwind ne génère que celles qu'il
+ * lit dans le code : une classe construite `${bp}:table-cell` n'existerait pas).
+ */
+const MIN_SCREEN_CLASS: Record<NonNullable<Column<unknown>['minScreen']>, string> = {
+  lg: 'hidden lg:table-cell',
+  xl: 'hidden xl:table-cell',
+  '2xl': 'hidden 2xl:table-cell',
+};
+
+/** Largeur à partir de laquelle le tableau remplace les cartes. */
+export type CardsBelow = 'sm' | 'md' | 'lg' | 'xl';
+
+const CARDS_CLASSES: Record<CardsBelow, { cards: string; table: string; grid: string }> = {
+  sm: { cards: 'sm:hidden', table: 'hidden sm:block', grid: 'grid-cols-2' },
+  md: { cards: 'md:hidden', table: 'hidden md:block', grid: 'grid-cols-2 sm:grid-cols-4' },
+  lg: { cards: 'lg:hidden', table: 'hidden lg:block', grid: 'grid-cols-2 sm:grid-cols-4' },
+  xl: { cards: 'xl:hidden', table: 'hidden xl:block', grid: 'grid-cols-2 sm:grid-cols-4' },
+};
 
 interface ResponsiveTableProps<T> {
   columns: Column<T>[];
@@ -38,6 +65,13 @@ interface ResponsiveTableProps<T> {
    * droite) ; un corps dédié regroupe les montants et divise la hauteur par deux.
    */
   renderCard?: (item: T) => ReactNode;
+  /**
+   * En dessous de cette largeur, la liste s'affiche en **cartes** (défaut `sm` :
+   * téléphone). Les listes larges des filiales passent `xl` : sur tablette
+   * (portrait ou paysage, menu ouvert), des cartes valent mieux qu'un tableau
+   * qui défile ou cache ses colonnes.
+   */
+  cardsBelow?: CardsBelow;
 }
 
 function CardView<T>({
@@ -48,6 +82,7 @@ function CardView<T>({
   emptyMessage,
   onRowClick,
   renderCard,
+  cardsBelow = 'sm',
 }: ResponsiveTableProps<T>) {
   if (data.length === 0) {
     return (
@@ -83,7 +118,7 @@ function CardView<T>({
             {renderCard ? (
               renderCard(item)
             ) : (
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+              <div className={`grid ${CARDS_CLASSES[cardsBelow].grid} gap-x-3 gap-y-1.5 text-sm`}>
                 {visibleCols
                   .filter((c) => !c.primary)
                   .map((col) => (
@@ -122,7 +157,7 @@ function TableView<T>({
       <thead>
         <tr className="bg-base-200">
           {columns.map((col) => (
-            <th key={col.key} className={`font-semibold ${col.className || ''}`}>
+            <th key={col.key} className={`font-semibold ${col.className || ''} ${col.minScreen ? MIN_SCREEN_CLASS[col.minScreen] : ''}`}>
               {col.label}
             </th>
           ))}
@@ -137,7 +172,7 @@ function TableView<T>({
             onClick={() => onRowClick?.(item)}
           >
             {columns.map((col) => (
-              <td key={col.key} className={col.className}>
+              <td key={col.key} className={`${col.className || ''} ${col.minScreen ? MIN_SCREEN_CLASS[col.minScreen] : ''}`}>
                 {col.render(item)}
               </td>
             ))}
@@ -168,12 +203,12 @@ export function ResponsiveTable<T>(props: ResponsiveTableProps<T>) {
   return (
     <>
       {/* Mobile: Card view */}
-      <div className="sm:hidden">
+      <div className={CARDS_CLASSES[props.cardsBelow ?? 'sm'].cards}>
         <CardView {...props} />
       </div>
 
       {/* Desktop: Table view */}
-      <div className="hidden sm:block">
+      <div className={CARDS_CLASSES[props.cardsBelow ?? 'sm'].table}>
         {/*
          * Le défilement horizontal appartient au **tableau**, pas à la page.
          *

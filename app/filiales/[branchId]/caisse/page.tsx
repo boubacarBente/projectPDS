@@ -187,7 +187,7 @@ export default function BranchCashPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={branch.name}
         title="Caisse"
@@ -309,7 +309,7 @@ export default function BranchCashPage() {
         />
       ) : (
         <>
-          <ResponsiveTable columns={columns} data={rows} getRowKey={(row) => row.id} />
+          <ResponsiveTable cardsBelow="xl" columns={columns} data={rows} getRowKey={(row) => row.id} />
           <Pagination currentPage={page} totalPages={payload?.totalPages ?? 1} onPageChange={setPage} />
           <p className="text-center text-xs text-base-content/60">{formatNumber(payload?.total ?? 0)} mouvement(s)</p>
         </>

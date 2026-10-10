@@ -136,6 +136,12 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
     public non technicien : `StatCardDelta` reçoit `tooltip="…"` (ce que le chiffre
     représente, comment il est obtenu, à quelle date). Toute page est vérifiée à
     **1366 px et 400 px** (`npm run verify:ui`, `WIDTH=400`) : aucun débordement horizontal.
+    Une liste large passe en **cartes** sous une largeur choisie (`ResponsiveTable
+    cardsBelow="xl"` : tablette comprise, c'est le réglage des filiales) et ses
+    colonnes secondaires portent `minScreen: '2xl'` (affichées sur grand écran,
+    toujours dans la carte). Les filiales sont vérifiées à 1920, 1366, 1024, 820,
+    400 et 360 px. Un `<Link className="btn …">` garde la couleur du bouton
+    (`a:not(.btn)` dans `globals.css`).
 17. **Stock négatif : jamais implicite.** `addStockMovement` refuse un stock négatif ;
     `allowNegative` n'est utilisé que pour une dérogation **choisie par une personne
     habilitée** et journalisée (annulation d'achat déjà revendu : `allowNegativeStock`,

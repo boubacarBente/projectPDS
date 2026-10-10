@@ -211,7 +211,7 @@ export default function AtelierOrderPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow="Atelier — historique"
         title={order ? `Commande ${order.orderNumber}` : isLoading ? 'Chargement…' : 'Commande d’atelier'}
@@ -452,7 +452,7 @@ export default function AtelierOrderPage() {
                 />
               </div>
             ) : (
-              <ResponsiveTable
+              <ResponsiveTable cardsBelow="xl"
                 columns={orderMaterialColumns}
                 data={detail.materials}
                 getRowKey={(line: FurnitureOrderMaterialRow) => line.id}
@@ -508,7 +508,7 @@ export default function AtelierOrderPage() {
                 />
               </div>
             ) : (
-              <ResponsiveTable
+              <ResponsiveTable cardsBelow="xl"
                 columns={orderWorkerColumns}
                 data={detail.workers}
                 getRowKey={(line: FurnitureOrderWorkerRow) => line.id}
@@ -553,7 +553,7 @@ export default function AtelierOrderPage() {
                   <EmptyState title="Aucun encaissement" description="Les acomptes reçus du client apparaîtront ici, avec leur reçu." />
                 </div>
               ) : (
-                <ResponsiveTable columns={jobPaymentColumns} data={detail.payments} getRowKey={(payment) => payment.id} />
+                <ResponsiveTable cardsBelow="xl" columns={jobPaymentColumns} data={detail.payments} getRowKey={(payment) => payment.id} />
               )}
             </PageSection>
           )}

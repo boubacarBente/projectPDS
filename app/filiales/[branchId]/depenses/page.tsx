@@ -303,7 +303,7 @@ export default function BranchExpensesPage() {
   const sameStore = (row: ExpenseRow) => row.storeId === activeStoreId;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={branch.name}
         title="Dépenses"
@@ -405,7 +405,7 @@ export default function BranchExpensesPage() {
         />
       ) : (
         <>
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={columns}
             data={rows}
             getRowKey={(row) => row.id}

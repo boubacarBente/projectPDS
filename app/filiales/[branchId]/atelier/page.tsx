@@ -240,6 +240,7 @@ export default function AtelierHistoryPage() {
       },
       {
         key: 'modelName',
+        minScreen: '2xl',
         label: 'Meuble',
         render: (order) => (
           <div className="min-w-0 text-sm">
@@ -252,6 +253,7 @@ export default function AtelierHistoryPage() {
       },
       {
         key: 'promisedDate',
+        minScreen: '2xl',
         label: 'Promis',
         hideOnMobile: true,
         className: 'whitespace-nowrap',
@@ -264,6 +266,7 @@ export default function AtelierHistoryPage() {
       },
       {
         key: 'total',
+        minScreen: '2xl',
         label: 'Prix convenu',
         className: 'text-right whitespace-nowrap',
         render: (order) => (order.purpose === 'stock' ? <span className="text-sm text-base-content/50">—</span> : <MoneyText value={order.total} bold />),
@@ -283,6 +286,7 @@ export default function AtelierHistoryPage() {
     if (withCosts) {
       list.push({
         key: 'margin',
+        minScreen: '2xl',
         label: 'Marge',
         hideOnMobile: true,
         className: 'text-right whitespace-nowrap',
@@ -305,7 +309,7 @@ export default function AtelierHistoryPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={branch.name}
         title="Atelier — historique"
@@ -476,7 +480,7 @@ export default function AtelierHistoryPage() {
         />
       ) : (
         <>
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={columns}
             data={orders}
             getRowKey={(order) => order.id}

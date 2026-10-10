@@ -563,7 +563,7 @@ export function AppShell({ children }: { children: ReactNode }) {
        * au tableau de défiler dans sa propre carte (`ResponsiveTable`).
        */}
       <main className="min-w-0 min-h-screen flex-1 bg-base-100 pt-16 lg:pt-0">
-        <div className="mx-auto min-w-0 max-w-7xl p-4 sm:p-6 lg:p-8">{children}</div>
+        <div className="mx-auto min-w-0 max-w-7xl p-4 2xl:max-w-[100rem] sm:p-6 lg:p-8">{children}</div>
       </main>
     </div>
   );

@@ -439,7 +439,7 @@ export default function BrickProductionDetailPage() {
   /* ── États d'erreur et de chargement ──────────────────────────────── */
   if (isLoading && !detail) {
     return (
-      <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
         <SkeletonCards count={4} />
         <SkeletonTable rows={6} cols={5} />
       </div>
@@ -448,7 +448,7 @@ export default function BrickProductionDetailPage() {
 
   if (notFound) {
     return (
-      <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] p-4 sm:p-6">
         <EmptyState
           title="Lot introuvable"
           description="Ce lot de fabrication n’existe pas sur ce poste, ou il a été annulé."
@@ -464,7 +464,7 @@ export default function BrickProductionDetailPage() {
 
   if (error || !detail) {
     return (
-      <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
+      <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] p-4 sm:p-6">
         <ErrorState
           title="Chargement impossible"
           description={error ?? 'Le lot n’a pas pu être chargé.'}
@@ -489,7 +489,7 @@ export default function BrickProductionDetailPage() {
   const unit = production.productUnit || 'pièce';
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={`${B.branch.name} · ${BRICK_PRODUCTION_STATUS_LABELS[production.status]}`}
         title={production.batchNumber}
@@ -579,7 +579,7 @@ export default function BrickProductionDetailPage() {
       </Card>
 
       {/* 2 · Cartes de synthèse */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCardDelta
           label="Quantité prévue"
           tone="primary"
@@ -705,7 +705,7 @@ export default function BrickProductionDetailPage() {
           />
         ) : (
           <>
-            <ResponsiveTable
+            <ResponsiveTable cardsBelow="xl"
               columns={productionExpenseColumns}
               data={expenses}
               getRowKey={(expense) => expense.id}
@@ -803,7 +803,7 @@ export default function BrickProductionDetailPage() {
             <p className="text-sm text-base-content/60">Aucune matière sortie du stock pour cette production.</p>
           ) : (
             <>
-              <ResponsiveTable
+              <ResponsiveTable cardsBelow="xl"
                 columns={productionMaterialColumns}
                 data={materials}
                 getRowKey={(material) => material.id}
@@ -866,7 +866,7 @@ export default function BrickProductionDetailPage() {
           />
         ) : (
           <>
-            <ResponsiveTable
+            <ResponsiveTable cardsBelow="xl"
               columns={productionWorkerColumns}
               data={assignments}
               getRowKey={(assignment) => assignment.id}

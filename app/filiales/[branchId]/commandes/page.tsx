@@ -384,6 +384,7 @@ export default function BrickOrdersPage() {
       },
       {
         key: 'promisedDate',
+        minScreen: '2xl',
         label: 'Livraison promise',
         hideOnMobile: true,
         className: 'whitespace-nowrap',
@@ -395,6 +396,7 @@ export default function BrickOrdersPage() {
       },
       {
         key: 'dueDate',
+        minScreen: '2xl',
         label: 'Échéance',
         hideOnMobile: true,
         className: 'whitespace-nowrap',
@@ -406,6 +408,7 @@ export default function BrickOrdersPage() {
       },
       {
         key: 'quantityOrdered',
+        minScreen: '2xl',
         label: 'Quantité',
         className: 'text-right whitespace-nowrap',
         render: (order) => (
@@ -425,6 +428,7 @@ export default function BrickOrdersPage() {
       },
       {
         key: 'amountPaid',
+        minScreen: '2xl',
         label: 'Payé',
         hideOnMobile: true,
         className: 'text-right whitespace-nowrap',
@@ -495,7 +499,7 @@ export default function BrickOrdersPage() {
    * ------------------------------------------------------------------ */
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={B.branch.name}
         title="Commandes de la filiale"
@@ -530,7 +534,7 @@ export default function BrickOrdersPage() {
           onRetry={() => setSummaryToken((token) => token + 1)}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
           {summaryCards.map((card) => (
             <StatCardDelta
               key={card.status}
@@ -679,7 +683,7 @@ export default function BrickOrdersPage() {
         />
       ) : (
         <>
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={columns}
             data={orders}
             getRowKey={(order) => order.id}

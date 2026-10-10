@@ -401,7 +401,7 @@ export default function BriqueteriePage() {
 
   /* ── Rendu ────────────────────────────────────────────────────────── */
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[100rem] space-y-6 p-4 sm:p-6">
       <PageHeader
         eyebrow={B.branch.name}
         title="Productions"
@@ -705,7 +705,7 @@ export default function BriqueteriePage() {
         />
       ) : (
         <>
-          <ResponsiveTable
+          <ResponsiveTable cardsBelow="xl"
             columns={columns}
             data={productions}
             getRowKey={(production) => production.id}

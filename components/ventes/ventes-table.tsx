@@ -20,7 +20,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { ResponsiveTable, type Column } from '@/components/responsive-table';
+import { ResponsiveTable, type CardsBelow, type Column } from '@/components/responsive-table';
 import { IconAction, RowActions } from '@/components/row-actions';
 import { Tooltip } from '@/components/tooltip';
 import { MoneyText, StatusBadge } from '@/components/design-system';
@@ -48,6 +48,7 @@ export function VentesTable({
   onOpenValidate,
   emptyState,
   showStore = false,
+  cardsBelow,
 }: {
   data: SalesInvoiceRow[];
   /** Le squelette est rendu par la page ; ce drapeau évite un état vide trompeur. */
@@ -67,6 +68,8 @@ export function VentesTable({
   emptyState: ReactNode;
   /** Plusieurs magasins affichés : le nom du magasin apparaît sous le n° de facture. */
   showStore?: boolean;
+  /** Largeur sous laquelle la liste passe en cartes (espace d'une filiale : `xl`). */
+  cardsBelow?: CardsBelow;
 }) {
   if (!isLoading && data.length === 0) return <>{emptyState}</>;
 
@@ -152,6 +155,8 @@ export function VentesTable({
             key: 'profit',
             label: 'Bénéfice',
             className: 'text-right whitespace-nowrap',
+            // Espace d'une filiale (place réduite) : le bénéfice reste sur la fiche et en grand écran.
+            ...(cardsBelow === 'xl' ? { minScreen: '2xl' as const } : {}),
             render: (invoice: SalesInvoiceRow) => {
               // Brouillon ou vente annulée : aucun bénéfice à montrer.
               if (invoice.profit === null) {
@@ -246,6 +251,7 @@ export function VentesTable({
       tableClassName="table-sm"
       actionsClassName="w-40"
       renderCard={renderCard}
+      cardsBelow={cardsBelow}
       actions={(invoice) => (
         <RowActions>
           <IconAction icon="view" label="Voir le détail de la facture" onClick={() => onOpenDetail(invoice)} />
