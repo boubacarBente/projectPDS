@@ -91,12 +91,13 @@ export type Action =
   | 'furniture.update'
   | 'furniture.delete'
   | 'furniture.models'
-  /* Briqueterie (README §30) */
+  /* Filiales de production (README §30, §31) : préfixe `brick` conservé (droits déjà enregistrés) */
   | 'brick.view'
   | 'brick.create'
   | 'brick.update'
   | 'brick.delete'
   | 'brick.types'
+  | 'brick.branches'
   /* Multi-magasins */
   | 'stores.view'
   | 'stores.manage'
@@ -262,13 +263,14 @@ export const ACCESS_AREAS: AccessArea[] = [
     ],
   },
   {
+    // Identifiant `briqueterie` conservé : il nomme les niveaux déjà enregistrés des comptes.
     id: 'briqueterie',
-    label: 'Briqueterie',
-    description: 'Lots de fabrication, dépenses de production, stock de briques, commandes et rapports.',
+    label: 'Filiales de production',
+    description: 'Briqueterie, vitrerie, meubles… : productions, dépenses de production, stock, commandes, ventes et rapports de chaque filiale.',
     levels: [
       { level: 'view', label: 'Consulter', actions: ['brick.view'] },
-      { level: 'edit', label: 'Lots, étapes, équipe et commandes', actions: ['brick.create', 'brick.update'] },
-      { level: 'manage', label: 'Types de briques et annulations', actions: ['brick.types', 'brick.delete'] },
+      { level: 'edit', label: 'Productions, étapes, équipe et commandes', actions: ['brick.create', 'brick.update'] },
+      { level: 'manage', label: 'Modèles, clients partagés et annulations', actions: ['brick.types', 'brick.delete'] },
     ],
   },
   {
@@ -298,7 +300,8 @@ export const ACCESS_AREAS: AccessArea[] = [
     levels: [
       { level: 'view', label: 'Voir ses magasins', actions: ['stores.view'] },
       { level: 'edit', label: 'Changer de magasin actif', actions: ['stores.switch'] },
-      { level: 'manage', label: 'Voir et gérer tous les magasins', actions: ['stores.viewAll', 'stores.manage'] },
+      // Les filiales de production sont, comme les magasins, la structure centrale de l'entreprise.
+      { level: 'manage', label: 'Voir et gérer tous les magasins et les filiales', actions: ['stores.viewAll', 'stores.manage', 'brick.branches'] },
     ],
   },
   {
@@ -545,6 +548,7 @@ export const ALL_ACTIONS: Action[] = [
   'brick.update',
   'brick.delete',
   'brick.types',
+  'brick.branches',
   'stores.view',
   'stores.manage',
   'stores.viewAll',
@@ -652,11 +656,12 @@ export const ACTION_META: Record<Action, ActionMeta> = {
   'furniture.update': { label: 'Faire avancer une commande d’atelier', group: 'Production', description: 'Étapes, matières sorties du stock, chutes, équipe, dates et prix convenu.' },
   'furniture.models': { label: 'Gérer les modèles de meubles', group: 'Production', description: 'Fiches modèles du magasin et leur nomenclature de matières.' },
   'furniture.delete': { label: 'Annuler une commande d’atelier', group: 'Production', description: 'Annulation avec motif : les matières reviennent au stock.', dangerous: true },
-  'brick.view': { label: 'Consulter la briqueterie', group: 'Production', description: 'Tableau de bord, lots, stock de briques, commandes, ventes et rapports.' },
-  'brick.create': { label: 'Créer un lot ou une commande de briques', group: 'Production', description: 'Lancer une fabrication, enregistrer une commande client.' },
-  'brick.update': { label: 'Faire avancer un lot ou une commande', group: 'Production', description: 'Étapes, quantités, pertes, équipe, dépenses rattachées ; statut, livraison et facturation des commandes.' },
-  'brick.types': { label: 'Gérer les types de briques', group: 'Production', description: 'Types de briques du magasin et produit qui porte leur prix et leur stock.' },
-  'brick.delete': { label: 'Annuler un lot ou une commande de briques', group: 'Production', description: 'Annulation avec motif : le stock du lot est repris.', dangerous: true },
+  'brick.view': { label: 'Consulter les filiales de production', group: 'Production', description: 'Tableau de bord, productions, stock, commandes, ventes et rapports des filiales autorisées.' },
+  'brick.create': { label: 'Créer une production ou une commande de filiale', group: 'Production', description: 'Lancer une fabrication, enregistrer une commande client.' },
+  'brick.update': { label: 'Faire avancer une production ou une commande', group: 'Production', description: 'Étapes, quantités, pertes, équipe, dépenses rattachées ; statut, livraison et facturation des commandes.' },
+  'brick.types': { label: 'Gérer les modèles et les clients partagés', group: 'Production', description: 'Modèles de production du magasin (produit qui porte leur prix et leur stock) et clients partagés avec une filiale.' },
+  'brick.delete': { label: 'Annuler une production ou une commande de filiale', group: 'Production', description: 'Annulation avec motif : le stock de la production est repris.', dangerous: true },
+  'brick.branches': { label: 'Gérer les filiales de production', group: 'Magasins', description: 'Créer, renommer, suspendre ou archiver une filiale (briqueterie, vitrerie, meubles…), régler ses étapes, ses numéros et ses comptes autorisés.', dangerous: true },
 
   'stores.view': { label: 'Voir ses magasins', group: 'Magasins', description: 'Fiche et indicateurs des magasins auxquels on est affecté.' },
   'stores.manage': { label: 'Gérer les magasins', group: 'Magasins', description: 'Créer, modifier, suspendre ou archiver un magasin, désigner son gérant.', dangerous: true },

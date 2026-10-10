@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { fail, ok, requireAction, scopeFromRequest } from '@/lib/api';
+import { fail, ok, requireAction, scopeFromRequest, toInt } from '@/lib/api';
+import { listAccessibleBranches } from '@/lib/branches';
 import { getSalesStats } from '@/lib/sales';
 import type { PeriodKey } from '@/lib/dashboard';
 
@@ -28,6 +29,8 @@ export async function GET(request: NextRequest) {
       await getSalesStats(period, {
         scope: scopeFromRequest(user, request),
         channel: channel === 'brick' || channel === 'all' ? channel : 'general',
+        productionBranchId: toInt(params.get('branch'), 0) || undefined,
+        productionBranchIds: (await listAccessibleBranches(user, { includeInactive: true })).map((b) => b.id),
       }),
     );
   } catch (error) {

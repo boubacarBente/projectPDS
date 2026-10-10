@@ -200,13 +200,13 @@ export function brickProfitabilityIndicators(
     {
       key: 'unitCost',
       label: 'Coût unitaire de production',
-      formula: 'Coût total ÷ briques produites nettes (produites − cassées)',
+      formula: 'Coût total ÷ pièces produites nettes (produites − cassées)',
       amount: p.unitCost,
     },
     {
       key: 'revenue',
-      label: 'Chiffre d’affaires briqueterie',
-      formula: 'Ventes du canal brique (encaissé + reste à encaisser)',
+      label: 'Chiffre d’affaires de la filiale',
+      formula: 'Ventes du canal pièce (encaissé + reste à encaisser)',
       amount: p.revenue,
     },
     {
@@ -289,7 +289,7 @@ export function buildBrickSections(
   const brokenTotal = report.productionByDay.reduce((sum, row) => sum + row.broken, 0);
   const lotsTotal = report.productionByDay.reduce((sum, row) => sum + row.lots, 0);
   const goodTotal = Math.max(0, producedTotal - brokenTotal);
-  const brickUnit = goodTotal === 1 ? 'brique' : 'briques';
+  const brickUnit = goodTotal === 1 ? 'pièce' : 'pièces';
 
   return [
     {
@@ -307,8 +307,8 @@ export function buildBrickSections(
         `sur ${formatNumber(lotsTotal)} lot(s).`,
     },
     {
-      title: 'Rentabilité par type de brique',
-      head: ['Type de brique', 'Quantité vendue', 'Chiffre d’affaires', 'Coût des briques vendues', 'Marge', 'Taux (%)'],
+      title: 'Rentabilité par modèle',
+      head: ['Modèle', 'Quantité vendue', 'Chiffre d’affaires', 'Coût des pièces vendues', 'Marge', 'Taux (%)'],
       numeric: [1, 2, 3, 4, 5],
       rows: report.profitabilityByProduct.map((row) => [
         labelCell(row.brickTypeName),
@@ -319,7 +319,7 @@ export function buildBrickSections(
         percentCell(row.marginRate),
       ]),
       note:
-        'Coût des briques vendues = coût unitaire du type × quantité vendue ; le coût total de fabrication, ' +
+        'Coût des pièces vendues = coût unitaire du type × quantité vendue ; le coût total de fabrication, ' +
         'lui, figure dans la section « Production par type ».',
     },
     {
@@ -335,8 +335,8 @@ export function buildBrickSections(
       ]),
     },
     {
-      title: 'Production par type de brique',
-      head: ['Type de brique', 'Lots', 'Produites', 'Cassées', 'Coût', 'Coût unitaire'],
+      title: 'Production par modèle',
+      head: ['Modèle', 'Lots', 'Produites', 'Cassées', 'Coût', 'Coût unitaire'],
       numeric: [1, 2, 3, 4, 5],
       rows: report.productionByType.map((row) => [
         labelCell(row.brickTypeName),
@@ -349,7 +349,7 @@ export function buildBrickSections(
     },
     {
       title: 'Dépenses rattachées aux productions',
-      head: ['Date', 'Lot', 'Type de brique', 'Catégorie', 'Écritures', 'Montant'],
+      head: ['Date', 'Lot', 'Modèle', 'Catégorie', 'Écritures', 'Montant'],
       numeric: [4, 5],
       rows: report.expensesByProduction.map((row) => [
         dateCell(row.date),
@@ -417,7 +417,7 @@ export function buildBrickSections(
         moneyCell(row.balance, currency),
         labelCell(row.oldestDueDate ? formatDateShort(row.oldestDueDate) : 'Sans échéance'),
       ]),
-      note: `Total des créances de la briqueterie : ${formatCurrency(
+      note: `Total des créances de la filiale : ${formatCurrency(
         report.receivables.reduce((sum, row) => sum + row.balance, 0),
         currency,
       )}.`,
@@ -435,7 +435,7 @@ export function buildBrickSections(
     {
       title: 'État des stocks',
       head: [
-        'Type de brique',
+        'Modèle',
         'Forme',
         'Dimensions',
         'Produit',
@@ -472,7 +472,7 @@ export function buildBrickSections(
     },
     {
       title: 'Pertes et casses',
-      head: ['Date', 'Lot', 'Type de brique', 'Quantité cassée', 'Motif'],
+      head: ['Date', 'Lot', 'Modèle', 'Quantité cassée', 'Motif'],
       numeric: [3],
       rows: report.losses.map((row) => [
         dateCell(row.date),
@@ -513,17 +513,17 @@ export function buildBrickDecisionSummary(report: BrickReports, currency = 'GNF'
 
   sentences.push(
     producedTotal > 0
-      ? `La période a produit ${formatQuantity(goodTotal, 'briques')} nettes en ${formatNumber(lotsTotal)} lot(s), ` +
-          `pour un coût de production de ${money(p.productionCost)}, soit ${money(p.unitCost)} la brique` +
-          (brokenTotal > 0 ? ` (${formatQuantity(brokenTotal, 'briques')} cassées).` : '.')
+      ? `La période a produit ${formatQuantity(goodTotal, 'pièces')} nettes en ${formatNumber(lotsTotal)} lot(s), ` +
+          `pour un coût de production de ${money(p.productionCost)}, soit ${money(p.unitCost)} la pièce` +
+          (brokenTotal > 0 ? ` (${formatQuantity(brokenTotal, 'pièces')} cassées).` : '.')
       : `Aucune production n'a été enregistrée sur la période : le coût de production et le coût unitaire sont donc nuls.`,
   );
 
   sentences.push(
     salesCount > 0
-      ? `Les ${formatNumber(salesCount)} vente(s) du canal briqueterie ont dégagé ${money(p.revenue)} de chiffre d'affaires, ` +
+      ? `Les ${formatNumber(salesCount)} vente(s) du canal des filiales ont dégagé ${money(p.revenue)} de chiffre d'affaires, ` +
           `pour une marge brute estimée de ${money(p.grossMargin)} (${formatPercent(p.marginRate)} du chiffre d'affaires).`
-      : `Aucune vente briqueterie n'a été facturée sur la période : le chiffre d'affaires est nul et la marge brute ressort à ${money(
+      : `Aucune vente de la filiale n'a été facturée sur la période : le chiffre d'affaires est nul et la marge brute ressort à ${money(
           p.grossMargin,
         )}.`,
   );
@@ -711,7 +711,7 @@ export function BrickRapportExportDocument({
               color: HEX.primary,
             }}
           >
-            Rapport de la briqueterie
+            Rapport de la filiale
           </p>
           <p style={{ fontSize: 15, fontWeight: 700, marginTop: 2 }}>
             Du {formatDateShort(report.from)} au {formatDateShort(report.to)}
@@ -823,17 +823,17 @@ export function buildBrickRapportExportHtml(
   });
 
   return renderExportDocument({
-    documentTitle: 'Rapport de la briqueterie',
+    documentTitle: 'Rapport de la filiale',
     documentDate: `Période : ${formatDateShort(report.from)} → ${formatDateShort(report.to)}`,
     company,
     meta: [
       ['Période', `${formatDateShort(report.from)} → ${formatDateShort(report.to)}`],
-      ['Briques produites nettes', formatQuantity(p.producedQuantity, 'briques')],
+      ['Pièces produites nettes', formatQuantity(p.producedQuantity, 'pièces')],
       ['Chiffre d’affaires', formatCurrency(p.revenue, currency)],
       ['Résultat estimé', formatCurrency(p.estimatedResult, currency)],
     ],
     blocks,
-    footer: `Rapport interne de la briqueterie — ${company.name} · montants en ${currency}`,
+    footer: `Rapport interne de la filiale — ${company.name} · montants en ${currency}`,
   });
 }
 
@@ -874,7 +874,7 @@ export function buildBrickRapportCsv(
     );
   };
 
-  row('Rapport', 'Briqueterie — production et rentabilité');
+  row('Rapport', 'Filiale de production — production et rentabilité');
   row('Entreprise', company.name);
   row('Filiale', company.branch ?? '');
   row('Adresse', company.address ?? '');

@@ -25,6 +25,14 @@
  * 6. Annulation = statut `cancelled` + motif + auteur + date ; le solde net du
  *    lot en stock est repris (refusé si les briques ont déjà été vendues au
  *    point de rendre le stock négatif).
+ *
+ * **Filiales de production (README §31)** : ce module sert désormais toutes
+ * les filiales (briqueterie, vitrerie, meubles…). Un « type de brique » est un
+ * **modèle**, un « lot » une **production** ; chaque ligne porte `branch_id`.
+ * Toute lecture est bornée aux filiales demandées (`branchIds`) et toute
+ * écriture vérifie que le modèle ou la production appartient **à la filiale de
+ * la route** — sans quoi on pourrait faire avancer la production d'une filiale
+ * depuis l'espace d'une autre. Les étapes viennent de la filiale (`flow`).
  */
 
 import { db, rawAll, rawGet, withTransaction } from '@/db';
@@ -36,6 +44,8 @@ import { NotFoundError, ValidationError, ConflictError } from '@/lib/api';
 import { roundMoney, today } from '@/lib/format';
 import { cancelExpense, createExpense, getExpense, updateExpense } from '@/lib/expenses';
 import { scopeSql, type StoreScope } from '@/lib/stores';
+import { branchSql, parseStages } from '@/lib/branches';
+import type { ProductionBranch } from '@/lib/branches-shared';
 
 /* ------------------------------------------------------------------ *
  * Listes fermées
@@ -96,11 +106,24 @@ export type BrickTypeRow = {
   id: number;
   storeId: number;
   storeName: string | null;
+  branchId: number | null;
+  branchName: string | null;
   productId: number;
   name: string;
   shape: BrickShape;
   dimensions: string | null;
   description: string | null;
+  category: string | null;
+  /** Unité de production (null = unité de vente du produit). */
+  productionUnit: string | null;
+  length: number | null;
+  width: number | null;
+  height: number | null;
+  thickness: number | null;
+  /** Seuil d'alerte effectif : celui du modèle, sinon celui du produit dans le magasin. */
+  alertThreshold: number | null;
+  /** Seuil propre au modèle (null = celui du produit). */
+  ownAlertThreshold: number | null;
   isActive: boolean;
   productName: string;
   unit: string;
@@ -118,6 +141,13 @@ export type BrickTypeInput = {
   shape?: BrickShape;
   dimensions?: string | null;
   description?: string | null;
+  category?: string | null;
+  productionUnit?: string | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  thickness?: number | null;
+  alertThreshold?: number | null;
   isActive?: boolean;
 };
 
@@ -125,9 +155,12 @@ export type BrickProductionRow = {
   id: number;
   storeId: number;
   storeName: string | null;
+  branchId: number | null;
+  branchName: string | null;
   batchNumber: string;
   brickTypeId: number;
   brickTypeName: string;
+  category: string | null;
   shape: BrickShape;
   dimensions: string | null;
   productId: number;
@@ -138,7 +171,17 @@ export type BrickProductionRow = {
   brokenQuantity: number;
   startDate: string | null;
   endDate: string | null;
-  stage: BrickStage;
+  /** Clé d'étape de la filiale (`stored` = en stock). */
+  stage: string;
+  /** Libellé de l'étape dans la filiale (« Cuisson », « Découpe »…). */
+  stageLabel: string;
+  /** Rang de l'étape (0 = première) et nombre d'étapes, mise en stock comprise. */
+  stageIndex: number;
+  stageCount: number;
+  /** Étape suivante (`null` une fois en stock). */
+  nextStage: { key: string; label: string } | null;
+  /** Libellé des pertes de la filiale (« Cassées », « Rebuts »…). */
+  lossLabel: string;
   status: BrickProductionStatus;
   team: string | null;
   /** Toujours 0 : plus de module matières (§20) ; conservé pour l'interface. */
@@ -248,6 +291,8 @@ export type BrickProductionPatch = {
 
 export type BrickProductionListOptions = {
   scope: StoreScope;
+  /** Filiales lues (une seule depuis l'espace d'une filiale, plusieurs en vue consolidée). */
+  branchIds: number[];
   search?: string;
   brickTypeId?: number;
   stage?: string;
@@ -299,30 +344,63 @@ function unitCostOf(totalCost: number, good: number): number {
   return good > 0 ? Math.round((totalCost / good) * 100) / 100 : 0;
 }
 
+function optionalMeasure(value: unknown, label: string): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) throw new ValidationError(`${label} : indiquez un nombre positif.`);
+  return n;
+}
+
+/** Clé d'étape valable pour la filiale, sinon erreur lisible. */
+export function assertStageOfBranch(branch: Pick<ProductionBranch, 'flow' | 'name'>, stage: unknown): string {
+  const key = String(stage ?? '');
+  if (!branch.flow.some((s) => s.key === key)) {
+    throw new ValidationError(`Étape inconnue pour la filiale « ${branch.name} ».`);
+  }
+  return key;
+}
+
 /* ------------------------------------------------------------------ *
  * Types de briques
  * ------------------------------------------------------------------ */
 
 const BRICK_TYPE_SELECT = `
-  SELECT bt.id, bt.store_id, s.name AS store_name, bt.product_id, bt.name, bt.shape, bt.dimensions,
-         bt.description, bt.is_active, bt.created_at,
+  SELECT bt.id, bt.store_id, s.name AS store_name, bt.branch_id, br.name AS branch_name,
+         bt.product_id, bt.name, bt.shape, bt.dimensions,
+         bt.description, bt.category, bt.production_unit, bt.length, bt.width, bt.height, bt.thickness,
+         COALESCE(bt.alert_threshold,
+                  (SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = bt.product_id AND ps.store_id = bt.store_id),
+                  p.stock_min) AS alert_threshold,
+         bt.alert_threshold AS own_alert_threshold,
+         bt.is_active, bt.created_at,
          p.name AS product_name, p.unit AS product_unit, p.sale_price, p.purchase_price,
          COALESCE((SELECT ps.quantity FROM product_stocks ps WHERE ps.product_id = bt.product_id AND ps.store_id = bt.store_id), 0) AS stock,
          (SELECT COUNT(*) FROM brick_productions bp WHERE bp.brick_type_id = bt.id AND bp.status <> 'cancelled') AS productions_count
   FROM brick_types bt
   INNER JOIN products p ON p.id = bt.product_id
-  LEFT JOIN stores s ON s.id = bt.store_id`;
+  LEFT JOIN stores s ON s.id = bt.store_id
+  LEFT JOIN production_branches br ON br.id = bt.branch_id`;
 
 function mapBrickTypeRow(row: any): BrickTypeRow {
   return {
     id: num(row.id),
     storeId: num(row.store_id),
     storeName: row.store_name ?? null,
+    branchId: row.branch_id == null ? null : num(row.branch_id),
+    branchName: row.branch_name ?? null,
     productId: num(row.product_id),
     name: row.name,
     shape: isBrickShape(row.shape) ? row.shape : 'solid',
     dimensions: row.dimensions ?? null,
     description: row.description ?? null,
+    category: row.category ?? null,
+    productionUnit: row.production_unit ?? null,
+    length: row.length == null ? null : num(row.length),
+    width: row.width == null ? null : num(row.width),
+    height: row.height == null ? null : num(row.height),
+    thickness: row.thickness == null ? null : num(row.thickness),
+    alertThreshold: row.alert_threshold == null ? null : num(row.alert_threshold),
+    ownAlertThreshold: row.own_alert_threshold == null ? null : num(row.own_alert_threshold),
     isActive: Boolean(row.is_active),
     productName: row.product_name,
     unit: row.product_unit,
@@ -336,10 +414,11 @@ function mapBrickTypeRow(row: any): BrickTypeRow {
 
 export async function listBrickTypes(options: {
   scope: StoreScope;
+  branchIds: number[];
   includeInactive?: boolean;
   sort?: 'recent' | 'name';
 }): Promise<BrickTypeRow[]> {
-  const where = [scopeSql('bt.store_id', options.scope)];
+  const where = [scopeSql('bt.store_id', options.scope), branchSql('bt.branch_id', options.branchIds)];
   if (!options.includeInactive) where.push('bt.is_active = 1');
   const orderBy = options.sort === 'name' ? 'bt.name COLLATE NOCASE, bt.id' : 'bt.created_at DESC, bt.id DESC';
   const rows = await rawAll<any>(`${BRICK_TYPE_SELECT} WHERE ${where.join(' AND ')} ORDER BY ${orderBy}`);
@@ -351,13 +430,13 @@ export async function getBrickType(id: number): Promise<BrickTypeRow | null> {
   return row ? mapBrickTypeRow(row) : null;
 }
 
-/** Le type doit exister et appartenir au magasin actif. */
-export async function assertBrickTypeInStore(id: number, storeId: number): Promise<BrickTypeRow> {
+/** Le modèle doit exister, appartenir au magasin actif **et à la filiale**. */
+export async function assertBrickTypeInStore(id: number, storeId: number, branchId: number): Promise<BrickTypeRow> {
   const type = await getBrickType(id);
-  if (!type) throw new NotFoundError('Type de brique introuvable');
+  if (!type || type.branchId !== Number(branchId)) throw new NotFoundError('Modèle introuvable dans cette filiale');
   if (type.storeId !== Number(storeId)) {
     throw new ValidationError(
-      `Le type « ${type.name} » appartient au magasin ${type.storeName ?? 'd’un autre magasin'} : il ne s’utilise que depuis ce magasin.`,
+      `Le modèle « ${type.name} » appartient au magasin ${type.storeName ?? 'd’un autre magasin'} : il ne s’utilise que depuis ce magasin.`,
     );
   }
   return type;
@@ -366,7 +445,7 @@ export async function assertBrickTypeInStore(id: number, storeId: number): Promi
 /** Le produit lié doit exister et ne pas porter déjà un autre type actif du magasin. */
 async function validateLinkedProduct(productId: number, storeId: number, exceptTypeId?: number): Promise<void> {
   if (!Number.isInteger(productId) || productId <= 0) {
-    throw new ValidationError('Le produit lié au type de brique est obligatoire');
+    throw new ValidationError('Le produit lié au modèle est obligatoire');
   }
   const product = await rawGet<{ id: number }>('SELECT id FROM products WHERE id = ?', [productId]);
   if (!product) throw new NotFoundError('Produit introuvable');
@@ -375,51 +454,64 @@ async function validateLinkedProduct(productId: number, storeId: number, exceptT
     [productId, storeId, exceptTypeId ?? 0],
   );
   if (other) {
-    throw new ValidationError(`Ce produit porte déjà le type « ${other.name} » : un produit = un type de brique (il en porte le stock).`);
+    throw new ValidationError(`Ce produit porte déjà le modèle « ${other.name} » : un produit = un modèle (il en porte le stock), toutes filiales confondues.`);
   }
 }
 
 export async function createBrickType(
-  input: BrickTypeInput & { storeId: number; userId?: number | null },
+  input: BrickTypeInput & { storeId: number; branchId: number; userId?: number | null },
 ): Promise<BrickTypeRow> {
   const productId = Number(input.productId);
   const name = (input.name ?? '').trim();
-  if (!name) throw new ValidationError('Le nom du type de brique est obligatoire');
+  if (!name) throw new ValidationError('Le nom du modèle est obligatoire');
   await validateLinkedProduct(productId, input.storeId);
 
   const inserted = await db
     .insert(brickTypes)
     .values({
       storeId: input.storeId,
+      branchId: input.branchId,
       productId,
       name,
       shape: isBrickShape(input.shape) ? input.shape : 'solid',
       dimensions: input.dimensions?.trim() || null,
       description: input.description?.trim() || null,
+      category: input.category?.trim() || null,
+      productionUnit: input.productionUnit?.trim() || null,
+      length: optionalMeasure(input.length, 'Longueur'),
+      width: optionalMeasure(input.width, 'Largeur'),
+      height: optionalMeasure(input.height, 'Hauteur'),
+      thickness: optionalMeasure(input.thickness, 'Épaisseur'),
+      alertThreshold: optionalMeasure(input.alertThreshold, 'Seuil d’alerte'),
       isActive: input.isActive ?? true,
       userId: input.userId ?? null,
     })
     .returning({ id: brickTypes.id });
   const created = await getBrickType(inserted[0].id);
-  if (!created) throw new NotFoundError('Type de brique créé mais introuvable');
+  if (!created) throw new NotFoundError('Modèle créé mais introuvable');
   return created;
 }
 
-export async function updateBrickType(id: number, patch: Partial<BrickTypeInput>, storeId: number): Promise<BrickTypeRow> {
-  const type = await assertBrickTypeInStore(id, storeId);
+export async function updateBrickType(
+  id: number,
+  patch: Partial<BrickTypeInput>,
+  storeId: number,
+  branchId: number,
+): Promise<BrickTypeRow> {
+  const type = await assertBrickTypeInStore(id, storeId, branchId);
   const values: Record<string, unknown> = { updatedAt: new Date() };
 
   if (patch.productId !== undefined && Number(patch.productId) !== type.productId) {
     // Changer le produit d'un type déjà fabriqué ferait « perdre » son stock.
     if (type.productionsCount > 0) {
-      throw new ConflictError('Ce type a déjà des lots : son produit (qui porte le stock) ne se change plus.');
+      throw new ConflictError('Ce modèle a déjà des productions : son produit (qui porte le stock) ne se change plus.');
     }
     await validateLinkedProduct(Number(patch.productId), storeId, id);
     values.productId = Number(patch.productId);
   }
   if (patch.name !== undefined) {
     const name = String(patch.name ?? '').trim();
-    if (!name) throw new ValidationError('Le nom du type de brique est obligatoire');
+    if (!name) throw new ValidationError('Le nom du modèle est obligatoire');
     values.name = name;
   }
   if (patch.shape !== undefined) {
@@ -428,6 +520,13 @@ export async function updateBrickType(id: number, patch: Partial<BrickTypeInput>
   }
   if (patch.dimensions !== undefined) values.dimensions = patch.dimensions?.trim() || null;
   if (patch.description !== undefined) values.description = patch.description?.trim() || null;
+  if (patch.category !== undefined) values.category = patch.category?.trim() || null;
+  if (patch.productionUnit !== undefined) values.productionUnit = patch.productionUnit?.trim() || null;
+  if (patch.length !== undefined) values.length = optionalMeasure(patch.length, 'Longueur');
+  if (patch.width !== undefined) values.width = optionalMeasure(patch.width, 'Largeur');
+  if (patch.height !== undefined) values.height = optionalMeasure(patch.height, 'Hauteur');
+  if (patch.thickness !== undefined) values.thickness = optionalMeasure(patch.thickness, 'Épaisseur');
+  if (patch.alertThreshold !== undefined) values.alertThreshold = optionalMeasure(patch.alertThreshold, 'Seuil d’alerte');
   if (patch.isActive !== undefined) {
     if (patch.isActive) await validateLinkedProduct(type.productId, storeId, id);
     values.isActive = Boolean(patch.isActive);
@@ -435,13 +534,13 @@ export async function updateBrickType(id: number, patch: Partial<BrickTypeInput>
 
   await db.update(brickTypes).set(values as any).where(eq(brickTypes.id, id));
   const result = await getBrickType(id);
-  if (!result) throw new NotFoundError('Type de brique introuvable');
+  if (!result) throw new NotFoundError('Modèle introuvable');
   return result;
 }
 
 /** Désactivation / réactivation — jamais de suppression. */
-export async function setBrickTypeActive(id: number, isActive: boolean, storeId: number): Promise<BrickTypeRow> {
-  return updateBrickType(id, { isActive }, storeId);
+export async function setBrickTypeActive(id: number, isActive: boolean, storeId: number, branchId: number): Promise<BrickTypeRow> {
+  return updateBrickType(id, { isActive }, storeId, branchId);
 }
 
 /* ------------------------------------------------------------------ *
@@ -449,8 +548,10 @@ export async function setBrickTypeActive(id: number, isActive: boolean, storeId:
  * ------------------------------------------------------------------ */
 
 const PRODUCTION_SELECT = `
-  SELECT p.id, p.store_id, s.name AS store_name, p.batch_number, p.brick_type_id,
-         bt.name AS brick_type_name, bt.shape, bt.dimensions,
+  SELECT p.id, p.store_id, s.name AS store_name, p.branch_id, br.name AS branch_name,
+         br.stages AS branch_stages, br.loss_label AS branch_loss_label,
+         p.batch_number, p.brick_type_id,
+         bt.name AS brick_type_name, bt.category, bt.shape, bt.dimensions,
          bt.product_id, pr.name AS product_name, pr.unit AS product_unit,
          p.planned_quantity, p.produced_quantity, p.broken_quantity,
          p.start_date, p.end_date, p.stage, p.status, p.team,
@@ -467,10 +568,14 @@ const PRODUCTION_SELECT = `
   INNER JOIN brick_types bt ON bt.id = p.brick_type_id
   INNER JOIN products pr ON pr.id = bt.product_id
   LEFT JOIN stores s ON s.id = p.store_id
+  LEFT JOIN production_branches br ON br.id = p.branch_id
   LEFT JOIN users u ON u.id = p.user_id
   LEFT JOIN users cu ON cu.id = p.cancelled_by`;
 
 function mapProductionRow(row: any): BrickProductionRow {
+  const flow = [...parseStages(row.branch_stages), { key: 'stored', label: 'En stock' }];
+  const stageKey = String(row.stage ?? '');
+  const stageIndex = Math.max(0, flow.findIndex((s) => s.key === stageKey));
   const produced = num(row.produced_quantity);
   const broken = num(row.broken_quantity);
   const laborCost = roundMoney(num(row.labor_cost));
@@ -481,9 +586,12 @@ function mapProductionRow(row: any): BrickProductionRow {
     id: num(row.id),
     storeId: num(row.store_id),
     storeName: row.store_name ?? null,
+    branchId: row.branch_id == null ? null : num(row.branch_id),
+    branchName: row.branch_name ?? null,
     batchNumber: row.batch_number,
     brickTypeId: num(row.brick_type_id),
     brickTypeName: row.brick_type_name,
+    category: row.category ?? null,
     shape: isBrickShape(row.shape) ? row.shape : 'solid',
     dimensions: row.dimensions ?? null,
     productId: num(row.product_id),
@@ -494,7 +602,12 @@ function mapProductionRow(row: any): BrickProductionRow {
     brokenQuantity: broken,
     startDate: row.start_date ?? null,
     endDate: row.end_date ?? null,
-    stage: isBrickStage(row.stage) ? row.stage : 'molding',
+    stage: stageKey,
+    stageLabel: flow.find((s) => s.key === stageKey)?.label ?? stageKey,
+    stageIndex,
+    stageCount: flow.length,
+    nextStage: row.status === 'registered' && stageIndex < flow.length - 1 ? flow[stageIndex + 1] : null,
+    lossLabel: row.branch_loss_label || 'Pertes',
     status: isBrickProductionStatus(row.status) ? row.status : 'registered',
     team: row.team ?? null,
     materialCost: 0,
@@ -522,7 +635,7 @@ export async function listBrickProductions(
 ): Promise<{ data: BrickProductionRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
-  const where: string[] = [scopeSql('p.store_id', options.scope)];
+  const where: string[] = [scopeSql('p.store_id', options.scope), branchSql('p.branch_id', options.branchIds)];
   const args: (string | number)[] = [];
 
   // Par défaut un lot annulé sort des listes ; le filtre « Annulée » les montre.
@@ -541,7 +654,7 @@ export async function listBrickProductions(
     where.push('p.brick_type_id = ?');
     args.push(options.brickTypeId);
   }
-  if (isBrickStage(options.stage)) {
+  if (options.stage) {
     where.push('p.stage = ?');
     args.push(options.stage);
   }
@@ -659,10 +772,10 @@ export function hideProductionCosts<T extends { laborCost?: number | null; expen
  * Synthèse « fabriquées / cassées / vendues »
  * ------------------------------------------------------------------ */
 
-export async function getBrickSummary(options: { scope: StoreScope; from?: string; to?: string }): Promise<BrickSummary> {
+export async function getBrickSummary(options: { scope: StoreScope; branchIds: number[]; from?: string; to?: string }): Promise<BrickSummary> {
   const from = options.from ?? null;
   const to = options.to ?? null;
-  const prodWhere = [`p.status <> 'cancelled'`, scopeSql('p.store_id', options.scope)];
+  const prodWhere = [`p.status <> 'cancelled'`, scopeSql('p.store_id', options.scope), branchSql('p.branch_id', options.branchIds)];
   const prodArgs: string[] = [];
   if (from) {
     prodWhere.push(`${PRODUCTION_DATE} >= ?`);
@@ -682,8 +795,13 @@ export async function getBrickSummary(options: { scope: StoreScope; from?: strin
     prodArgs,
   );
 
-  // Ventes de briques : factures **actives** du canal briqueterie de la portée.
-  const salesWhere = [`v.status = 'active'`, `v.channel = 'brick'`, scopeSql('v.store_id', options.scope)];
+  // Ventes de la filiale : factures **actives** du canal des filiales, de la portée.
+  const salesWhere = [
+    `v.status = 'active'`,
+    `v.channel = 'brick'`,
+    scopeSql('v.store_id', options.scope),
+    branchSql('v.production_branch_id', options.branchIds),
+  ];
   const salesArgs: string[] = [];
   if (from) {
     salesWhere.push('v.date >= ?');
@@ -701,7 +819,8 @@ export async function getBrickSummary(options: { scope: StoreScope; from?: strin
     salesArgs,
   );
   const types = await rawAll<{ id: number; product_id: number; name: string }>(
-    `SELECT bt.id, bt.product_id, bt.name FROM brick_types bt WHERE ${scopeSql('bt.store_id', options.scope)}`,
+    `SELECT bt.id, bt.product_id, bt.name FROM brick_types bt
+      WHERE ${scopeSql('bt.store_id', options.scope)} AND ${branchSql('bt.branch_id', options.branchIds)}`,
   );
   const typeByProduct = new Map(types.map((t) => [num(t.product_id), { id: num(t.id), name: t.name }]));
   const typeNameById = new Map(types.map((t) => [num(t.id), t.name]));
@@ -744,7 +863,7 @@ export async function getBrickSummary(options: { scope: StoreScope; from?: strin
   }
   for (const [typeId, quantity] of soldByType) {
     if (byType.has(typeId)) continue;
-    byType.set(typeId, { brickTypeId: typeId, brickTypeName: typeNameById.get(typeId) ?? `Type #${typeId}`, produced: 0, broken: 0, sold: quantity, unitCost: 0 });
+    byType.set(typeId, { brickTypeId: typeId, brickTypeName: typeNameById.get(typeId) ?? `Modèle #${typeId}`, produced: 0, broken: 0, sold: quantity, unitCost: 0 });
   }
   const totalCost = roundMoney(laborCost + expensesCost);
   const good = roundMoney(produced - broken);
@@ -770,15 +889,15 @@ export async function getBrickSummary(options: { scope: StoreScope; from?: strin
  * Lots — écriture (magasin actif uniquement)
  * ------------------------------------------------------------------ */
 
-async function assertProductionEditable(id: number, storeId: number): Promise<BrickProductionRow> {
+async function assertProductionEditable(id: number, storeId: number, branchId: number): Promise<BrickProductionRow> {
   const production = await getBrickProductionRow(id);
-  if (!production) throw new NotFoundError('Lot de fabrication introuvable');
+  if (!production || production.branchId !== Number(branchId)) throw new NotFoundError('Production introuvable dans cette filiale');
   if (production.storeId !== Number(storeId)) {
     throw new ValidationError(
-      `Ce lot appartient au magasin ${production.storeName ?? 'd’un autre magasin'} : il ne se modifie que depuis ce magasin.`,
+      `Cette production appartient au magasin ${production.storeName ?? 'd’un autre magasin'} : elle ne se modifie que depuis ce magasin.`,
     );
   }
-  if (production.isCancelled) throw new ConflictError('Ce lot est annulé : il n’accepte plus aucune modification.');
+  if (production.isCancelled) throw new ConflictError('Cette production est annulée : elle n’accepte plus aucune modification.');
   return production;
 }
 
@@ -791,13 +910,20 @@ async function finishedGoodsCredited(productionId: number): Promise<boolean> {
   return num(row?.c) > 0;
 }
 
-/** Numéro `BRI-KAL-2026-000001` puis création du lot, dans le magasin actif. */
-export async function createBrickProduction(input: BrickProductionInput & { storeId: number }): Promise<BrickProductionRow> {
+/**
+ * Numéro au préfixe de la filiale (`BRI-KAL-2026-000001`, `VIT-…`) puis
+ * création de la production, dans le magasin actif, à la **première étape** de
+ * la filiale.
+ */
+export async function createBrickProduction(
+  input: BrickProductionInput & { storeId: number; branch: ProductionBranch },
+): Promise<BrickProductionRow> {
   return withTransaction(async () => {
+    const branch = input.branch;
     const brickTypeId = Number(input.brickTypeId);
-    if (!Number.isInteger(brickTypeId) || brickTypeId <= 0) throw new ValidationError('Le type de brique est obligatoire');
-    const type = await assertBrickTypeInStore(brickTypeId, input.storeId);
-    if (!type.isActive) throw new ValidationError(`Le type « ${type.name} » est désactivé.`);
+    if (!Number.isInteger(brickTypeId) || brickTypeId <= 0) throw new ValidationError('Le modèle est obligatoire');
+    const type = await assertBrickTypeInStore(brickTypeId, input.storeId, branch.id);
+    if (!type.isActive) throw new ValidationError(`Le modèle « ${type.name} » est désactivé : il ne sert plus à une nouvelle production.`);
 
     const plannedQuantity = num(input.plannedQuantity);
     const producedQuantity = num(input.producedQuantity);
@@ -806,7 +932,7 @@ export async function createBrickProduction(input: BrickProductionInput & { stor
       throw new ValidationError('Les quantités ne peuvent pas être négatives');
     }
     if (brokenQuantity > producedQuantity) {
-      throw new ValidationError('Les briques cassées ne peuvent pas dépasser la quantité produite');
+      throw new ValidationError('Les pertes ne peuvent pas dépasser la quantité produite');
     }
     const startDate = cleanDate(input.startDate) ?? today();
     const endDate = cleanDate(input.endDate);
@@ -816,14 +942,15 @@ export async function createBrickProduction(input: BrickProductionInput & { stor
       .insert(brickProductions)
       .values({
         storeId: input.storeId,
-        batchNumber: await nextDocumentNumber('brick', input.storeId),
+        branchId: branch.id,
+        batchNumber: await nextDocumentNumber('brick', input.storeId, { prefix: branch.batchPrefix }),
         brickTypeId,
         plannedQuantity,
         producedQuantity,
         brokenQuantity,
         startDate,
         endDate,
-        stage: 'molding',
+        stage: branch.flow[0].key,
         status: 'registered',
         team: input.team?.trim() || null,
         userId: input.userId ?? null,
@@ -831,7 +958,7 @@ export async function createBrickProduction(input: BrickProductionInput & { stor
       })
       .returning({ id: brickProductions.id });
     const created = await getBrickProductionRow(inserted[0].id);
-    if (!created) throw new NotFoundError('Lot créé mais introuvable');
+    if (!created) throw new NotFoundError('Production créée mais introuvable');
     return created;
   });
 }
@@ -841,14 +968,19 @@ export async function createBrickProduction(input: BrickProductionInput & { stor
  * plus (le journal de stock fait foi) : une perte constatée après coup passe
  * par `registerBroken()`.
  */
-export async function updateBrickProduction(id: number, patch: BrickProductionPatch, storeId: number): Promise<BrickProductionRow> {
+export async function updateBrickProduction(
+  id: number,
+  patch: BrickProductionPatch,
+  storeId: number,
+  branchId: number,
+): Promise<BrickProductionRow> {
   return withTransaction(async () => {
-    const production = await assertProductionEditable(id, storeId);
+    const production = await assertProductionEditable(id, storeId, branchId);
     const values: Record<string, unknown> = { updatedAt: new Date() };
     const touchesQuantity = patch.producedQuantity !== undefined || patch.brokenQuantity !== undefined;
     if (touchesQuantity && production.stored) {
       throw new ConflictError(
-        'Ce lot est déjà mis en stock : ses quantités ne sont plus modifiables. Enregistrez une perte si des briques se sont cassées.',
+        'Cette production est déjà en stock : ses quantités ne sont plus modifiables. Enregistrez une perte si des pièces sont abîmées.',
       );
     }
     for (const key of ['plannedQuantity', 'producedQuantity', 'brokenQuantity'] as const) {
@@ -859,7 +991,7 @@ export async function updateBrickProduction(id: number, patch: BrickProductionPa
     }
     const produced = num(values.producedQuantity ?? production.producedQuantity);
     const broken = num(values.brokenQuantity ?? production.brokenQuantity);
-    if (broken > produced) throw new ValidationError('Les briques cassées ne peuvent pas dépasser la quantité produite');
+    if (broken > produced) throw new ValidationError('Les pertes ne peuvent pas dépasser la quantité produite');
     if (patch.startDate !== undefined) values.startDate = cleanDate(patch.startDate) ?? production.startDate ?? today();
     if (patch.endDate !== undefined) values.endDate = cleanDate(patch.endDate);
     const start = String(values.startDate ?? production.startDate ?? '');
@@ -870,37 +1002,42 @@ export async function updateBrickProduction(id: number, patch: BrickProductionPa
 
     await db.update(brickProductions).set(values as any).where(eq(brickProductions.id, id));
     const result = await getBrickProductionRow(id);
-    if (!result) throw new NotFoundError('Lot de fabrication introuvable');
+    if (!result) throw new NotFoundError('Production introuvable');
     return result;
   });
 }
 
 /**
- * Avance le lot : `molding → drying → firing → stored`, sans retour. L'entrée
- * dans `stored` crédite le stock **une seule fois** des briques produites, puis
- * sort les cassées connues (stock net = produites − cassées), et termine le lot.
+ * Avance la production dans les étapes **de sa filiale** (briqueterie :
+ * `molding → drying → firing → stored`), sans retour. L'entrée dans `stored`
+ * crédite le stock **une seule fois** des pièces produites, puis sort les
+ * pertes connues (stock net = produites − pertes), et termine la production.
  */
 export async function advanceStage(
   id: number,
-  stage: BrickStage,
+  stage: string,
   storeId: number,
-  userId?: number | null,
+  userId: number | null | undefined,
+  branch: ProductionBranch,
 ): Promise<BrickProductionRow> {
-  if (!isBrickStage(stage)) throw new ValidationError('Étape de fabrication invalide');
+  const target = assertStageOfBranch(branch, stage);
   return withTransaction(async () => {
-    const production = await assertProductionEditable(id, storeId);
-    const currentIndex = BRICK_STAGES.indexOf(production.stage);
-    const targetIndex = BRICK_STAGES.indexOf(stage);
+    const production = await assertProductionEditable(id, storeId, branch.id);
+    const keys = branch.flow.map((s) => s.key);
+    // Une étape retirée de la filiale compte comme « avant la première ».
+    const currentIndex = keys.indexOf(production.stage);
+    const targetIndex = keys.indexOf(target);
     if (targetIndex <= currentIndex) {
+      const label = branch.flow[currentIndex]?.label ?? production.stage;
       throw new ValidationError(
-        `Le lot est déjà à l’étape « ${BRICK_STAGE_LABELS[production.stage]} » : une fabrication ne revient pas en arrière.`,
+        `La production est déjà à l’étape « ${label} » : une fabrication ne revient pas en arrière.`,
       );
     }
 
-    const values: Record<string, unknown> = { stage, updatedAt: new Date() };
-    if (stage === 'stored') {
+    const values: Record<string, unknown> = { stage: target, updatedAt: new Date() };
+    if (target === 'stored') {
       if (production.producedQuantity <= 0) {
-        throw new ValidationError('Indiquez la quantité produite avant de mettre le lot en stock.');
+        throw new ValidationError('Indiquez la quantité produite avant de mettre la production en stock.');
       }
       if (!(await finishedGoodsCredited(id))) {
         await addStockMovement(production.productId, 'entry', production.producedQuantity, {
@@ -915,7 +1052,7 @@ export async function advanceStage(
             storeId,
             referenceType: 'brick_production',
             referenceId: id,
-            motif: `briques cassées lot ${production.batchNumber}`,
+            motif: `${branch.lossLabel.toLocaleLowerCase('fr')} production ${production.batchNumber}`,
             userId: userId ?? null,
           });
         }
@@ -926,7 +1063,7 @@ export async function advanceStage(
     }
     await db.update(brickProductions).set(values as any).where(eq(brickProductions.id, id));
     const result = await getBrickProductionRow(id);
-    if (!result) throw new NotFoundError('Lot de fabrication introuvable');
+    if (!result) throw new NotFoundError('Production introuvable');
     return result;
   });
 }
@@ -944,9 +1081,10 @@ export async function addProductionWorker(
   productionId: number,
   input: { workerId?: number | null; workerName?: string | null; role?: string | null; days: number; dailyRate?: number | null },
   storeId: number,
+  branchId: number,
 ): Promise<BrickProductionWorkerRow> {
   return withTransaction(async () => {
-    await assertProductionEditable(productionId, storeId);
+    await assertProductionEditable(productionId, storeId, branchId);
     const days = num(input.days);
     if (days <= 0) throw new ValidationError('Le nombre de jours doit être strictement positif');
     let workerId: number | null = null;
@@ -988,11 +1126,16 @@ export async function addProductionWorker(
 }
 
 /** Retire une affectation (`lineId` = identifiant de la ligne d'affectation). */
-export async function removeProductionWorker(productionId: number, lineId: number, storeId: number): Promise<BrickProductionWorkerRow> {
+export async function removeProductionWorker(
+  productionId: number,
+  lineId: number,
+  storeId: number,
+  branchId: number,
+): Promise<BrickProductionWorkerRow> {
   return withTransaction(async () => {
-    await assertProductionEditable(productionId, storeId);
+    await assertProductionEditable(productionId, storeId, branchId);
     const line = (await listProductionWorkers(productionId)).find((w) => w.id === lineId);
-    if (!line) throw new NotFoundError('Affectation introuvable sur ce lot');
+    if (!line) throw new NotFoundError('Affectation introuvable sur cette production');
     await db.delete(brickProductionWorkers).where(eq(brickProductionWorkers.id, lineId));
     return line;
   });
@@ -1006,8 +1149,9 @@ export async function addProductionExpense(
   productionId: number,
   input: BrickProductionExpenseInput,
   storeId: number,
+  branchId: number,
 ): Promise<BrickProductionExpenseRow> {
-  await assertProductionEditable(productionId, storeId);
+  await assertProductionEditable(productionId, storeId, branchId);
   const expense = await createExpense({
     storeId,
     canSkipApproval: Boolean(input.canSkipApproval),
@@ -1030,7 +1174,7 @@ async function assertExpenseOfProduction(productionId: number, expenseId: number
   const expense = await getExpense(expenseId);
   if (!expense) throw new NotFoundError('Dépense introuvable');
   if (expense.referenceType !== PRODUCTION_EXPENSE_REFERENCE || expense.referenceId !== productionId) {
-    throw new ValidationError('Cette dépense n’est pas rattachée à ce lot de fabrication');
+    throw new ValidationError('Cette dépense n’est pas rattachée à cette production');
   }
   return expense;
 }
@@ -1039,9 +1183,9 @@ export async function updateProductionExpense(
   productionId: number,
   expenseId: number,
   patch: { category?: string; amount?: number; description?: string | null; paymentMethod?: string; beneficiary?: string | null; date?: string },
-  options: { userId?: number | null; storeId: number; canSkipApproval?: boolean },
+  options: { userId?: number | null; storeId: number; branchId: number; canSkipApproval?: boolean },
 ): Promise<BrickProductionExpenseRow> {
-  await assertProductionEditable(productionId, options.storeId);
+  await assertProductionEditable(productionId, options.storeId, options.branchId);
   await assertExpenseOfProduction(productionId, expenseId);
   await updateExpense(expenseId, patch, { userId: options.userId ?? null, storeId: options.storeId, canSkipApproval: options.canSkipApproval });
   const row = (await listProductionExpenses(productionId)).find((e) => e.id === expenseId);
@@ -1054,56 +1198,58 @@ export async function removeProductionExpense(
   productionId: number,
   expenseId: number,
   reason: string,
-  options: { userId?: number | null; storeId: number },
+  options: { userId?: number | null; storeId: number; branchId: number },
 ): Promise<BrickProductionRow> {
-  await assertProductionEditable(productionId, options.storeId);
+  await assertProductionEditable(productionId, options.storeId, options.branchId);
   await assertExpenseOfProduction(productionId, expenseId);
   const motif = (reason ?? '').trim();
   if (!motif) throw new ValidationError('Le motif de retrait de la dépense est obligatoire');
   await cancelExpense(expenseId, { reason: motif, userId: options.userId ?? null, storeId: options.storeId });
   const result = await getBrickProductionRow(productionId);
-  if (!result) throw new NotFoundError('Lot de fabrication introuvable');
+  if (!result) throw new NotFoundError('Production introuvable');
   return result;
 }
 
 /**
- * Enregistre des briques cassées. Lot déjà en stock : `exit` immédiat ; sinon
- * seule la quantité cassée augmente et sortira avec la mise en stock (un `exit`
- * avant toute entrée rendrait le stock négatif).
+ * Enregistre des pertes (briques cassées, vitres brisées, rebuts…). Production
+ * déjà en stock : `exit` immédiat ; sinon seule la quantité perdue augmente et
+ * sortira avec la mise en stock (un `exit` avant toute entrée rendrait le
+ * stock négatif).
  */
 export async function registerBroken(
   id: number,
   brokenQuantity: number,
   reason: string,
   storeId: number,
-  userId?: number | null,
+  userId: number | null | undefined,
+  branch: ProductionBranch,
 ): Promise<BrickProductionRow> {
   return withTransaction(async () => {
-    const production = await assertProductionEditable(id, storeId);
+    const production = await assertProductionEditable(id, storeId, branch.id);
     const additional = num(brokenQuantity);
-    if (additional <= 0) throw new ValidationError('La quantité cassée doit être strictement positive');
+    if (additional <= 0) throw new ValidationError('La quantité perdue doit être strictement positive');
     const motif = (reason ?? '').trim();
     if (!motif) throw new ValidationError('Le motif de la perte est obligatoire');
     const newBroken = roundMoney(production.brokenQuantity + additional);
     if (newBroken > production.producedQuantity) {
-      throw new ValidationError('Les briques cassées ne peuvent pas dépasser la quantité produite : mettez d’abord à jour la production.');
+      throw new ValidationError('Les pertes ne peuvent pas dépasser la quantité produite : mettez d’abord à jour la production.');
     }
     if (production.stored) {
       await addStockMovement(production.productId, 'exit', additional, {
         storeId,
         referenceType: 'brick_production',
         referenceId: id,
-        motif: `briques cassées lot ${production.batchNumber} : ${motif}`,
+        motif: `${branch.lossLabel.toLocaleLowerCase('fr')} production ${production.batchNumber} : ${motif}`,
         userId: userId ?? null,
       });
     }
-    const stamp = `Perte de ${additional} brique(s) le ${today()} — motif : ${motif}`;
+    const stamp = `${branch.lossLabel} : ${additional} le ${today()} — motif : ${motif}`;
     await db
       .update(brickProductions)
       .set({ brokenQuantity: newBroken, notes: production.notes ? `${production.notes}\n${stamp}` : stamp, updatedAt: new Date() })
       .where(eq(brickProductions.id, id));
     const result = await getBrickProductionRow(id);
-    if (!result) throw new NotFoundError('Lot de fabrication introuvable');
+    if (!result) throw new NotFoundError('Production introuvable');
     return result;
   });
 }
@@ -1118,11 +1264,12 @@ export async function cancelBrickProduction(
   id: number,
   reason: string,
   user: { id: number; storeId: number },
+  branchId: number,
 ): Promise<BrickProductionRow> {
   const motif = (reason ?? '').trim();
   if (!motif) throw new ValidationError('Le motif d’annulation est obligatoire');
   return withTransaction(async () => {
-    const production = await assertProductionEditable(id, user.storeId);
+    const production = await assertProductionEditable(id, user.storeId, branchId);
     const balance = await rawGet<{ net: number | null }>(
       `SELECT COALESCE(SUM(CASE WHEN type = 'entry' THEN quantity ELSE -quantity END), 0) AS net
          FROM stock_movements
@@ -1135,7 +1282,7 @@ export async function cancelBrickProduction(
         storeId: user.storeId,
         referenceType: 'brick_production',
         referenceId: id,
-        motif: `annulation lot ${production.batchNumber} : ${motif}`,
+        motif: `annulation production ${production.batchNumber} : ${motif}`,
         userId: user.id,
       });
     }
@@ -1144,7 +1291,7 @@ export async function cancelBrickProduction(
       .set({ status: 'cancelled', cancelReason: motif, cancelledAt: new Date(), cancelledBy: user.id, updatedAt: new Date() })
       .where(eq(brickProductions.id, id));
     const result = await getBrickProductionRow(id);
-    if (!result) throw new NotFoundError('Lot de fabrication introuvable');
+    if (!result) throw new NotFoundError('Production introuvable');
     return result;
   });
 }

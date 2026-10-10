@@ -350,15 +350,46 @@ const LINE_GRID =
 function NouvelleVenteForm() {
   const router = useRouter();
   /*
-   * Canal de vente (README §30) : `/ventes/nouvelle?canal=briqueterie` crée une
-   * vente de la briqueterie avec **toutes** les fonctions de ce formulaire ; seuls
-   * le canal et le catalogue proposé (briques du magasin) changent. La vente
-   * n'apparaît alors que dans `/briqueterie/ventes`.
+   * Vente d'une filiale de production (README §30, §31) :
+   * `/ventes/nouvelle?filiale=<id>` crée une vente de cette filiale avec
+   * **toutes** les fonctions de ce formulaire ; seuls le canal, le catalogue
+   * (modèles de la filiale dans le magasin) et, si la filiale ne travaille
+   * qu'avec des clients choisis, la liste des clients changent. La vente
+   * n'apparaît alors que dans les ventes de la filiale. L'ancien lien
+   * `?canal=briqueterie` ouvre la première filiale « briques ».
    */
   const searchParams = useSearchParams();
-  const isBrickChannel = searchParams.get('canal') === 'briqueterie';
+  const branchParam = Number(searchParams.get('filiale') ?? 0) || 0;
+  const isBrickChannel = branchParam > 0 || searchParams.get('canal') === 'briqueterie';
   const channel: 'general' | 'brick' = isBrickChannel ? 'brick' : 'general';
-  const listHref = isBrickChannel ? '/briqueterie/ventes' : '/ventes';
+  const [saleBranch, setSaleBranch] = useState<{ id: number; name: string; customerMode: string } | null>(null);
+  const [branchError, setBranchError] = useState<string | null>(null);
+  const listHref = isBrickChannel ? (saleBranch ? `/filiales/${saleBranch.id}/ventes` : '/filiales') : '/ventes';
+
+  useEffect(() => {
+    if (!isBrickChannel) return;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        let id = branchParam;
+        if (!id) {
+          const list = await fetch('/api/filiales', { cache: 'no-store', signal: controller.signal });
+          const payload = list.ok ? ((await list.json()) as { data?: { id: number; activity: string }[] }) : { data: [] };
+          id = (payload.data ?? []).find((b) => b.activity === 'bricks')?.id ?? payload.data?.[0]?.id ?? 0;
+        }
+        if (!id) throw new Error('Aucune filiale de production ne vous est ouverte.');
+        const response = await fetch(`/api/filiales/${id}`, { cache: 'no-store', signal: controller.signal });
+        if (!response.ok) throw new Error(await readApiError(response, 'La filiale n’a pas pu être chargée.'));
+        const branch = (await response.json()) as { id: number; name: string; customerMode: string; status: string };
+        if (branch.status !== 'active') throw new Error(`La filiale « ${branch.name} » n’accepte plus de nouvelle vente.`);
+        setSaleBranch({ id: branch.id, name: branch.name, customerMode: branch.customerMode });
+      } catch (caught) {
+        if (caught instanceof Error && caught.name === 'AbortError') return;
+        setBranchError(caught instanceof Error ? caught.message : 'La filiale n’a pas pu être chargée.');
+      }
+    })();
+    return () => controller.abort();
+  }, [isBrickChannel, branchParam]);
 
   const { settings } = useSettings();
   const canCreate = usePermission('sales.create');
@@ -399,17 +430,27 @@ function NouvelleVenteForm() {
    * ------------------------------------------------------------------ */
 
   const load = useCallback(async (signal: AbortSignal) => {
+    // Vente de filiale : on attend la filiale (catalogue et clients en dépendent).
+    if (isBrickChannel && !saleBranch) {
+      if (branchError) {
+        setLoadError(branchError);
+        setIsLoading(false);
+      }
+      return;
+    }
     setIsLoading(true);
     setLoadError(null);
 
     try {
+      // Filiale « clients choisis » : seuls les clients partagés avec elle.
+      const sharedOnly = Boolean(saleBranch && saleBranch.customerMode === 'selected');
       const [productsResponse, customersResponse] = await Promise.all([
         fetch('/api/produits?limit=500', {
           cache: 'no-store',
           credentials: 'same-origin',
           signal,
         }),
-        fetch('/api/clients?limit=500', {
+        fetch(sharedOnly ? `/api/filiales/${saleBranch!.id}/clients?shared=true` : '/api/clients?limit=500', {
           cache: 'no-store',
           credentials: 'same-origin',
           signal,
@@ -436,10 +477,10 @@ function NouvelleVenteForm() {
         })
         .filter((product) => product.id > 0);
 
-      // Canal briqueterie : seuls les produits liés à un type de brique du magasin.
+      // Vente de filiale : seuls les produits liés à un modèle de la filiale dans le magasin.
       let sellable = catalogue;
-      if (isBrickChannel) {
-        const typesResponse = await fetch('/api/briqueterie/types', { cache: 'no-store', credentials: 'same-origin', signal }).catch(() => null);
+      if (isBrickChannel && saleBranch) {
+        const typesResponse = await fetch(`/api/filiales/${saleBranch.id}/modeles`, { cache: 'no-store', credentials: 'same-origin', signal }).catch(() => null);
         const typesPayload = typesResponse && typesResponse.ok ? ((await typesResponse.json()) as { data?: { productId?: number }[] }) : { data: [] };
         const ids = new Set((typesPayload.data ?? []).map((type) => Number(type.productId ?? 0)).filter((id) => id > 0));
         sellable = catalogue.filter((product) => ids.has(product.id));
@@ -453,7 +494,8 @@ function NouvelleVenteForm() {
             .map((raw) => {
               const row = (raw ?? {}) as Record<string, unknown>;
               return {
-                id: Number(row.id ?? 0),
+                // `customerId` : forme de la liste des clients partagés d'une filiale.
+                id: Number(row.customerId ?? row.id ?? 0),
                 name: String(row.name ?? ''),
                 phone: (row.phone ?? null) as string | null,
                 creditLimit: Number(row.creditLimit ?? row.credit_limit ?? 0) || 0,
@@ -470,7 +512,7 @@ function NouvelleVenteForm() {
     } finally {
       if (!signal.aborted) setIsLoading(false);
     }
-  }, [isBrickChannel]);
+  }, [isBrickChannel, saleBranch, branchError]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -806,6 +848,7 @@ function NouvelleVenteForm() {
           notes: notes.trim() || null,
           status,
           channel,
+          productionBranchId: saleBranch?.id ?? null,
           lines: buildPayloadLines(),
         }),
       });
@@ -861,10 +904,10 @@ function NouvelleVenteForm() {
             <div className="flex items-center gap-2 text-xs text-base-content/60">
               <BackButton withMargin={false} />
               <span className="flex items-center gap-1.5">
-                <span>{isBrickChannel ? 'Briqueterie' : 'Commercial'}</span>
+                <span>{isBrickChannel ? (saleBranch?.name ?? 'Filiale') : 'Commercial'}</span>
                 <span aria-hidden>›</span>
                 <Link href={listHref} className="font-medium hover:underline">
-                  {isBrickChannel ? 'Ventes de briques' : 'Ventes'}
+                  {isBrickChannel ? 'Ventes de la filiale' : 'Ventes'}
                 </Link>
               </span>
             </div>

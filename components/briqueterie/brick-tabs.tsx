@@ -4,16 +4,19 @@ import { useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { usePermission } from '@/components/role-gate';
+import { useBranch } from '@/components/filiales/branch-context';
 import { StoreScopeSelect, scopeShowsStore, useStoreScope, type StoreScopeValue } from '@/components/store-scope';
+import { branchColorClasses } from '@/lib/branches-shared';
 
 /**
- * Portée de magasins **commune aux écrans de la briqueterie** (README §30) :
- * une seule préférence (`pd-scope:briqueterie`), affichée dans la barre
+ * Portée de magasins **commune aux écrans d'une filiale** (README §30, §31) :
+ * une préférence par filiale (`pd-scope:filiale-<id>`), affichée dans la barre
  * d'onglets. `withStore(url)` ajoute `store=` aux lectures ; une écriture va
  * toujours dans le magasin actif.
  */
 export function useBrickScope() {
-  const { scope, setScope, param } = useStoreScope('briqueterie');
+  const { branch } = useBranch();
+  const { scope, setScope, param } = useStoreScope(`filiale-${branch.id}`);
   const withStore = useCallback(
     (url: string) => (param ? `${url}${url.includes('?') ? '&' : '?'}store=${encodeURIComponent(param)}` : url),
     [param],
@@ -22,60 +25,33 @@ export function useBrickScope() {
 }
 
 /**
- * Sous-navigation du module **Briqueterie**.
+ * Sous-navigation de l'espace d'une **filiale de production**.
  *
- * Pourquoi une barre d'onglets plutôt que six entrées de plus dans le menu
- * latéral : le menu compte déjà 19 modules (§5.4) et la briqueterie est *un*
- * module métier. Ses écrans sont donc regroupés ici, sous une seule entrée
- * « Briqueterie », ce qui évite d'allonger un menu déjà long sur mobile.
+ * Chaque filiale a **une** entrée dans le menu latéral (son nom : « Briqueterie »,
+ * « Vitrerie »…) ; ses écrans sont des onglets, ce qui évite d'allonger un menu
+ * déjà long sur mobile.
  *
  * Chaque onglet porte la **même permission que sa page** : un onglet visible
- * mais inaccessible serait un faux espoir (le serveur reste de toute façon seul
- * juge — masquer n'est pas protéger).
+ * mais inaccessible serait un faux espoir (le serveur reste seul juge —
+ * masquer n'est pas protéger).
  */
 
 type Tab = {
-  href: string;
+  path: string;
   label: string;
-  /** Préfixe reconnu comme « actif » (permet `/briqueterie/commandes/12`). */
-  match: string;
-  /** `null` = aucune permission particulière au-delà de `brick.view`. */
-  action: 'brick.view' | 'sales.view' | 'reports';
+  action: 'brick.view' | 'sales.view' | 'customers.view' | 'reports';
 };
 
 const TABS: Tab[] = [
-  { href: '/briqueterie', label: 'Tableau de bord', match: '/briqueterie', action: 'brick.view' },
-  {
-    href: '/briqueterie/productions',
-    label: 'Productions',
-    match: '/briqueterie/productions',
-    action: 'brick.view',
-  },
-  {
-    href: '/briqueterie/stock',
-    label: 'Stock',
-    match: '/briqueterie/stock',
-    action: 'brick.view',
-  },
-  {
-    href: '/briqueterie/commandes',
-    label: 'Commandes',
-    match: '/briqueterie/commandes',
-    action: 'brick.view',
-  },
-  {
-    href: '/briqueterie/ventes',
-    label: 'Ventes',
-    match: '/briqueterie/ventes',
-    action: 'sales.view',
-  },
-  {
-    href: '/briqueterie/rapports',
-    label: 'Rapports',
-    match: '/briqueterie/rapports',
-    // Rapport complet = rentabilité comprise : rapports et soldes requis.
-    action: 'reports',
-  },
+  { path: '', label: 'Tableau de bord', action: 'brick.view' },
+  { path: '/modeles', label: 'Modèles', action: 'brick.view' },
+  { path: '/productions', label: 'Productions', action: 'brick.view' },
+  { path: '/stock', label: 'Stock', action: 'brick.view' },
+  { path: '/commandes', label: 'Commandes', action: 'brick.view' },
+  { path: '/ventes', label: 'Ventes', action: 'sales.view' },
+  { path: '/clients', label: 'Clients', action: 'customers.view' },
+  // Rapport complet = rentabilité comprise : rapports et soldes requis.
+  { path: '/rapports', label: 'Rapports', action: 'reports' },
 ];
 
 export function BrickTabs({
@@ -86,49 +62,74 @@ export function BrickTabs({
   onScopeChange?: (value: StoreScopeValue) => void;
 } = {}) {
   const pathname = usePathname() ?? '';
+  const { branch, href, writable, canLevel } = useBranch();
   const canViewSales = usePermission('sales.view');
+  const canCreateSales = usePermission('sales.create');
+  const canViewCustomers = usePermission('customers.view');
   const canViewAllReports = usePermission('reports.viewAll');
   const canViewBalances = usePermission('balances.view');
   const canViewReports = canViewAllReports && canViewBalances;
+  const color = branchColorClasses(branch.color);
 
   const visible = TABS.filter((tab) => {
     if (tab.action === 'sales.view') return canViewSales;
+    if (tab.action === 'customers.view') return canViewCustomers;
     if (tab.action === 'reports') return canViewReports;
     return true;
   });
 
   /** « Actif » = le préfixe le plus long qui corresponde (sinon le tableau de bord l'emporte partout). */
-  const activeHref = visible
-    .filter((tab) => pathname === tab.match || pathname.startsWith(`${tab.match}/`))
-    .sort((a, b) => b.match.length - a.match.length)[0]?.href;
+  const activePath = visible
+    .map((tab) => ({ tab, full: href(tab.path) }))
+    .filter(({ full }) => pathname === full || pathname.startsWith(`${full}/`))
+    .sort((a, b) => b.full.length - a.full.length)[0]?.tab.path;
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-    <nav aria-label="Navigation de la briqueterie" className="-mb-px min-w-0 overflow-x-auto">
-      <ul className="flex min-w-max items-center gap-1 border-b border-base-200">
-        {visible.map((tab) => {
-          const isActive = tab.href === activeHref;
-          return (
-            <li key={tab.href}>
-              <Link
-                href={tab.href}
-                aria-current={isActive ? 'page' : undefined}
-                className={`inline-flex min-h-11 items-center whitespace-nowrap border-b-2 px-3 text-sm font-medium transition-colors ${
-                  isActive
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-base-content/60 hover:border-base-300 hover:text-base-content'
-                }`}
-              >
-                {tab.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
-    {scope !== undefined && onScopeChange && (
-      <StoreScopeSelect value={scope} onChange={onScopeChange} className="min-h-11 w-full sm:w-56" />
-    )}
+    <div className="flex flex-col gap-2">
+      {!writable && (
+        <div role="status" className="alert alert-warning py-2 text-sm">
+          La filiale « {branch.name} » est {branch.status === 'archived' ? 'archivée' : 'suspendue'} : son historique se consulte, mais
+          aucune nouvelle opération n’est acceptée.
+        </div>
+      )}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <nav aria-label={`Navigation de la filiale ${branch.name}`} className="-mb-px min-w-0 overflow-x-auto">
+          <ul className="flex min-w-max items-center gap-1 border-b border-base-200">
+            {visible.map((tab) => {
+              const isActive = tab.path === activePath;
+              return (
+                <li key={tab.path || 'dashboard'}>
+                  <Link
+                    href={href(tab.path)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`inline-flex min-h-11 items-center whitespace-nowrap rounded-t-lg border-b-2 px-3 text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'border-primary bg-primary/5 text-primary'
+                        : 'border-transparent text-base-content/70 hover:border-base-300 hover:bg-base-200/60 hover:text-base-content'
+                    }`}
+                  >
+                    {tab.label}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <span className={`hidden items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold lg:inline-flex ${color.soft}`}>
+            <span aria-hidden="true" className={`h-2 w-2 rounded-full ${color.dot}`} />
+            {branch.name}
+          </span>
+          {canCreateSales && writable && canLevel('edit') && (
+            <Link href={`/ventes/nouvelle?filiale=${branch.id}`} className="btn btn-primary btn-sm min-h-11">
+              Nouvelle vente
+            </Link>
+          )}
+          {scope !== undefined && onScopeChange && (
+            <StoreScopeSelect value={scope} onChange={onScopeChange} className="min-h-11 w-full sm:w-56" />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

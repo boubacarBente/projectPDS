@@ -14,9 +14,17 @@
  *  - **Dépenses de production** : `expenses` avec
  *    `reference_type = 'brick_production'` — rattachées à un lot, elles entrent
  *    dans le **coût de production**.
- *  - **Dépenses générales** : toutes les autres — elles sortent du **résultat
- *    estimé**, jamais du coût de revient d'une brique (sinon un loyer
- *    augmenterait le prix de revient d'un lot qui n'y est pour rien).
+ *  - **Dépenses générales** : toutes les autres — jamais dans le coût de
+ *    revient d'une brique (sinon un loyer augmenterait le prix de revient d'un
+ *    lot qui n'y est pour rien).
+ *
+ * ⚠️ Correction du 9 octobre 2026 (filiales, README §31.5) : le « résultat
+ * estimé » retranchait **toutes** les dépenses générales du magasin. Avec
+ * plusieurs filiales dans un magasin, chacune retranchait le même loyer : la
+ * somme des résultats des filiales devenait fausse. Les dépenses générales
+ * restent **affichées** (information), mais le résultat d'une filiale est sa
+ * marge sur coût de production. Le résultat de l'entreprise reste celui de
+ * `lib/profit.ts` (tableau de bord, `/soldes`).
  *
  * ## Périmètre des ventes
  *
@@ -31,6 +39,7 @@ import { roundMoney, startOfMonth, startOfWeek, today } from '@/lib/format';
 import { PRODUCTION_DATE, PRODUCTION_EXPENSE_REFERENCE, TOTAL_COST_SQL } from '@/lib/brick';
 import { BRICK_ORDER_STATUSES, type BrickOrderStatus } from '@/lib/brick-orders';
 import { scopeSql, type StoreScope } from '@/lib/stores';
+import { branchSql } from '@/lib/branches';
 
 /*
  * v2 (README §30) : toutes les lectures portent sur une **portée de magasins** ;
@@ -114,6 +123,12 @@ export type BrickDashboard = {
     outCount: number;
   };
   orders: Record<BrickOrderStatus, number>;
+  /** Commandes facturées (« Facturée » = commande qui porte sa facture). */
+  invoicedOrders: number;
+  /** Commandes dont la date promise est passée, ni livrées ni annulées. */
+  lateOrders: number;
+  /** Productions des 90 derniers jours dont le coût unitaire dépasse le prix de vente. */
+  deficitProductions: { batchNumber: string; modelName: string; unitCost: number; salePrice: number }[];
   /** Production du mois par type de brique — alimente le tableau « par produit ». */
   productionByType: {
     brickTypeId: number;
@@ -171,7 +186,7 @@ async function sumBetween(
  * (§12). Une seule source, donc aucun risque d'écart entre le stock affiché ici
  * et celui de `/stocks`.
  */
-export async function listBrickStock(scope: StoreScope): Promise<BrickStockLine[]> {
+export async function listBrickStock(scope: StoreScope, branchIds: number[]): Promise<BrickStockLine[]> {
   const rows = await rawAll<{
     brick_type_id: number;
     brick_type_name: string;
@@ -192,7 +207,9 @@ export async function listBrickStock(scope: StoreScope): Promise<BrickStockLine[
     `SELECT bt.id AS brick_type_id, bt.name AS brick_type_name, bt.shape, bt.dimensions,
             p.id AS product_id, p.name AS product_name, p.unit, p.sale_price, p.purchase_price,
             COALESCE((SELECT ps.quantity FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = bt.store_id), 0) AS stock,
-            COALESCE((SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = bt.store_id), p.stock_min) AS stock_min,
+            COALESCE(bt.alert_threshold,
+                     (SELECT ps.stock_min FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = bt.store_id),
+                     p.stock_min) AS stock_min,
             p.is_active, s.name AS store_name, bt.store_id,
             (SELECT CASE WHEN SUM(bp.produced_quantity - bp.broken_quantity) > 0
                          THEN SUM(${TOTAL_COST_SQL.replace(/p\.id/g, 'bp.id')}) / SUM(bp.produced_quantity - bp.broken_quantity)
@@ -202,7 +219,7 @@ export async function listBrickStock(scope: StoreScope): Promise<BrickStockLine[
      FROM brick_types bt
      INNER JOIN products p ON p.id = bt.product_id
      LEFT JOIN stores s ON s.id = bt.store_id
-     WHERE ${scopeSql('bt.store_id', scope)}
+     WHERE ${scopeSql('bt.store_id', scope)} AND ${branchSql('bt.branch_id', branchIds)}
      ORDER BY bt.name COLLATE NOCASE`,
   );
 
@@ -239,10 +256,12 @@ export async function listBrickStock(scope: StoreScope): Promise<BrickStockLine[
  * Tableau de bord
  * ------------------------------------------------------------------ */
 
-export async function getBrickDashboard(scope: StoreScope, reference = today()): Promise<BrickDashboard> {
-  const PS = scopeSql('p.store_id', scope);
-  const VS = scopeSql('store_id', scope);
-  const VVS = scopeSql('v.store_id', scope);
+export async function getBrickDashboard(scope: StoreScope, branchIds: number[], reference = today()): Promise<BrickDashboard> {
+  // Portée = magasins **et** filiales : productions, ventes (`production_branch_id`) et commandes.
+  const PS = `${scopeSql('p.store_id', scope)} AND ${branchSql('p.branch_id', branchIds)}`;
+  const VS = `${scopeSql('store_id', scope)} AND ${branchSql('production_branch_id', branchIds)}`;
+  const OS = `${scopeSql('store_id', scope)} AND ${branchSql('branch_id', branchIds)}`;
+  const VVS = `${scopeSql('v.store_id', scope)} AND ${branchSql('v.production_branch_id', branchIds)}`;
   const ES = scopeSql('e.store_id', scope);
   const EXS = scopeSql('store_id', scope);
   const PAYS = scopeSql('p.store_id', scope);
@@ -320,7 +339,7 @@ export async function getBrickDashboard(scope: StoreScope, reference = today()):
     [month.from, month.to, PRODUCTION_EXPENSE_REFERENCE],
   );
 
-  const stockLines = await listBrickStock(scope);
+  const stockLines = await listBrickStock(scope, branchIds);
   const stock = {
     lines: stockLines,
     totalQuantity: roundMoney(stockLines.reduce((sum, line) => sum + line.stock, 0)),
@@ -331,7 +350,29 @@ export async function getBrickDashboard(scope: StoreScope, reference = today()):
   };
 
   const orderRows = await rawAll<{ status: string; count: number }>(
-    `SELECT status, COUNT(*) AS count FROM brick_orders WHERE ${VS} GROUP BY status`,
+    `SELECT status, COUNT(*) AS count FROM brick_orders WHERE ${OS} GROUP BY status`,
+  );
+  const invoicedOrders = await rawGet<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM brick_orders WHERE ${OS} AND sales_invoice_id IS NOT NULL AND status <> 'cancelled'`,
+  );
+  // Commande en retard : date promise passée, ni livrée ni annulée.
+  const lateOrders = await rawGet<{ c: number }>(
+    `SELECT COUNT(*) AS c FROM brick_orders
+      WHERE ${OS} AND status NOT IN ('delivered', 'cancelled') AND promised_date IS NOT NULL AND promised_date < ?`,
+    [reference],
+  );
+  // Production déficitaire : coût unitaire réel au-dessus du prix de vente du produit.
+  const deficitRows = await rawAll<{ batch_number: string; name: string; unit_cost: number; sale_price: number }>(
+    `SELECT p.batch_number, bt.name, pr.sale_price,
+            (${TOTAL_COST_SQL}) / (p.produced_quantity - p.broken_quantity) AS unit_cost
+       FROM brick_productions p
+       INNER JOIN brick_types bt ON bt.id = p.brick_type_id
+       INNER JOIN products pr ON pr.id = bt.product_id
+      WHERE p.status <> 'cancelled' AND ${PS} AND p.produced_quantity - p.broken_quantity > 0
+        AND ${PRODUCTION_DATE} >= ? AND ${PRODUCTION_DATE} <= ?
+        AND (${TOTAL_COST_SQL}) / (p.produced_quantity - p.broken_quantity) > pr.sale_price
+      ORDER BY p.id DESC LIMIT 10`,
+    [shiftDays(reference, -89), reference],
   );
   const orders = Object.fromEntries(
     BRICK_ORDER_STATUSES.map((status) => [status, 0]),
@@ -421,6 +462,7 @@ export async function getBrickDashboard(scope: StoreScope, reference = today()):
   const revenue = salesMonth;
   const productionCost = monthCost;
   const grossMargin = roundMoney(revenue - productionCost);
+  // Information seulement : non imputées à la filiale (voir l'en-tête du module).
   const generalExpenses = roundMoney(Number(generalExpensesMonth?.total ?? 0));
 
   return {
@@ -453,11 +495,19 @@ export async function getBrickDashboard(scope: StoreScope, reference = today()):
       productionCost,
       grossMargin,
       generalExpenses,
-      estimatedResult: roundMoney(grossMargin - generalExpenses),
+      estimatedResult: grossMargin,
       marginRate: revenue > 0 ? Math.round((grossMargin / revenue) * 10000) / 100 : 0,
     },
     stock,
     orders,
+    invoicedOrders: Number(invoicedOrders?.c ?? 0),
+    lateOrders: Number(lateOrders?.c ?? 0),
+    deficitProductions: deficitRows.map((row) => ({
+      batchNumber: row.batch_number,
+      modelName: row.name,
+      unitCost: roundMoney(Number(row.unit_cost ?? 0)),
+      salePrice: roundMoney(Number(row.sale_price ?? 0)),
+    })),
     productionByType: productionByTypeRows.map((row) => {
       const produced = Number(row.produced ?? 0);
       const broken = Number(row.broken ?? 0);
@@ -594,10 +644,11 @@ export type BrickReports = {
   };
 };
 
-export async function getBrickReports(from: string, to: string, scope: StoreScope): Promise<BrickReports> {
-  const PS = scopeSql('p.store_id', scope);
-  const VS = scopeSql('store_id', scope);
-  const VVS = scopeSql('v.store_id', scope);
+export async function getBrickReports(from: string, to: string, scope: StoreScope, branchIds: number[]): Promise<BrickReports> {
+  const PS = `${scopeSql('p.store_id', scope)} AND ${branchSql('p.branch_id', branchIds)}`;
+  const VS = `${scopeSql('store_id', scope)} AND ${branchSql('production_branch_id', branchIds)}`;
+  const OS = `${scopeSql('store_id', scope)} AND ${branchSql('branch_id', branchIds)}`;
+  const VVS = `${scopeSql('v.store_id', scope)} AND ${branchSql('v.production_branch_id', branchIds)}`;
   const ES = scopeSql('e.store_id', scope);
   const EXS = scopeSql('store_id', scope);
   const PAYS = scopeSql('p.store_id', scope);
@@ -714,7 +765,7 @@ export async function getBrickReports(from: string, to: string, scope: StoreScop
         AND ((p.type = 'sale' AND p.reference_id IN (
                 SELECT id FROM sales_invoices WHERE channel = 'brick' AND ${VS}))
              OR (p.type = 'brick_order' AND p.reference_id IN (
-                SELECT id FROM brick_orders WHERE ${VS})))
+                SELECT id FROM brick_orders WHERE ${OS})))
       GROUP BY p.payment_method
       ORDER BY total DESC`,
     [from, to],
@@ -733,7 +784,7 @@ export async function getBrickReports(from: string, to: string, scope: StoreScop
     [from, to],
   );
 
-  const stock = await listBrickStock(scope);
+  const stock = await listBrickStock(scope, branchIds);
 
   const productionTotals = await rawGet<{ cost: number | null; produced: number | null; broken: number | null }>(
     `SELECT COALESCE(SUM(${TOTAL_COST_SQL}), 0) AS cost,
@@ -878,10 +929,111 @@ export async function getBrickReports(from: string, to: string, scope: StoreScop
       productionCost,
       grossMargin: roundMoney(revenue - productionCost),
       generalExpenses,
-      estimatedResult: roundMoney(revenue - productionCost - generalExpenses),
+      // Dépenses générales non imputées à la filiale (en-tête du module).
+      estimatedResult: roundMoney(revenue - productionCost),
       marginRate: revenue > 0 ? Math.round(((revenue - productionCost) / revenue) * 10000) / 100 : 0,
       producedQuantity,
       unitCost: good > 0 ? Math.round((productionCost / good) * 100) / 100 : 0,
     },
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Vue consolidée de la direction (README §31.5)
+ * ------------------------------------------------------------------ */
+
+export type BranchOverviewRow = {
+  branchId: number;
+  revenue: number;
+  salesCount: number;
+  collected: number;
+  outstanding: number;
+  productionCost: number;
+  /** Marge sur coût de production (le résultat d'une filiale, sans dépenses générales). */
+  margin: number;
+  producedQuantity: number;
+  lossQuantity: number;
+  productionsCount: number;
+  openOrders: number;
+  stockSaleValue: number;
+  lowStockCount: number;
+};
+
+/**
+ * Une ligne par filiale sur la période : ventes, encaissé, reste à encaisser
+ * (toutes dates, un dû reste un dû), coût de production, marge, quantités,
+ * commandes en cours et stock valorisé au prix de vente.
+ */
+export async function getBranchesOverview(
+  scope: StoreScope,
+  branchIds: number[],
+  from: string,
+  to: string,
+): Promise<BranchOverviewRow[]> {
+  const ids = branchIds.filter((id) => Number.isInteger(id) && id > 0);
+  if (ids.length === 0) return [];
+  const sales = await rawAll<any>(
+    `SELECT production_branch_id AS branch_id, COUNT(*) AS n, COALESCE(SUM(total), 0) AS revenue,
+            COALESCE(SUM(amount_paid), 0) AS collected
+       FROM sales_invoices
+      WHERE status = 'active' AND channel = 'brick' AND ${scopeSql('store_id', scope)}
+        AND ${branchSql('production_branch_id', ids)} AND date >= ? AND date <= ?
+      GROUP BY production_branch_id`,
+    [from, to],
+  );
+  const outstanding = await rawAll<any>(
+    `SELECT production_branch_id AS branch_id, COALESCE(SUM(remaining_amount), 0) AS outstanding
+       FROM sales_invoices
+      WHERE status = 'active' AND channel = 'brick' AND ${scopeSql('store_id', scope)}
+        AND ${branchSql('production_branch_id', ids)}
+      GROUP BY production_branch_id`,
+  );
+  const productions = await rawAll<any>(
+    `SELECT p.branch_id, COUNT(*) AS n, COALESCE(SUM(${TOTAL_COST_SQL}), 0) AS cost,
+            COALESCE(SUM(p.produced_quantity), 0) AS produced, COALESCE(SUM(p.broken_quantity), 0) AS broken
+       FROM brick_productions p
+      WHERE p.status <> 'cancelled' AND ${scopeSql('p.store_id', scope)} AND ${branchSql('p.branch_id', ids)}
+        AND ${PRODUCTION_DATE} >= ? AND ${PRODUCTION_DATE} <= ?
+      GROUP BY p.branch_id`,
+    [from, to],
+  );
+  const orders = await rawAll<any>(
+    `SELECT branch_id, COUNT(*) AS n FROM brick_orders
+      WHERE ${scopeSql('store_id', scope)} AND ${branchSql('branch_id', ids)}
+        AND status NOT IN ('delivered', 'cancelled') AND sales_invoice_id IS NULL
+      GROUP BY branch_id`,
+  );
+  const stock = await rawAll<any>(
+    `SELECT bt.branch_id,
+            COALESCE(SUM(COALESCE(ps.quantity, 0) * p.sale_price), 0) AS sale_value,
+            SUM(CASE WHEN COALESCE(ps.quantity, 0) <= COALESCE(bt.alert_threshold, ps.stock_min, p.stock_min, 0)
+                      AND COALESCE(bt.alert_threshold, ps.stock_min, p.stock_min, 0) > 0 THEN 1 ELSE 0 END) AS low
+       FROM brick_types bt
+       INNER JOIN products p ON p.id = bt.product_id
+       LEFT JOIN product_stocks ps ON ps.product_id = bt.product_id AND ps.store_id = bt.store_id
+      WHERE bt.is_active = 1 AND ${scopeSql('bt.store_id', scope)} AND ${branchSql('bt.branch_id', ids)}
+      GROUP BY bt.branch_id`,
+  );
+  const pick = (rows: any[], id: number) => rows.find((r) => Number(r.branch_id) === id);
+  return ids.map((id) => {
+    const s = pick(sales, id);
+    const p = pick(productions, id);
+    const revenue = roundMoney(Number(s?.revenue ?? 0));
+    const productionCost = roundMoney(Number(p?.cost ?? 0));
+    return {
+      branchId: id,
+      revenue,
+      salesCount: Number(s?.n ?? 0),
+      collected: roundMoney(Number(s?.collected ?? 0)),
+      outstanding: roundMoney(Number(pick(outstanding, id)?.outstanding ?? 0)),
+      productionCost,
+      margin: roundMoney(revenue - productionCost),
+      producedQuantity: roundMoney(Number(p?.produced ?? 0)),
+      lossQuantity: roundMoney(Number(p?.broken ?? 0)),
+      productionsCount: Number(p?.n ?? 0),
+      openOrders: Number(pick(orders, id)?.n ?? 0),
+      stockSaleValue: roundMoney(Number(pick(stock, id)?.sale_value ?? 0)),
+      lowStockCount: Number(pick(stock, id)?.low ?? 0),
+    };
+  });
 }

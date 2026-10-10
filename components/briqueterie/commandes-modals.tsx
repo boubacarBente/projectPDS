@@ -9,7 +9,7 @@
  * (donc `@libsql/client`, `fs`, `path`) : un import — même partiel — ferait
  * entrer la chaîne base de données dans le bundle navigateur et casserait le
  * build (CONVENTIONS §11 bis). Les types ci-dessous sont donc le **miroir
- * exact** du JSON renvoyé par `/api/briqueterie/commandes*`, et toute écriture
+ * exact** du JSON renvoyé par branchApiUrl(`/commandes*`), et toute écriture
  * passe par l'API.
  *
  * ## Ce qu'une commande fait — et ne fait pas
@@ -27,6 +27,7 @@
  * en chaîne (§8.3 règle 1).
  */
 
+import { branchApiUrl, useBranch } from '@/components/filiales/branch-context';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'react-toastify';
@@ -285,12 +286,12 @@ function normaliseList(payload: unknown): any[] {
 
 /** Types de briques actifs : ils portent le prix pré-rempli des lignes. */
 export async function fetchBrickTypes(signal?: AbortSignal): Promise<BrickTypeOption[]> {
-  const response = await fetch('/api/briqueterie/types?limit=200', {
+  const response = await fetch(branchApiUrl('/modeles?limit=200'), {
     cache: 'no-store',
     credentials: 'same-origin',
     signal,
   });
-  if (!response.ok) throw new Error(await readApiError(response, 'Types de briques indisponibles'));
+  if (!response.ok) throw new Error(await readApiError(response, 'Modèles indisponibles'));
 
   return normaliseList(await response.json()).map((row) => ({
     id: Number(row.id),
@@ -313,7 +314,7 @@ export async function fetchBrickTypes(signal?: AbortSignal): Promise<BrickTypeOp
  * l'interface ne prétend alors rien sur la disponibilité.
  */
 export async function fetchBrickTypeStocks(signal?: AbortSignal): Promise<Map<number, number>> {
-  const response = await fetch('/api/briqueterie/stock', {
+  const response = await fetch(branchApiUrl('/stock'), {
     cache: 'no-store',
     credentials: 'same-origin',
     signal,
@@ -361,7 +362,7 @@ export async function fetchBrickOrderHistory(
     limit: '50',
   });
 
-  const response = await fetch(`/api/briqueterie/historique?${params.toString()}`, {
+  const response = await fetch(branchApiUrl(`/historique?${params.toString()}`), {
     cache: 'no-store',
     credentials: 'same-origin',
     signal,
@@ -509,6 +510,7 @@ export function BrickOrderFormModal({
   /** Remonte la liste des clients après une création depuis cette modale. */
   onCustomersChanged?: () => void;
 }) {
+  const B = useBranch();
   const isEdit = Boolean(order);
   const fieldId = (name: string) => `${idPrefix}-brick-order-${name}`;
 
@@ -637,7 +639,7 @@ export function BrickOrderFormModal({
       return;
     }
     if (lines.length === 0) {
-      setFormError('Ajoutez au moins une ligne de briques.');
+      setFormError('Ajoutez au moins une ligne de pièces.');
       return;
     }
 
@@ -645,9 +647,9 @@ export function BrickOrderFormModal({
     for (const line of lines) {
       const label = line.brickTypeId
         ? (typeById.get(line.brickTypeId)?.name ?? 'ligne')
-        : 'une ligne sans type de brique';
+        : 'une ligne sans modèle';
       if (!line.brickTypeId) {
-        setFormError(`Choisissez le type de brique de ${label === 'ligne' ? 'chaque ligne' : label}.`);
+        setFormError(`Choisissez le modèle de ${label === 'ligne' ? 'chaque ligne' : label}.`);
         return;
       }
       const quantity = toAmount(line.quantity);
@@ -693,7 +695,7 @@ export function BrickOrderFormModal({
       };
 
       const response = await fetch(
-        isEdit && order ? `/api/briqueterie/commandes/${order.order.id}` : '/api/briqueterie/commandes',
+        isEdit && order ? branchApiUrl(`/commandes/${order.order.id}`) : branchApiUrl('/commandes'),
         {
           method: isEdit ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -731,7 +733,7 @@ export function BrickOrderFormModal({
         onClose={() => {
           if (!isSubmitting) onClose();
         }}
-        title={isEdit ? 'Modifier la commande' : 'Nouvelle commande de briques'}
+        title={isEdit ? 'Modifier la commande' : 'Nouvelle commande de la filiale'}
         size="xl"
         fullScreenMobile
       >
@@ -846,10 +848,10 @@ export function BrickOrderFormModal({
             </FormField>
           </div>
 
-          {/* ── Lignes de briques ──────────────────────────────────── */}
+          {/* ── Lignes de pièces ──────────────────────────────────── */}
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold">Briques commandées</h3>
+              <h3 className="text-sm font-semibold">Pièces commandées</h3>
               <button
                 type="button"
                 className="btn btn-ghost min-h-11 border border-base-300"
@@ -862,11 +864,11 @@ export function BrickOrderFormModal({
 
             {brickTypes.length === 0 && !isOptionsLoading ? (
               <EmptyState
-                title="Aucun type de brique actif"
-                description="Créez d’abord un type de brique (il porte le produit, le stock et le prix de vente) depuis l’écran Briqueterie."
+                title="Aucun modèle actif"
+                description="Créez d’abord un modèle (il porte le produit, le stock et le prix de vente) depuis l’onglet Modèles de la filiale."
                 action={
-                  <Link href="/briqueterie" className="btn btn-primary min-h-11">
-                    Ouvrir la briqueterie
+                  <Link href={B.href('')} className="btn btn-primary min-h-11">
+                    Ouvrir la filiale
                   </Link>
                 }
               />
@@ -886,7 +888,7 @@ export function BrickOrderFormModal({
                             className="mb-1 block text-xs text-base-content/60"
                             htmlFor={`${fieldId('line-type')}-${line.key}`}
                           >
-                            Type de brique {index + 1}
+                            Modèle {index + 1}
                           </label>
                           {isOptionsLoading && brickTypes.length === 0 ? (
                             <div className="h-11 animate-pulse rounded-lg bg-base-300/60" />
@@ -906,8 +908,8 @@ export function BrickOrderFormModal({
                                 }))}
                               emptyLabel="Choisir un type…"
                               showEmptyLabel
-                              placeholder="Rechercher un type de brique…"
-                              ariaLabel={`Type de brique de la ligne ${index + 1}`}
+                              placeholder="Rechercher un modèle…"
+                              ariaLabel={`Modèle de la ligne ${index + 1}`}
                             />
                           )}
                           <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -1222,7 +1224,7 @@ export function BrickOrderPaymentModal({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`/api/briqueterie/commandes/${order.id}/paiements`, {
+      const response = await fetch(branchApiUrl(`/commandes/${order.id}/paiements`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -1503,7 +1505,7 @@ export function BrickOrderDeliveryModal({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`/api/briqueterie/commandes/${order.id}`, {
+      const response = await fetch(branchApiUrl(`/commandes/${order.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -1552,7 +1554,7 @@ export function BrickOrderDeliveryModal({
         {items.length === 0 ? (
           <EmptyState
             title="Aucune ligne à livrer"
-            description="Cette commande ne contient aucune ligne de briques."
+            description="Cette commande ne contient aucune ligne de pièces."
           />
         ) : (
           <ul className="divide-y divide-base-200 rounded-xl border border-base-200">

@@ -146,6 +146,23 @@ export const SYNCED_TABLES: SyncedTable[] = [
    * Briqueterie (README §30) : types, lots et commandes **du magasin**. Les
    * commandes passent après `sales_invoices` (facture née de la commande).
    */
+  /*
+   * Filiales de production (README §31) : la filiale et ses comptes autorisés
+   * sont centraux (créés au siège, comme les magasins) ; un client partagé
+   * avec une filiale suit la portée de son client (magasin).
+   */
+  { name: 'production_branches', scope: { kind: 'global' }, hqOnly: true, naturalKey: ['name'] },
+  {
+    name: 'production_branch_users',
+    scope: { kind: 'global' },
+    hqOnly: true,
+    naturalKey: ['branch_id', 'user_id'],
+  },
+  {
+    name: 'production_branch_customers',
+    scope: { kind: 'child', parentTable: 'customers', parentColumn: 'customer_id' },
+    naturalKey: ['branch_id', 'customer_id'],
+  },
   { name: 'brick_types', scope: { kind: 'store', column: 'store_id' } },
   { name: 'brick_productions', scope: { kind: 'store', column: 'store_id' } },
   {

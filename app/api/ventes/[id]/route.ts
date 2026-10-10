@@ -18,6 +18,7 @@ import {
   updateSalesInvoice,
   withoutSalesProfit,
 } from '@/lib/sales';
+import { assertSaleBranchVisible } from '@/lib/branches';
 import { getStoreLetterhead } from '@/lib/stores';
 
 type Params = { params: Promise<{ id: string }> };
@@ -39,6 +40,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
     const detail = await getSalesInvoice(parseId(id));
     if (!detail) throw new NotFoundError('Facture introuvable');
     assertStoreVisible(user, detail.invoice.storeId);
+    await assertSaleBranchVisible(user, detail.invoice);
 
     // En-tête du document : coordonnées du magasin émetteur.
     const store = await getStoreLetterhead(detail.invoice.storeId);
@@ -103,6 +105,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const detail = await getSalesInvoice(invoiceId);
     if (!detail) throw new NotFoundError('Facture introuvable');
     assertStoreVisible(user, detail.invoice.storeId);
+    await assertSaleBranchVisible(user, detail.invoice);
     await requireActiveStore(user);
 
     let reason = request.nextUrl.searchParams.get('reason') ?? '';

@@ -13,7 +13,8 @@ import { SyncIndicator } from '@/components/sync-indicator';
 import { StoreSwitcher } from '@/components/store-switcher';
 import { NavIcon } from '@/components/nav-icons';
 import { Tooltip } from '@/components/tooltip';
-import { NAVIGATION, STORAGE_KEYS, labelForPath, activeNavHref } from '@/lib/navigation';
+import { NAVIGATION, STORAGE_KEYS, labelForPath, activeNavHref, type NavItem } from '@/lib/navigation';
+import type { BranchNavLink } from '@/lib/branches-shared';
 // `ROLE_LABELS` vient de `lib/permissions.ts` (module **client-safe**) ; la
 // décision d'accès vient du contexte d'authentification, donc des permissions
 // **effectives** (matrice du rôle + surcharges par utilisateur).
@@ -42,6 +43,35 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { user, isLoading: isAuthLoading, logout, can } = useAuth();
   const isDark = theme === 'dark';
   const displayName = settings.companyName || 'Planète Déco';
+
+  /*
+   * Filiales de production (README §31.2) : une entrée **par filiale active et
+   * autorisée**, nommée par l'administrateur (« Briqueterie », « Meuble »…),
+   * insérée dans le groupe « Fabrication ». Relue à la connexion et après
+   * toute modification des filiales (événement `pd:branches-changed`).
+   */
+  const [branchLinks, setBranchLinks] = useState<BranchNavLink[]>([]);
+  const canViewBranches = Boolean(user) && can('brick.view');
+  useEffect(() => {
+    if (!canViewBranches) {
+      setBranchLinks([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () =>
+      fetch('/api/filiales/navigation', { cache: 'no-store' })
+        .then(async (response) => (response.ok ? ((await response.json()) as { data: BranchNavLink[] }).data ?? [] : []))
+        .then((links) => {
+          if (!cancelled) setBranchLinks(links);
+        })
+        .catch(() => undefined);
+    void load();
+    window.addEventListener('pd:branches-changed', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pd:branches-changed', load);
+    };
+  }, [canViewBranches, user?.id]);
   const branch = settings.companyBranch || 'Filiale Meubles';
 
   // État de repli : restauré localement (préférence d'affichage, non synchronisée).
@@ -90,7 +120,12 @@ export function AppShell({ children }: { children: ReactNode }) {
    * Une seule entrée active : la plus **précise**. Sans cela, /chantiers/devis
    * allumait à la fois « Chantiers » et « Devis » (préfixe commun).
    */
-  const activeHref = activeNavHref(pathname);
+  const branchHrefs = branchLinks.map((link) => link.href);
+  const activeHref = (() => {
+    // Le lien d'une filiale (/filiales/3) est plus précis que la page générale /filiales.
+    const own = branchHrefs.find((href) => pathname === href || pathname.startsWith(`${href}/`));
+    return own ?? activeNavHref(pathname);
+  })();
   const isActive = (href: string) => href === activeHref;
 
   // La page de connexion se rend sans coquille : aucune sidebar, aucun en-tête.
@@ -107,10 +142,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   /** Groupes visibles pour le rôle courant. Un groupe sans entrée disparaît. */
-  const visibleGroups = NAVIGATION.map((group) => ({
-    ...group,
-    items: group.items.filter((item) => can(item.action)),
-  })).filter((group) => group.items.length > 0);
+  const branchItems: NavItem[] = branchLinks.map((link) => ({
+    href: link.href,
+    label: link.name,
+    iconKey: 'bricks',
+    action: 'brick.view',
+  }));
+  const visibleGroups = NAVIGATION.map((group) => {
+    const items = group.items.filter((item) => can(item.action));
+    if (group.title !== 'Fabrication') return { ...group, items };
+    // Les filiales viennent avant la page générale « Filiales de production ».
+    const index = items.findIndex((item) => item.href === '/filiales');
+    return { ...group, items: index < 0 ? [...items, ...branchItems] : [...items.slice(0, index), ...branchItems, ...items.slice(index)] };
+  }).filter((group) => group.items.length > 0);
 
   const navLinkClass = (active: boolean) =>
     `group relative flex items-center rounded-xl transition-colors duration-200 ${

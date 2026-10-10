@@ -66,8 +66,25 @@ export function isSalesChannel(value: unknown): value is SalesChannel {
 
 export const SALES_CHANNEL_LABELS: Record<SalesChannel, string> = {
   general: 'Commerce général',
-  brick: 'Briqueterie',
+  brick: 'Filiale de production',
 };
+
+/**
+ * Filtre « ventes de filiales visibles » (README §31) : une vente du canal
+ * `brick` n'est lue que si sa filiale fait partie des filiales autorisées de
+ * la session (`listAccessibleBranches`). `undefined` = aucun filtre (appel
+ * interne) ; liste vide = aucune vente de filiale.
+ */
+function productionBranchSql(alias: string, branchIds: number[] | undefined, only?: number): string {
+  const col = `${alias}production_branch_id`;
+  const parts: string[] = [];
+  if (only) parts.push(`${col} = ${Number(only)}`);
+  if (branchIds) {
+    const ids = branchIds.filter((id) => Number.isInteger(id) && id > 0);
+    parts.push(`(${alias}channel <> 'brick' OR ${ids.length ? `${col} IN (${ids.join(',')})` : '1 = 0'})`);
+  }
+  return parts.length ? ` AND ${parts.join(' AND ')}` : '';
+}
 
 export type SalesInvoiceRow = {
   id: number;
@@ -92,6 +109,9 @@ export type SalesInvoiceRow = {
   paymentMethod: string;
   status: 'draft' | 'active' | 'cancelled';
   channel: SalesChannel;
+  /** Filiale d'une vente du canal `brick` (README §31). */
+  productionBranchId: number | null;
+  productionBranchName: string | null;
   cancelReason: string | null;
   notes: string | null;
   itemCount: number;
@@ -146,6 +166,8 @@ export type SalesInvoiceInput = {
   notes?: string | null;
   status?: 'draft' | 'active';
   channel?: SalesChannel;
+  /** Obligatoire sur le canal `brick` : filiale qui vend (README §31). */
+  productionBranchId?: number | null;
   lines: SalesLineInput[];
   userId?: number | null;
   /** Magasin actif de l'utilisateur (obligatoire pour écrire). */
@@ -204,7 +226,9 @@ const INVOICE_COLUMNS = `
   v.id, v.store_id, st.name AS store_name, v.invoice_number, v.customer_id, v.customer_name, v.user_id, v.date, v.due_date,
   v.sub_total, v.discount, v.total_ht, v.tax_rate, v.tax_amount, v.total,
   v.amount_paid, v.remaining_amount, v.payment_status, v.payment_method, v.status,
-  v.channel, v.cancel_reason, v.cancelled_by, v.cancelled_at, v.notes, v.created_at, v.sync_id,
+  v.channel, v.production_branch_id,
+  (SELECT pb.name FROM production_branches pb WHERE pb.id = v.production_branch_id) AS production_branch_name,
+  v.cancel_reason, v.cancelled_by, v.cancelled_at, v.notes, v.created_at, v.sync_id,
   u.name AS user_name,
   (SELECT COUNT(*) FROM sales_invoice_items i WHERE i.invoice_id = v.id) AS item_count,
   /*
@@ -277,6 +301,8 @@ function mapInvoiceRow(row: any): SalesInvoiceRow {
     paymentMethod: row.payment_method,
     status: row.status as SalesInvoiceRow['status'],
     channel: isSalesChannel(row.channel) ? row.channel : 'general',
+    productionBranchId: row.production_branch_id == null ? null : Number(row.production_branch_id),
+    productionBranchName: row.production_branch_name ?? null,
     cancelReason: row.cancel_reason ?? null,
     notes: row.notes ?? null,
     itemCount: Number(row.item_count ?? 0),
@@ -736,6 +762,10 @@ export async function listSalesInvoices(options: {
   scope: StoreScope;
   /** `general` par défaut : `/ventes` ne montre pas les ventes de briques. */
   channel?: SalesChannel | 'all';
+  /** Une seule filiale (espace de la filiale). */
+  productionBranchId?: number;
+  /** Filiales autorisées de la session (ventes du canal `brick`). */
+  productionBranchIds?: number[];
   page?: number;
   limit?: number;
 }): Promise<{
@@ -757,6 +787,8 @@ export async function listSalesInvoices(options: {
     where.push('v.channel = ?');
     args.push(channel);
   }
+  const branchFilter = productionBranchSql('v.', options.productionBranchIds, options.productionBranchId);
+  if (branchFilter) where.push(branchFilter.replace(/^ AND /, ''));
   if (options.search) {
     where.push('(v.invoice_number LIKE ? OR v.customer_name LIKE ?)');
     const like = `%${options.search}%`;
@@ -882,6 +914,7 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
     notes: body?.notes ?? null,
     status,
     channel: isSalesChannel(body?.channel) ? body.channel : 'general',
+    productionBranchId: toInt(body?.productionBranchId, 0) || null,
     lines: rawLines.map((line: any) => ({
       productId: toInt(line?.productId, 0),
       quantity: toNumber(line?.quantity, 0),
@@ -896,17 +929,21 @@ export function parseSalesInput(body: any): SalesInvoiceInput {
  * ------------------------------------------------------------------ */
 
 /**
- * Une vente du canal briqueterie ne vend que des briques : chaque ligne doit
- * être le produit d'un type de brique **actif de ce magasin**.
+ * Une vente d'une filiale ne vend que ses modèles : chaque ligne doit être le
+ * produit d'un modèle **actif de ce magasin et de cette filiale** (README §31).
  */
-async function assertBrickProducts(items: SalesItemDraft[], storeId: number): Promise<void> {
+async function assertBrickProducts(items: SalesItemDraft[], storeId: number, branchId: number): Promise<void> {
+  const branch = await rawGet<{ name: string }>('SELECT name FROM production_branches WHERE id = ?', [branchId]);
+  if (!branch) throw new ValidationError('Filiale de production introuvable pour cette vente.');
   for (const item of items) {
-    const brick = await rawGet<{ id: number }>(
-      'SELECT id FROM brick_types WHERE product_id = ? AND store_id = ? AND is_active = 1 LIMIT 1',
-      [item.productId, storeId],
+    const model = await rawGet<{ id: number }>(
+      'SELECT id FROM brick_types WHERE product_id = ? AND store_id = ? AND branch_id = ? AND is_active = 1 LIMIT 1',
+      [item.productId, storeId, branchId],
     );
-    if (!brick) {
-      throw new ValidationError(`« ${item.productName} » n’est pas une brique de ce magasin : vendez-le depuis les ventes du commerce.`);
+    if (!model) {
+      throw new ValidationError(
+        `« ${item.productName} » n’est pas un modèle de la filiale « ${branch.name} » dans ce magasin : vendez-le depuis sa filiale ou depuis les ventes du commerce.`,
+      );
     }
   }
 }
@@ -926,7 +963,13 @@ async function createSalesInvoiceInTx(input: SalesInvoiceInput): Promise<SalesIn
   const date = businessDate(input.date, 'date');
   const status = normalizeStatus(input.status, 'active');
   const channel: SalesChannel = isSalesChannel(input.channel) ? input.channel : 'general';
-  if (channel === 'brick') await assertBrickProducts(items, storeId);
+  const productionBranchId = channel === 'brick' ? Number(input.productionBranchId ?? 0) : 0;
+  if (channel === 'brick') {
+    if (!Number.isInteger(productionBranchId) || productionBranchId <= 0) {
+      throw new ValidationError('Une vente de filiale indique sa filiale de production.');
+    }
+    await assertBrickProducts(items, storeId, productionBranchId);
+  }
   const paymentMethod = String(input.paymentMethod ?? '').trim() || 'Espèces';
   const taxRate = input.taxRate === undefined ? Number(settings.defaultTaxRate ?? 0) : Number(input.taxRate);
 
@@ -978,6 +1021,7 @@ async function createSalesInvoiceInTx(input: SalesInvoiceInput): Promise<SalesIn
       paymentMethod,
       status,
       channel,
+      productionBranchId: productionBranchId || null,
       notes: input.notes?.trim() || null,
     })
     .returning({ id: salesInvoices.id, syncId: salesInvoices.syncId });
@@ -1422,14 +1466,15 @@ export async function cancelSalesInvoice(
 /** Statistiques de ventes sur une période nommée (`resolvePeriod` de `lib/dashboard.ts`). */
 export async function getSalesStats(
   period: PeriodKey = 'month',
-  options: { scope: StoreScope; channel?: SalesChannel | 'all' },
+  options: { scope: StoreScope; channel?: SalesChannel | 'all'; productionBranchId?: number; productionBranchIds?: number[] },
 ): Promise<SalesStats> {
   const key: PeriodKey = PERIOD_KEYS.includes(period) ? period : 'month';
   const bounds = resolvePeriod(key);
 
   // Périmètre : les magasins demandés et le canal (filtre identique à la liste).
   const channel = options.channel ?? 'general';
-  const channelSql = ` AND ${scopeSql('store_id', options.scope)}${channel === 'all' ? '' : ' AND channel = ?'}`;
+  const branchSqlPlain = productionBranchSql('', options.productionBranchIds, options.productionBranchId);
+  const channelSql = ` AND ${scopeSql('store_id', options.scope)}${channel === 'all' ? '' : ' AND channel = ?'}${branchSqlPlain}`;
   const channelArgs: string[] = channel === 'all' ? [] : [channel];
 
   const totals = await rawGet<any>(
@@ -1456,7 +1501,7 @@ export async function getSalesStats(
             SUM(i.amount)   AS amount
      FROM sales_invoice_items i
      JOIN sales_invoices v ON v.id = i.invoice_id
-     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', options.scope)}${channel === 'all' ? '' : ' AND v.channel = ?'}
+     WHERE v.status = 'active' AND v.date >= ? AND v.date <= ? AND ${scopeSql('v.store_id', options.scope)}${channel === 'all' ? '' : ' AND v.channel = ?'}${productionBranchSql('v.', options.productionBranchIds, options.productionBranchId)}
      GROUP BY i.product_name
      ORDER BY amount DESC
      LIMIT ?`,

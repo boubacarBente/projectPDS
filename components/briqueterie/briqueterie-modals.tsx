@@ -1,5 +1,6 @@
 'use client';
 
+import { branchApiUrl, useBranch } from '@/components/filiales/branch-context';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'react-toastify';
 import { Modal } from '@/components/modal';
@@ -37,7 +38,7 @@ import { formatNumber, formatPercent, formatQuantity, today } from '@/lib/format
  * `@/db` (donc `@libsql/client`, `fs`, `path`). Un import — même partiel —
  * ferait entrer la chaîne base de données dans le bundle navigateur
  * (CONVENTIONS §11 bis). Les formes ci-dessous décrivent exactement le JSON
- * renvoyé par `/api/briqueterie/*`.
+ * renvoyé par branchApiUrl(`/*`).
  *
  * Aucune écriture ne part d'ici autrement que par l'API : la page ne touche
  * jamais `products.stock`, tout passe par `lib/stock.ts` côté serveur.
@@ -55,11 +56,23 @@ export type BrickProductionStatus = 'registered' | 'finished' | 'cancelled';
 
 export type BrickTypeRow = {
   id: number;
+  storeId?: number;
+  storeName?: string | null;
   productId: number;
   name: string;
   shape: BrickShape;
   dimensions: string | null;
   description: string | null;
+  /** Modèle générique (README §31.3). */
+  category: string | null;
+  productionUnit: string | null;
+  length: number | null;
+  width: number | null;
+  height: number | null;
+  thickness: number | null;
+  /** Seuil effectif (modèle, sinon produit) et seuil propre au modèle. */
+  alertThreshold: number | null;
+  ownAlertThreshold: number | null;
   isActive: boolean;
   /** Produit lié : il porte le prix de vente **et** le stock des briques finies. */
   productName: string;
@@ -76,6 +89,7 @@ export type BrickProductionRow = {
   batchNumber: string;
   brickTypeId: number;
   brickTypeName: string;
+  category: string | null;
   shape: BrickShape;
   dimensions: string | null;
   productId: number;
@@ -86,7 +100,15 @@ export type BrickProductionRow = {
   brokenQuantity: number;
   startDate: string | null;
   endDate: string | null;
-  stage: BrickStage;
+  /** Clé d'étape de la filiale ; `stored` = en stock. */
+  stage: string;
+  /** Libellé, rang et suite de l'étape dans les étapes de la filiale (calculés par l'API). */
+  stageLabel: string;
+  stageIndex: number;
+  stageCount: number;
+  nextStage: { key: string; label: string } | null;
+  /** Libellé des pertes de la filiale (« Cassées », « Rebuts »…). */
+  lossLabel: string;
   status: BrickProductionStatus;
   /** Équipe ou responsable de production (texte libre). */
   team: string | null;
@@ -276,6 +298,36 @@ export function brickStageLabel(stage: string | null | undefined): string {
   return BRICK_STAGE_LABELS[stage as BrickStage] ?? stage;
 }
 
+/**
+ * Tonalité d'une étape **selon son rang** dans les étapes de la filiale : les
+ * étapes n'ont pas de nom fixe (moulage, découpe, assemblage…), seule la mise
+ * en stock est toujours la dernière. Le libellé accompagne toujours la couleur.
+ */
+export function stageTone(production: { stage: string; stageIndex?: number }): BadgeTone {
+  if (production.stage === 'stored') return 'success';
+  const tones: BadgeTone[] = ['neutral', 'info', 'warning'];
+  return tones[Math.min(tones.length - 1, Math.max(0, production.stageIndex ?? 0))];
+}
+
+/** Catégorie affichée d'un modèle : la catégorie libre, sinon la forme historique d'une brique. */
+export function modelCategoryLabel(row: { category?: string | null; shape?: string | null }): string {
+  return row.category || (row.shape ? brickShapeLabel(row.shape) : '—');
+}
+
+/** Dimensions chiffrées d'un modèle (L × l × h, épaisseur) ou texte libre historique. */
+export function modelDimensionsLabel(row: {
+  dimensions?: string | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
+  thickness?: number | null;
+}): string {
+  const parts = [row.length, row.width, row.height].filter((v): v is number => v != null && v > 0);
+  const main = parts.length > 0 ? `${parts.map((v) => formatNumber(v)).join(' × ')} cm` : '';
+  const thick = row.thickness != null && row.thickness > 0 ? `ép. ${formatNumber(row.thickness)} cm` : '';
+  return [main, thick].filter(Boolean).join(' · ') || row.dimensions || '';
+}
+
 export const BRICK_PRODUCTION_STATUS_LABELS: Record<BrickProductionStatus, string> = {
   registered: 'Enregistrée',
   finished: 'Terminée',
@@ -306,7 +358,7 @@ export function brickShapeLabel(shape: string | null | undefined): string {
 export const BRICK_STAGES = [
   { key: 'molding', label: 'Moulage' },
   { key: 'drying', label: 'Séchage au soleil' },
-  { key: 'firing', label: 'Cuisson au four' },
+  { key: 'firing', label: 'Étape' },
   { key: 'stored', label: 'Mise en stock' },
 ];
 
@@ -427,8 +479,8 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
   },
   {
     key: 'shape',
-    label: 'Forme',
-    render: (production) => <Badge tone="primary">{brickShapeLabel(production.shape)}</Badge>,
+    label: 'Catégorie',
+    render: (production) => <Badge tone="primary">{modelCategoryLabel(production)}</Badge>,
   },
   {
     key: 'dimensions',
@@ -441,9 +493,7 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
     label: 'Étape',
     render: (production) => (
       <div className="flex flex-col items-start gap-1">
-        <Badge tone={BRICK_STAGE_TONES[production.stage]}>
-          {brickStageLabel(production.stage)}
-        </Badge>
+        <Badge tone={stageTone(production)}>{production.stageLabel}</Badge>
         {production.stored && <span className="text-[11px] text-success">Stock crédité</span>}
       </div>
     ),
@@ -469,7 +519,7 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
   },
   {
     key: 'quantities',
-    label: 'Briques',
+    label: 'Quantités',
     render: (production) => (
       <div className="space-y-0.5">
         <div>
@@ -477,7 +527,7 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
           <QuantityText value={goodQuantityOf(production)} unit={production.productUnit} />
         </div>
         <div>
-          <span className="text-xs text-base-content/50">Cassées : </span>
+          <span className="text-xs text-base-content/50">{production.lossLabel} : </span>
           <QuantityText
             value={production.brokenQuantity}
             unit={production.productUnit}
@@ -495,7 +545,7 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
     render: (production) => (
       <div className="text-right">
         <MoneyText value={production.unitCost} bold />
-        <div className="text-[11px] text-base-content/50">par brique</div>
+        <div className="text-[11px] text-base-content/50">par {production.productUnit}</div>
       </div>
     ),
   },
@@ -511,14 +561,14 @@ export const brickProductionColumns: Column<BrickProductionRow>[] = [
 export const brickTypeColumns: Column<BrickTypeRow>[] = [
   {
     key: 'name',
-    label: 'Type de brique',
+    label: 'Modèle',
     primary: true,
     render: (type) => (
       <div className="min-w-0">
         <div className="truncate font-medium">{type.name}</div>
         <div className="text-xs text-base-content/50">
-          {brickShapeLabel(type.shape)}
-          {type.dimensions ? ` · ${type.dimensions}` : ''}
+          {modelCategoryLabel(type)}
+          {modelDimensionsLabel(type) ? ` · ${modelDimensionsLabel(type)}` : ''}
         </div>
       </div>
     ),
@@ -552,7 +602,7 @@ export const brickTypeColumns: Column<BrickTypeRow>[] = [
   },
   {
     key: 'productionsCount',
-    label: 'Lots',
+    label: 'Productions',
     hideOnMobile: true,
     render: (type) => <span className="tabular">{type.productionsCount}</span>,
   },
@@ -745,7 +795,7 @@ export function BrickProductionModal({
     if (isSubmitting) return;
 
     if (!selected) {
-      setFormError('Sélectionnez le type de brique à fabriquer.');
+      setFormError('Sélectionnez le modèle à fapiècer.');
       return;
     }
 
@@ -753,7 +803,7 @@ export function BrickProductionModal({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('/api/briqueterie/productions', {
+      const response = await fetch(branchApiUrl('/productions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -803,16 +853,16 @@ export function BrickProductionModal({
         <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
           Le lot naît à l’étape <strong>moulage</strong>. Les <strong>dépenses de fabrication</strong>{' '}
           (ciment, sable, carburant, main-d’œuvre…) et l’équipe s’ajoutent depuis sa fiche : chaque
-          dépense sort de la caisse, et les briques finies n’entrent en stock qu’à l’étape{' '}
+          dépense sort de la caisse, et les pièces finies n’entrent en stock qu’à l’étape{' '}
           <strong>mise en stock</strong> — une seule fois.
         </p>
 
-        <FormField label="Type de brique" htmlFor="brick-type" required>
+        <FormField label="Modèle" htmlFor="brick-type" required>
           {isOptionsLoading && brickTypes.length === 0 ? (
             <div className="h-11 animate-pulse rounded-lg bg-base-300/60" />
           ) : brickTypes.length === 0 ? (
             <p className="rounded-lg border border-base-200 bg-base-200/50 px-3 py-2 text-sm text-base-content/60">
-              Aucun type de brique actif. Créez d’abord un type dans « Types de briques ».
+              Aucun modèle actif. Créez d’abord un type dans « Modèles ».
             </p>
           ) : (
             <select
@@ -829,7 +879,7 @@ export function BrickProductionModal({
               {brickTypes.map((type) => (
                 <option key={type.id} value={type.id}>
                   {type.name}
-                  {type.dimensions ? ` — ${type.dimensions}` : ''} ({brickShapeLabel(type.shape)})
+                  {modelDimensionsLabel(type) ? ` — ${modelDimensionsLabel(type)}` : ''} ({modelCategoryLabel(type)})
                 </option>
               ))}
             </select>
@@ -839,7 +889,7 @@ export function BrickProductionModal({
         {selected && (
           <div className="grid gap-x-6 gap-y-1 rounded-xl border border-base-200 px-4 py-3 sm:grid-cols-2">
             <InfoRow label="Produit lié">{selected.productName}</InfoRow>
-            <InfoRow label="Stock de briques">
+            <InfoRow label="Stock de la filiale">
               <QuantityText value={selected.stock} unit={selected.unit} />
             </InfoRow>
           </div>
@@ -850,7 +900,7 @@ export function BrickProductionModal({
             label="Quantité prévue"
             htmlFor="brick-planned"
             required
-            hint="Objectif du lot, en nombre de briques."
+            hint="Objectif du lot, en nombre de pièces."
           >
             <input
               id="brick-planned"
@@ -877,7 +927,7 @@ export function BrickProductionModal({
         <FormField
           label="Équipe ou responsable de production"
           htmlFor="brick-team"
-          hint="Qui fabrique ce lot (ex. « Équipe A — Mamadou »)."
+          hint="Qui fapièce ce lot (ex. « Équipe A — Mamadou »)."
         >
           <input
             id="brick-team"
@@ -1003,7 +1053,7 @@ export function ProductionMaterialModal({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`/api/briqueterie/productions/${productionId}`, {
+      const response = await fetch(branchApiUrl(`/productions/${productionId}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -1252,7 +1302,7 @@ export function ProductionWorkerModal({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`/api/briqueterie/productions/${productionId}`, {
+      const response = await fetch(branchApiUrl(`/productions/${productionId}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -1477,7 +1527,7 @@ export function BrokenBricksModal({
     setBrokenQuantity('');
     // Motif pré-rempli au format demandé par le README §20, modifiable :
     // le journal de stock doit rester lisible sans ouvrir le lot.
-    setReason(production ? `briques cassées lot ${production.batchNumber}` : '');
+    setReason(production ? `pertes lot ${production.batchNumber}` : '');
     setFormError(null);
     setIsSubmitting(false);
   }, [isOpen, production]);
@@ -1498,7 +1548,7 @@ export function BrokenBricksModal({
     }
     if (tooMuch) {
       setFormError(
-        `Impossible : ${formatQuantity(parsed)} briques cassées alors qu’il ne reste que ${formatQuantity(remaining)} brique(s) non cassée(s) sur ce lot.`,
+        `Impossible : ${formatQuantity(parsed)} pertes alors qu’il ne reste que ${formatQuantity(remaining)} pièce(s) non cassée(s) sur ce lot.`,
       );
       return;
     }
@@ -1511,7 +1561,7 @@ export function BrokenBricksModal({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`/api/briqueterie/productions/${production.id}`, {
+      const response = await fetch(branchApiUrl(`/productions/${production.id}`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -1528,8 +1578,8 @@ export function BrokenBricksModal({
 
       toast.success(
         production.stored
-          ? `${formatQuantity(parsed)} brique(s) cassée(s) sorties du stock.`
-          : `${formatQuantity(parsed)} brique(s) cassée(s) enregistrées : elles ne seront pas mises en stock.`,
+          ? `${formatQuantity(parsed)} pièce(s) cassée(s) sorties du stock.`
+          : `${formatQuantity(parsed)} pièce(s) cassée(s) enregistrées : elles ne seront pas mises en stock.`,
       );
       onRegistered();
       onClose();
@@ -1548,7 +1598,7 @@ export function BrokenBricksModal({
       onClose={() => {
         if (!isSubmitting) onClose();
       }}
-      title={`Briques cassées — ${production?.batchNumber ?? ''}`}
+      title={`Pertes — ${production?.batchNumber ?? ''}`}
       size="md"
       fullScreenMobile
     >
@@ -1577,8 +1627,8 @@ export function BrokenBricksModal({
             </svg>
           </div>
           <p className="text-sm text-base-content/70">
-            Les briques cassées sont comptées dans <code>broken_quantity</code> <strong>et</strong>{' '}
-            sorties du stock par un mouvement « sortie » motivé. Aucune brique cassée n’est jamais
+            Les pertes sont comptées dans <code>broken_quantity</code> <strong>et</strong>{' '}
+            sorties du stock par un mouvement « sortie » motivé. Aucune pièce cassée n’est jamais
             vendable, et le total n’est jamais déduit deux fois.
           </p>
         </div>
@@ -1643,7 +1693,7 @@ export function BrokenBricksModal({
           {tooMuch ? (
             <span>
               <strong>Quantité impossible :</strong> il ne reste que{' '}
-              {formatQuantity(remaining, production?.productUnit)} brique(s) non cassée(s).
+              {formatQuantity(remaining, production?.productUnit)} pièce(s) non cassée(s).
             </span>
           ) : production?.stored ? (
             <span>
@@ -1652,7 +1702,7 @@ export function BrokenBricksModal({
             </span>
           ) : (
             <span>
-              Ce lot <strong>n’est pas encore en stock</strong> : les briques cassées ne seront pas
+              Ce lot <strong>n’est pas encore en stock</strong> : les pertes ne seront pas
               créditées à la mise en stock (le crédit porte sur « production − cassées »).
             </span>
           )}
@@ -1837,7 +1887,7 @@ export function ProductionExpenseModal({
 
     try {
       const response = await fetch(
-        `/api/briqueterie/productions/${productionId}`,
+        branchApiUrl(`/productions/${productionId}`),
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -2162,7 +2212,7 @@ export function CancelProductionDialog({
         <>
           Le lot <strong>{production?.batchNumber}</strong> sera marqué annulé. Il n’est{' '}
           <strong>jamais supprimé</strong> : il reste consultable. Le stock est <strong>réversé</strong>{' '}
-          — les briques finies déjà mises en stock ressortent, les matières premières consommées sont
+          — les pièces finies déjà mises en stock ressortent, les matières premières consommées sont
           rendues.
         </>
       }
@@ -2188,7 +2238,7 @@ export function CancelProductionDialog({
  * Modale — gestion des types de briques (liste + création + désactivation)
  * ------------------------------------------------------------------ */
 
-function BrickTypeFormModal({
+export function BrickTypeFormModal({
   isOpen,
   onClose,
   onSaved,
@@ -2205,7 +2255,10 @@ function BrickTypeFormModal({
 }) {
   const [productId, setProductId] = useState('');
   const [name, setName] = useState('');
-  const [shape, setShape] = useState<BrickShape>('solid');
+  const [category, setCategory] = useState('');
+  const [productionUnit, setProductionUnit] = useState('');
+  const [measures, setMeasures] = useState({ length: '', width: '', height: '', thickness: '' });
+  const [alertThreshold, setAlertThreshold] = useState('');
   const [dimensions, setDimensions] = useState('');
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -2215,7 +2268,16 @@ function BrickTypeFormModal({
     if (!isOpen) return;
     setProductId(brickType ? String(brickType.productId) : '');
     setName(brickType?.name ?? '');
-    setShape(brickType?.shape ?? 'solid');
+    setCategory(brickType ? modelCategoryLabel(brickType).replace(/^—$/, '') : '');
+    setProductionUnit(brickType?.productionUnit ?? '');
+    const text = (v: number | null | undefined) => (v == null ? '' : String(v));
+    setMeasures({
+      length: text(brickType?.length),
+      width: text(brickType?.width),
+      height: text(brickType?.height),
+      thickness: text(brickType?.thickness),
+    });
+    setAlertThreshold(text(brickType?.ownAlertThreshold));
     setDimensions(brickType?.dimensions ?? '');
     setDescription(brickType?.description ?? '');
     setFormError(null);
@@ -2230,7 +2292,7 @@ function BrickTypeFormModal({
       return;
     }
     if (!name.trim()) {
-      setFormError('Le nom du type de brique est obligatoire.');
+      setFormError('Le nom du modèle est obligatoire.');
       return;
     }
 
@@ -2239,7 +2301,7 @@ function BrickTypeFormModal({
 
     try {
       const response = await fetch(
-        brickType ? `/api/briqueterie/types/${brickType.id}` : '/api/briqueterie/types',
+        brickType ? branchApiUrl(`/modeles/${brickType.id}`) : branchApiUrl('/modeles'),
         {
           method: brickType ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2247,7 +2309,13 @@ function BrickTypeFormModal({
           body: JSON.stringify({
             productId: Number(productId),
             name: name.trim(),
-            shape,
+            category: category.trim() || null,
+            productionUnit: productionUnit.trim() || null,
+            length: measures.length === '' ? null : Number(measures.length),
+            width: measures.width === '' ? null : Number(measures.width),
+            height: measures.height === '' ? null : Number(measures.height),
+            thickness: measures.thickness === '' ? null : Number(measures.thickness),
+            alertThreshold: alertThreshold === '' ? null : Number(alertThreshold),
             dimensions: dimensions.trim() || null,
             description: description.trim() || null,
           }),
@@ -2255,15 +2323,15 @@ function BrickTypeFormModal({
       );
 
       if (!response.ok) {
-        throw new Error(await readApiError(response, 'Le type de brique n’a pas pu être enregistré.'));
+        throw new Error(await readApiError(response, 'Le modèle n’a pas pu être enregistré.'));
       }
 
-      toast.success(brickType ? 'Type de brique modifié.' : `Type « ${name.trim()} » créé.`);
+      toast.success(brickType ? 'Modèle modifié.' : `Modèle « ${name.trim()} » créé.`);
       onSaved();
       onClose();
     } catch (caught) {
       const message =
-        caught instanceof Error ? caught.message : 'Le type de brique n’a pas pu être enregistré.';
+        caught instanceof Error ? caught.message : 'Le modèle n’a pas pu être enregistré.';
       setFormError(message);
       toast.error(message);
     } finally {
@@ -2277,7 +2345,7 @@ function BrickTypeFormModal({
       onClose={() => {
         if (!isSubmitting) onClose();
       }}
-      title={brickType ? 'Modifier le type de brique' : 'Nouveau type de brique'}
+      title={brickType ? 'Modifier le modèle' : 'Nouveau modèle'}
       size="lg"
       fullScreenMobile
     >
@@ -2289,9 +2357,9 @@ function BrickTypeFormModal({
         }}
       >
         <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
-          Le <strong>produit lié</strong> porte le prix de vente et le stock des briques finies. Le
-          type ne fait que décrire la brique (forme, dimensions) : il ne duplique ni prix ni stock,
-          sinon les deux finiraient par diverger.
+          Le <strong>produit lié</strong> porte le prix de vente et le stock de ce que la filiale
+          fabrique. Le modèle ne fait que le décrire (catégorie, dimensions, unité de production) : il
+          ne duplique ni prix ni stock, sinon les deux finiraient par diverger.
         </p>
 
         <FormField label="Produit lié" htmlFor="brick-type-product" required>
@@ -2320,7 +2388,7 @@ function BrickTypeFormModal({
         </FormField>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Nom du type" htmlFor="brick-type-name" required>
+          <FormField label="Nom du modèle" htmlFor="brick-type-name" required>
             <input
               id="brick-type-name"
               type="text"
@@ -2331,31 +2399,102 @@ function BrickTypeFormModal({
                 setFormError(null);
               }}
               disabled={isSubmitting}
-              placeholder="Ex. Brique pleine 15"
+              placeholder="Ex. Brique pleine 15, Vitre claire 6 mm, Armoire 3 portes"
             />
           </FormField>
 
-          <FormField label="Forme" htmlFor="brick-type-shape" required>
-            <select
-              id="brick-type-shape"
-              className="select select-bordered min-h-11 w-full"
-              value={shape}
-              onChange={(event) => setShape(event.target.value as BrickShape)}
+          <FormField label="Catégorie" htmlFor="brick-type-category" hint="Libre : pleine, creuse, vitre, miroir, armoire…">
+            <input
+              id="brick-type-category"
+              type="text"
+              list="brick-type-category-list"
+              className="input input-bordered min-h-11 w-full"
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
               disabled={isSubmitting}
-            >
-              {BRICK_SHAPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
+              placeholder="Ex. Pleine"
+            />
+            <datalist id="brick-type-category-list">
+              {['Pleine', 'Creuse', 'Parpaing', 'Vitre', 'Miroir', 'Armoire', 'Table', 'Chaise'].map((value) => (
+                <option key={value} value={value} />
               ))}
-            </select>
+            </datalist>
           </FormField>
         </div>
 
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField
+            label="Unité de production"
+            htmlFor="brick-type-production-unit"
+            hint="Vide = l’unité de vente du produit lié."
+          >
+            <input
+              id="brick-type-production-unit"
+              type="text"
+              list="brick-type-unit-list"
+              className="input input-bordered min-h-11 w-full"
+              value={productionUnit}
+              onChange={(event) => setProductionUnit(event.target.value)}
+              disabled={isSubmitting}
+              placeholder="Ex. pièce, m², lot"
+            />
+            <datalist id="brick-type-unit-list">
+              {['pièce', 'm²', 'm³', 'mètre', 'paquet', 'lot', 'kg', 'sac', 'planche', 'feuille'].map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
+          </FormField>
+          <FormField
+            label="Seuil d’alerte de stock"
+            htmlFor="brick-type-alert"
+            hint="Vide = le seuil du produit dans le magasin."
+          >
+            <input
+              id="brick-type-alert"
+              type="number"
+              min={0}
+              step="any"
+              inputMode="decimal"
+              className="input input-bordered min-h-11 w-full"
+              value={alertThreshold}
+              onChange={(event) => setAlertThreshold(event.target.value)}
+              disabled={isSubmitting}
+            />
+          </FormField>
+        </div>
+
+        <fieldset className="rounded-xl border border-base-200 p-3">
+          <legend className="px-1 text-sm font-medium">Dimensions (facultatives, en cm)</legend>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {(
+              [
+                ['length', 'Longueur'],
+                ['width', 'Largeur'],
+                ['height', 'Hauteur'],
+                ['thickness', 'Épaisseur'],
+              ] as const
+            ).map(([key, label]) => (
+              <FormField key={key} label={label} htmlFor={`brick-type-${key}`}>
+                <input
+                  id={`brick-type-${key}`}
+                  type="number"
+                  min={0}
+                  step="any"
+                  inputMode="decimal"
+                  className="input input-bordered min-h-11 w-full"
+                  value={measures[key]}
+                  onChange={(event) => setMeasures((current) => ({ ...current, [key]: event.target.value }))}
+                  disabled={isSubmitting}
+                />
+              </FormField>
+            ))}
+          </div>
+        </fieldset>
+
         <FormField
-          label="Dimensions"
+          label="Dimensions (texte libre)"
           htmlFor="brick-type-dimensions"
-          hint="Ex. 15 × 20 × 40 cm — affichées sur les lots et les rapports."
+          hint="Facultatif, si les mesures chiffrées ne suffisent pas. Ex. 40 × 20 × 15 cm."
         >
           <input
             id="brick-type-dimensions"
@@ -2397,7 +2536,7 @@ function BrickTypeFormModal({
             ) : brickType ? (
               'Enregistrer les modifications'
             ) : (
-              'Créer le type'
+              'Créer le modèle'
             )}
           </button>
         </div>
@@ -2406,6 +2545,7 @@ function BrickTypeFormModal({
   );
 }
 
+/** Gestion des modèles dans une modale (tableau de bord, productions). */
 export function BrickTypesManagerModal({
   isOpen,
   onClose,
@@ -2419,8 +2559,37 @@ export function BrickTypesManagerModal({
   /** Remonte la liste chargée, pour que la page hôte alimente ses sélecteurs. */
   onTypesLoaded?: (types: BrickTypeRow[]) => void;
 }) {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Modèles" size="xl" fullScreenMobile>
+      <div className="space-y-4">
+        <BrickTypesPanel isOpen={isOpen} onChanged={onChanged} onTypesLoaded={onTypesLoaded} />
+        <div className="flex justify-end border-t border-base-200 pt-4">
+          <button type="button" className="btn btn-ghost min-h-11" onClick={onClose}>
+            Fermer
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Modèles de la filiale (README §31.3) : liste, création, modification,
+ * désactivation. Sert l'onglet « Modèles » **et** la modale ci-dessus.
+ */
+export function BrickTypesPanel({
+  isOpen,
+  onChanged,
+  onTypesLoaded,
+}: {
+  /** Chargement actif (onglet affiché ou modale ouverte). */
+  isOpen: boolean;
+  onChanged?: () => void;
+  onTypesLoaded?: (types: BrickTypeRow[]) => void;
+}) {
+  const B = useBranch();
   const { products, isLoading: isOptionsLoading } = useBrickSelectOptions(isOpen);
-  const canManage = usePermission('brick.types');
+  const canManage = usePermission('brick.types') && B.writable && B.canLevel('manage');
 
   const [types, setTypes] = useState<BrickTypeRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -2443,13 +2612,13 @@ export function BrickTypesManagerModal({
         const params = new URLSearchParams({ limit: '200' });
         if (includeInactive) params.set('includeInactive', 'true');
 
-        const response = await fetch(`/api/briqueterie/types?${params.toString()}`, {
+        const response = await fetch(branchApiUrl(`/modeles?${params.toString()}`), {
           signal,
           cache: 'no-store',
           credentials: 'same-origin',
         });
         if (!response.ok) {
-          throw new Error(await readApiError(response, 'Chargement des types impossible.'));
+          throw new Error(await readApiError(response, 'Chargement des modèles impossible.'));
         }
 
         const payload = (await response.json()) as Paginated<BrickTypeRow>;
@@ -2459,7 +2628,7 @@ export function BrickTypesManagerModal({
         onTypesLoaded?.(data);
       } catch (caught) {
         if (caught instanceof Error && caught.name === 'AbortError') return;
-        setError(caught instanceof Error ? caught.message : 'Chargement des types impossible.');
+        setError(caught instanceof Error ? caught.message : 'Chargement des modèles impossible.');
       } finally {
         if (!signal.aborted) setIsLoading(false);
       }
@@ -2487,7 +2656,7 @@ export function BrickTypesManagerModal({
     try {
       const reactivate = !targetType.isActive;
       const response = await fetch(
-        `/api/briqueterie/types/${targetType.id}${reactivate ? '?reactivate=true' : ''}`,
+        branchApiUrl(`/modeles/${targetType.id}${reactivate ? '?reactivate=true' : ''}`),
         { method: 'DELETE', credentials: 'same-origin' },
       );
       if (!response.ok) {
@@ -2495,8 +2664,8 @@ export function BrickTypesManagerModal({
       }
       toast.success(
         reactivate
-          ? `Type « ${targetType.name} » réactivé.`
-          : `Type « ${targetType.name} » désactivé : les lots passés restent lisibles.`,
+          ? `Modèle « ${targetType.name} » réactivé.`
+          : `Modèle « ${targetType.name} » désactivé : les productions passées restent lisibles.`,
       );
       setIsDeactivateOpen(false);
       setTargetType(null);
@@ -2511,12 +2680,12 @@ export function BrickTypesManagerModal({
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} title="Types de briques" size="xl" fullScreenMobile>
         <div className="space-y-4">
           <p className="rounded-xl border border-base-200 bg-base-200/40 px-4 py-3 text-sm text-base-content/70">
-            Chaque type est rattaché à un <strong>produit</strong> : c’est ce produit qui porte le prix
-            de vente et le stock des briques finies. Un type n’est <strong>jamais supprimé</strong> —
-            on le désactive, pour que les lots passés gardent leur libellé.
+            Chaque modèle de « {B.branch.name} » est rattaché à un <strong>produit</strong> : c’est ce
+            produit qui porte le prix de vente et le stock. Un modèle n’est <strong>jamais supprimé</strong> —
+            on le désactive : il ne sert plus à une nouvelle production ni à une nouvelle commande, mais
+            les documents passés gardent son libellé.
           </p>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -2526,7 +2695,7 @@ export function BrickTypesManagerModal({
               aria-pressed={includeInactive}
               onClick={() => setIncludeInactive((value) => !value)}
             >
-              Afficher les types inactifs
+              Afficher les modèles inactifs
             </button>
             {canManage && (
               <button
@@ -2537,7 +2706,7 @@ export function BrickTypesManagerModal({
                   setIsFormOpen(true);
                 }}
               >
-                Nouveau type
+                Nouveau modèle
               </button>
             )}
           </div>
@@ -2546,14 +2715,14 @@ export function BrickTypesManagerModal({
             <SkeletonTable rows={5} cols={4} />
           ) : error ? (
             <EmptyState
-              title="Types indisponibles"
+              title="Modèles indisponibles"
               description={error}
               action={<ToolbarButton onClick={refresh}>Réessayer</ToolbarButton>}
             />
           ) : types.length === 0 ? (
             <EmptyState
-              title="Aucun type de brique"
-              description="Créez un premier type et rattachez-le au produit qui portera son stock et son prix de vente."
+              title="Aucun modèle"
+              description="Créez un premier modèle et rattachez-le au produit qui portera son stock et son prix de vente."
               action={
                 canManage ? (
                   <button
@@ -2564,7 +2733,7 @@ export function BrickTypesManagerModal({
                       setIsFormOpen(true);
                     }}
                   >
-                    Créer le premier type
+                    Créer le premier modèle
                   </button>
                 ) : undefined
               }
@@ -2574,14 +2743,14 @@ export function BrickTypesManagerModal({
               columns={columns}
               data={types}
               getRowKey={(type) => type.id}
-              emptyMessage="Aucun type de brique."
+              emptyMessage="Aucun modèle."
               actions={
                 canManage
                   ? (type) => (
                       <RowActions>
                         <IconAction
                           icon="edit"
-                          label="Modifier le type de brique"
+                          label="Modifier le modèle"
                           onClick={() => {
                             setEditingType(type);
                             setIsFormOpen(true);
@@ -2591,7 +2760,7 @@ export function BrickTypesManagerModal({
                           icon={type.isActive ? 'deactivate' : 'activate'}
                           tone={type.isActive ? 'danger' : 'success'}
                           label={
-                            type.isActive ? 'Désactiver le type de brique' : 'Réactiver le type de brique'
+                            type.isActive ? 'Désactiver le modèle' : 'Réactiver le modèle'
                           }
                           onClick={() => {
                             setTargetType(type);
@@ -2604,14 +2773,7 @@ export function BrickTypesManagerModal({
               }
             />
           )}
-
-          <div className="flex justify-end border-t border-base-200 pt-4">
-            <button type="button" className="btn btn-ghost min-h-11" onClick={onClose}>
-              Fermer
-            </button>
-          </div>
         </div>
-      </Modal>
 
       <BrickTypeFormModal
         isOpen={isFormOpen}
@@ -2633,18 +2795,18 @@ export function BrickTypesManagerModal({
         onConfirm={deactivate}
         isSubmitting={isSubmitting}
         tone={targetType?.isActive ? 'error' : 'success'}
-        title={targetType?.isActive ? 'Désactiver ce type' : 'Réactiver ce type'}
+        title={targetType?.isActive ? 'Désactiver ce modèle' : 'Réactiver ce modèle'}
         confirmLabel={targetType?.isActive ? 'Désactiver' : 'Réactiver'}
         message={
           targetType?.isActive ? (
             <>
-              <strong>{targetType?.name}</strong> ne sera plus proposé pour un nouveau lot. Ses{' '}
-              {targetType?.productionsCount ?? 0} lot(s) passés restent lisibles : la fiche n’est{' '}
-              <strong>jamais supprimée</strong>.
+              <strong>{targetType?.name}</strong> ne sera plus proposé pour une nouvelle production ni
+              une nouvelle commande. Ses {targetType?.productionsCount ?? 0} production(s) passées restent
+              lisibles : la fiche n’est <strong>jamais supprimée</strong>.
             </>
           ) : (
             <>
-              <strong>{targetType?.name}</strong> redeviendra proposé pour les nouveaux lots.
+              <strong>{targetType?.name}</strong> redeviendra proposé pour les nouvelles productions et commandes.
             </>
           )
         }
@@ -2694,7 +2856,7 @@ export function ProductionCostCard({
       <InfoRow label="Coût de revient total">
         <MoneyText value={costs.totalCost} bold />
       </InfoRow>
-      <InfoRow label="Briques bonnes (production − cassées)">
+      <InfoRow label="Pièces bonnes (production − cassées)">
         <QuantityText value={costs.goodQuantity} unit={unit} />
       </InfoRow>
       <div className="flex items-center justify-between border-t border-base-200 pt-2">
@@ -2716,7 +2878,7 @@ export function ProductionCostCard({
       ) : null}
       <p className="pt-2 text-xs text-base-content/50">
         Coût de revient unitaire = coût total ÷ ({formatQuantity(costs.producedQuantity)} −{' '}
-        {formatQuantity(costs.brokenQuantity)}) = {formatNumber(costs.unitCost)} GNF par brique bonne.
+        {formatQuantity(costs.brokenQuantity)}) = {formatNumber(costs.unitCost)} GNF par pièce bonne.
         Ce montant est <strong>calculé à la lecture</strong>, jamais stocké.
       </p>
     </div>

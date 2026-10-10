@@ -1,6 +1,7 @@
 /**
- * Démonstration de la **briqueterie** (README §30) et de l'**atelier de
- * meubles** (README §29) pour chaque magasin du réseau de démonstration.
+ * Démonstration des **filiales de production** (README §30, §31) — la
+ * briqueterie reprise et une **vitrerie** créée par l'administrateur — et de
+ * l'**atelier de meubles** (README §29) pour chaque magasin du réseau.
  *
  * Appelé par `seedDemoData()` (`lib/seed-data.ts`) une fois le commerce créé :
  * comme le reste de la démonstration, tout passe par les fonctions métier
@@ -28,8 +29,9 @@ import {
   cancelBrickProduction,
   createBrickProduction,
   createBrickType,
-  type BrickStage,
 } from '@/lib/brick';
+import { createBranch, getDefaultBrickBranch, type ProductionBranch } from '@/lib/branches';
+import type { SessionUser } from '@/lib/api';
 import {
   cancelBrickOrder,
   createBrickOrder,
@@ -63,6 +65,7 @@ export type WorkshopSeedContext = {
 };
 
 export type WorkshopSeedReport = {
+  branches: number;
   brickTypes: number;
   brickProductions: number;
   brickSales: number;
@@ -79,6 +82,13 @@ const BRICKS = [
   { product: 'Brique pleine 15 cm', type: 'Brique pleine 15', shape: 'solid' as const, dimensions: '40 x 20 x 15 cm', price: 4_500 },
   { product: 'Brique creuse 12 cm', type: 'Brique creuse 12', shape: 'hollow' as const, dimensions: '40 x 20 x 12 cm', price: 3_800 },
   { product: 'Parpaing 20 cm', type: 'Parpaing 20', shape: 'block' as const, dimensions: '50 x 20 x 20 cm', price: 6_000 },
+];
+
+/** Vitrerie de démonstration : une deuxième filiale, aux étapes et à l'unité différentes. */
+const GLASSES = [
+  { product: 'Vitre claire 6 mm (m²)', model: 'Vitre claire 6 mm', category: 'Vitre', thickness: 0.6, price: 180_000, unit: 'm²' },
+  { product: 'Miroir 80 x 120 cm', model: 'Miroir 80 x 120', category: 'Miroir', thickness: 0.4, price: 450_000, unit: 'pièce' },
+  { product: 'Vitre teintée 8 mm (m²)', model: 'Vitre teintée 8 mm', category: 'Vitre', thickness: 0.8, price: 240_000, unit: 'm²' },
 ];
 
 /** Matières de l'atelier : achetées pour lui, en plus du réassort du commerce. */
@@ -139,6 +149,7 @@ const MODELS: { name: string; dimensions: string; hours: number; price: number; 
 
 export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopSeedReport> {
   const report: WorkshopSeedReport = {
+    branches: 0,
     brickTypes: 0,
     brickProductions: 0,
     brickSales: 0,
@@ -154,6 +165,47 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
     if (!id) throw new Error(`Produit de démonstration introuvable : ${name}`);
     return id;
   };
+
+  /*
+   * Filiales : la Briqueterie vient de la migration 0015 (reprise de la v2) ;
+   * la Vitrerie est créée comme le ferait l'administrateur depuis /filiales.
+   */
+  const actor = { ...ctx.admin, role: 'admin', permissions: [], storeIds: [], storeId: null } as unknown as SessionUser;
+  const brickBranch: ProductionBranch =
+    (await getDefaultBrickBranch()) ??
+    (await createBranch(
+      { name: 'Briqueterie', activity: 'bricks', stages: ['Moulage', 'Séchage', 'Cuisson'], lossLabel: 'Cassées', batchPrefix: 'BRI', orderPrefix: 'BCM', color: 'warning' },
+      actor,
+    ));
+  const glassBranch = await createBranch(
+    {
+      name: 'Vitrerie',
+      activity: 'glass',
+      description: 'Découpe et pose de vitres et miroirs.',
+      unit: 'm²',
+      stages: ['Découpe', 'Façonnage', 'Contrôle'],
+      lossLabel: 'Casse',
+      batchPrefix: 'VIT',
+      orderPrefix: 'VCM',
+      color: 'info',
+      customerMode: 'all',
+    },
+    actor,
+  );
+  report.branches += 1;
+  const glassCategory = await createCategory({ name: 'Vitrerie', kind: 'finished', description: 'Vitres et miroirs de la vitrerie' });
+  const glassProducts = new Map<string, number>();
+  for (const glass of GLASSES) {
+    const created = await createProduct({
+      name: glass.product,
+      categoryId: glassCategory.id,
+      unit: glass.unit,
+      purchasePrice: 0,
+      salePrice: glass.price,
+      stockMin: 20,
+    });
+    glassProducts.set(glass.product, created.id);
+  }
 
   // Les briques sont des produits du catalogue commun : chaque magasin en porte
   // son propre type (un type = un produit dans un magasin, il en porte le stock).
@@ -215,6 +267,8 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
     for (const brick of BRICKS) {
       const created = await createBrickType({
         storeId: store.id,
+        branchId: brickBranch.id,
+        category: brick.shape === 'hollow' ? 'Creuse' : brick.shape === 'block' ? 'Parpaing' : 'Pleine',
         productId: brickProducts.get(brick.product)!,
         name: brick.type,
         shape: brick.shape,
@@ -237,13 +291,14 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
       const type = types[index % types.length];
       const startDate = d(-age);
       const planned = Math.round(between(6_000, 12_000) * scale);
-      const stage: BrickStage = age >= 35 ? 'stored' : age >= 20 ? 'firing' : age >= 10 ? 'drying' : 'molding';
+      const stage = age >= 35 ? 'stored' : age >= 20 ? 'firing' : age >= 10 ? 'drying' : 'molding';
       const produced = stage === 'stored' ? Math.round(planned * (0.92 + random() * 0.06)) : 0;
       const broken = stage === 'stored' ? Math.round(produced * (0.01 + random() * 0.04)) : 0;
       const endDate = stage === 'stored' ? addDays(startDate, 18 + between(0, 6)) : null;
 
       const lot = await createBrickProduction({
         storeId: store.id,
+        branch: brickBranch,
         brickTypeId: type.id,
         plannedQuantity: planned,
         producedQuantity: produced,
@@ -255,10 +310,15 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
       });
       report.brickProductions += 1;
 
-      await addProductionWorker(lot.id, { workerId: briquetier.id, days: between(8, 14) }, store.id);
-      await addProductionWorker(lot.id, { workerId: mouleur.id, days: between(10, 18) }, store.id);
+      await addProductionWorker(lot.id, { workerId: briquetier.id, days: between(8, 14) }, store.id, brickBranch.id);
+      await addProductionWorker(lot.id, { workerId: mouleur.id, days: between(10, 18) }, store.id, brickBranch.id);
       if (index % 3 === 0) {
-        await addProductionWorker(lot.id, { workerName: 'Journalier', role: 'Manœuvre', days: between(4, 8), dailyRate: 45_000 }, store.id);
+        await addProductionWorker(
+          lot.id,
+          { workerName: 'Journalier', role: 'Manœuvre', days: between(4, 8), dailyRate: 45_000 },
+          store.id,
+          brickBranch.id,
+        );
       }
       const expenses: [string, number][] = [
         ['Ciment', between(900_000, 1_800_000)],
@@ -279,12 +339,13 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
             canSkipApproval: true,
           },
           store.id,
+          brickBranch.id,
         );
       }
 
       if (stage !== 'molding') {
-        for (const step of ['drying', 'firing', 'stored'] as BrickStage[]) {
-          await advanceStage(lot.id, step, store.id, manager.id);
+        for (const step of ['drying', 'firing', 'stored']) {
+          await advanceStage(lot.id, step, store.id, manager.id, brickBranch);
           if (step === stage) break;
         }
       }
@@ -304,6 +365,7 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
           await createSalesInvoice({
             storeId: store.id,
             channel: 'brick',
+            productionBranchId: brickBranch.id,
             customerId,
             customerName: customerId ? undefined : 'Client briqueterie',
             date,
@@ -323,13 +385,14 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
     // Lot annulé (ordre de fabrication saisi en double).
     const cancelledLot = await createBrickProduction({
       storeId: store.id,
+      branch: brickBranch,
       brickTypeId: types[1].id,
       plannedQuantity: Math.round(5_000 * scale),
       startDate: d(-(15 + offset)),
       team: 'Équipe briqueterie',
       userId: manager.id,
     });
-    await cancelBrickProduction(cancelledLot.id, 'Ordre de fabrication saisi en double', { id: manager.id, storeId: store.id });
+    await cancelBrickProduction(cancelledLot.id, 'Ordre de fabrication saisi en double', { id: manager.id, storeId: store.id }, brickBranch.id);
     report.brickProductions += 1;
 
     /* Commandes de briques : une par statut, à des dates différentes. */
@@ -338,6 +401,7 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
       const date = d(-(age + offset));
       const created = await createBrickOrder({
         storeId: store.id,
+        branch: brickBranch,
         customerId: customer(customerIndex),
         date,
         promisedDate: addDays(date, 21),
@@ -366,30 +430,128 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
     await deposit(confirmed.order.id, confirmed.order.total, 0.3, addDays(confirmed.date, 1));
     const inProduction = await order(28, 2, 2_500, 2, true);
     await deposit(inProduction.order.id, inProduction.order.total, 0.5, addDays(inProduction.date, 2));
-    await updateBrickOrderStatus(inProduction.order.id, 'in_production', store.id);
+    const B = brickBranch.id;
+    await updateBrickOrderStatus(inProduction.order.id, 'in_production', store.id, B);
     const ready = await order(45, 0, 2_000, 3, true);
-    await updateBrickOrderStatus(ready.order.id, 'in_production', store.id);
-    await updateBrickOrderStatus(ready.order.id, 'ready', store.id);
+    await updateBrickOrderStatus(ready.order.id, 'in_production', store.id, B);
+    await updateBrickOrderStatus(ready.order.id, 'ready', store.id, B);
     const partial = await order(70, 1, 3_000, 4, true);
     await deposit(partial.order.id, partial.order.total, 0.4, addDays(partial.date, 1));
-    await updateBrickOrderStatus(partial.order.id, 'in_production', store.id);
-    await updateBrickOrderStatus(partial.order.id, 'ready', store.id);
+    await updateBrickOrderStatus(partial.order.id, 'in_production', store.id, B);
+    await updateBrickOrderStatus(partial.order.id, 'ready', store.id, B);
     await registerBrickOrderDelivery(
       partial.order.id,
       partial.items.map((item) => ({ itemId: item.id, quantity: Math.floor(item.quantity / 2) })),
       store.id,
+      B,
     );
     // Commande facturée : la facture sort le stock et reprend l'acompte.
     const invoiced = await order(110, 0, 1_500, 5, true);
     await deposit(invoiced.order.id, invoiced.order.total, 0.5, addDays(invoiced.date, 1));
-    await updateBrickOrderStatus(invoiced.order.id, 'in_production', store.id);
-    await updateBrickOrderStatus(invoiced.order.id, 'ready', store.id);
+    await updateBrickOrderStatus(invoiced.order.id, 'in_production', store.id, B);
+    await updateBrickOrderStatus(invoiced.order.id, 'ready', store.id, B);
     const brickStock = await getStoreStock(store.id, types[0].productId);
     if (brickStock >= invoiced.items[0].quantity) {
-      await invoiceBrickOrder(invoiced.order.id, { id: manager.id, storeId: store.id });
+      await invoiceBrickOrder(invoiced.order.id, { id: manager.id, storeId: store.id }, B);
     }
     const cancelled = await order(160, 2, 5_000, 0, true);
-    await cancelBrickOrder(cancelled.order.id, 'Le client a reporté son chantier', { id: manager.id, storeId: store.id });
+    await cancelBrickOrder(cancelled.order.id, 'Le client a reporté son chantier', { id: manager.id, storeId: store.id }, B);
+
+    /* ---------------------------- Vitrerie ----------------------------- */
+    // Plus petite que la briqueterie : quelques productions, ventes et une commande.
+    const glassTypes: { id: number; productId: number; price: number }[] = [];
+    for (const glass of GLASSES) {
+      const created = await createBrickType({
+        storeId: store.id,
+        branchId: glassBranch.id,
+        productId: glassProducts.get(glass.product)!,
+        name: glass.model,
+        category: glass.category,
+        thickness: glass.thickness,
+        productionUnit: glass.unit,
+        userId: manager.id,
+      });
+      glassTypes.push({ id: created.id, productId: created.productId, price: glass.price });
+      report.brickTypes += 1;
+    }
+    const glassFlow = glassBranch.flow.map((s) => s.key);
+    for (const [index, rawAge] of [120, 75, 40, 18, 6].entries()) {
+      const age = rawAge + offset;
+      const type = glassTypes[index % glassTypes.length];
+      const startDate = d(-age);
+      const done = age >= 15;
+      const planned = Math.round(between(40, 90) * scale);
+      const produced = done ? planned - between(0, 3) : 0;
+      const lot = await createBrickProduction({
+        storeId: store.id,
+        branch: glassBranch,
+        brickTypeId: type.id,
+        plannedQuantity: planned,
+        producedQuantity: produced,
+        brokenQuantity: done ? between(0, 2) : 0,
+        startDate,
+        endDate: done ? addDays(startDate, 4) : null,
+        team: 'Atelier vitrerie',
+        userId: manager.id,
+      });
+      report.brickProductions += 1;
+      await addProductionExpense(
+        lot.id,
+        {
+          category: 'Transport',
+          amount: Math.round(between(300_000, 900_000) * scale),
+          date: startDate,
+          description: `Verre brut — production ${lot.batchNumber}`,
+          paymentMethod: 'Espèces',
+          userId: manager.id,
+          canSkipApproval: true,
+        },
+        store.id,
+        glassBranch.id,
+      );
+      // Productions anciennes : en stock ; la dernière reste à sa première étape.
+      const target = done ? 'stored' : glassFlow[1];
+      for (const step of glassFlow.slice(1)) {
+        await advanceStage(lot.id, step, store.id, manager.id, glassBranch);
+        if (step === target) break;
+      }
+      if (done) {
+        const date = addDays(startDate, between(6, 12));
+        const available = await getStoreStock(store.id, type.productId);
+        const quantity = Math.min(available, between(5, 20));
+        if (date <= today() && quantity > 0) {
+          const customerId = customer(index + 2);
+          await createSalesInvoice({
+            storeId: store.id,
+            channel: 'brick',
+            productionBranchId: glassBranch.id,
+            customerId,
+            customerName: customerId ? undefined : 'Client vitrerie',
+            date,
+            paymentMethod: 'Espèces',
+            amountPaid: quantity * type.price,
+            discount: 0,
+            lines: [{ productId: type.productId, quantity, unitPrice: type.price }],
+            userId: seller.id,
+          });
+          report.brickSales += 1;
+        }
+      }
+    }
+    // Une commande de vitres confirmée avec acompte (le même client peut acheter à la briqueterie).
+    const glassOrder = await createBrickOrder({
+      storeId: store.id,
+      branch: glassBranch,
+      customerId: customer(1),
+      date: d(-(9 + offset)),
+      promisedDate: d(-(9 + offset) + 10),
+      status: 'confirmed',
+      items: [{ brickTypeId: glassTypes[0].id, quantity: 12, unitPrice: glassTypes[0].price }],
+      notes: 'Vitrage des fenêtres — démonstration',
+      userId: manager.id,
+    });
+    report.brickOrders += 1;
+    await deposit(glassOrder.order.id, glassOrder.order.total, 0.4, d(-(8 + offset)));
 
     /* ----------------------------- Atelier ----------------------------- */
     // Approvisionnement de l'atelier, daté du début de son activité.

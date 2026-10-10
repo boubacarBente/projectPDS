@@ -154,6 +154,8 @@ export function normalizeInvoiceRow(raw: unknown): SalesInvoiceRow {
     paymentMethod: String(row.paymentMethod ?? row.payment_method ?? 'Espèces'),
     status: toInvoiceStatus(row.status),
     channel: row.channel === 'brick' ? 'brick' : 'general',
+    productionBranchId: row.productionBranchId == null ? null : num(row.productionBranchId),
+    productionBranchName: (row.productionBranchName ?? null) as string | null,
     cancelReason: (row.cancelReason ?? row.cancel_reason ?? null) as string | null,
     notes: (row.notes ?? null) as string | null,
     itemCount: num(row.itemCount ?? row.item_count),

@@ -15,6 +15,11 @@
  *
  * v2 : la commande appartient au magasin actif, son client aussi
  * (`assertCustomerInStore`), ses lignes sont des types de briques de ce magasin.
+ *
+ * Filiales (README §31) : la commande appartient aussi **à une filiale** ; ses
+ * lignes sont des modèles de cette filiale, son numéro prend le préfixe de la
+ * filiale, son client doit lui être partagé (mode « clients choisis ») et la
+ * facture née de la commande porte `production_branch_id`.
  */
 
 import { db, rawAll, rawGet, withTransaction } from '@/db';
@@ -27,6 +32,8 @@ import { listPayments, recomputeDocumentPayments, getPaymentSchedule } from '@/l
 import { createSalesInvoice } from '@/lib/sales';
 import { assertCustomerInStore } from '@/lib/customers';
 import { scopeSql, type StoreScope } from '@/lib/stores';
+import { assertCustomerInBranch, branchSql } from '@/lib/branches';
+import type { ProductionBranch } from '@/lib/branches-shared';
 
 export const BRICK_ORDER_STATUSES = [
   'draft',
@@ -82,6 +89,8 @@ export type BrickOrderRow = {
   id: number;
   storeId: number;
   storeName: string | null;
+  branchId: number | null;
+  branchName: string | null;
   orderNumber: string;
   customerId: number | null;
   customerName: string;
@@ -134,6 +143,7 @@ export type BrickOrderInput = {
 
 export type BrickOrderListOptions = {
   scope: StoreScope;
+  branchIds: number[];
   search?: string;
   status?: string;
   customerId?: number;
@@ -163,7 +173,7 @@ function num(value: unknown): number {
 }
 
 const ORDER_SELECT = `
-  SELECT o.id, o.store_id, s.name AS store_name, o.order_number, o.customer_id, o.customer_name,
+  SELECT o.id, o.store_id, s.name AS store_name, o.branch_id, br.name AS branch_name, o.order_number, o.customer_id, o.customer_name,
          o.user_id, u.name AS user_name, o.date, o.due_date, o.delivery_date, o.promised_date,
          o.sub_total, o.discount, o.total, o.amount_paid, o.remaining_amount, o.payment_status,
          o.status, o.sales_invoice_id, o.cancel_reason, cu.name AS cancelled_by_name, o.notes, o.created_at,
@@ -173,6 +183,7 @@ const ORDER_SELECT = `
          (SELECT COALESCE(SUM(i.delivered_quantity), 0) FROM brick_order_items i WHERE i.order_id = o.id) AS quantity_delivered
   FROM brick_orders o
   LEFT JOIN stores s ON s.id = o.store_id
+  LEFT JOIN production_branches br ON br.id = o.branch_id
   LEFT JOIN users u ON u.id = o.user_id
   LEFT JOIN users cu ON cu.id = o.cancelled_by
   LEFT JOIN sales_invoices v ON v.id = o.sales_invoice_id`;
@@ -182,6 +193,8 @@ function mapOrderRow(row: any): BrickOrderRow {
     id: num(row.id),
     storeId: num(row.store_id),
     storeName: row.store_name ?? null,
+    branchId: row.branch_id == null ? null : num(row.branch_id),
+    branchName: row.branch_name ?? null,
     orderNumber: row.order_number,
     customerId: row.customer_id == null ? null : num(row.customer_id),
     customerName: row.customer_name,
@@ -252,21 +265,21 @@ async function resolveCustomer(
   return existing ? { customerId: num(existing.id), customerName: existing.name } : { customerId: null, customerName: name };
 }
 
-/** Lignes validées : types de briques **actifs de ce magasin**, nom et unité figés. */
-async function buildItems(items: BrickOrderItemInput[], storeId: number) {
+/** Lignes validées : modèles **actifs de ce magasin et de cette filiale**, nom et unité figés. */
+async function buildItems(items: BrickOrderItemInput[], storeId: number, branchId: number) {
   if (!Array.isArray(items) || items.length === 0) throw new ValidationError('Une commande doit contenir au moins un produit');
   const rows = await rawAll<{ id: number; name: string; product_id: number; product_name: string; unit: string; is_active: number }>(
     `SELECT bt.id, bt.name, bt.product_id, bt.is_active, p.name AS product_name, p.unit
        FROM brick_types bt INNER JOIN products p ON p.id = bt.product_id
-      WHERE bt.store_id = ?`,
-    [storeId],
+      WHERE bt.store_id = ? AND bt.branch_id = ?`,
+    [storeId, branchId],
   );
   const byTypeId = new Map(rows.map((row) => [num(row.id), row]));
   return items.map((line) => {
     const brickTypeId = Number(line.brickTypeId);
     const type = byTypeId.get(brickTypeId);
-    if (!type) throw new ValidationError(`Type de brique introuvable dans ce magasin (id ${brickTypeId})`);
-    if (!type.is_active) throw new ValidationError(`Le type « ${type.name} » est désactivé.`);
+    if (!type) throw new ValidationError(`Modèle introuvable dans ce magasin pour cette filiale (id ${brickTypeId})`);
+    if (!type.is_active) throw new ValidationError(`Le modèle « ${type.name} » est désactivé.`);
     const quantity = Number(line.quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new ValidationError(`Quantité invalide pour « ${type.name} » : elle doit être positive`);
@@ -314,9 +327,12 @@ export async function listBrickOrders(
 ): Promise<{ data: BrickOrderRow[]; total: number; page: number; limit: number; totalPages: number }> {
   const page = Math.max(1, options.page ?? 1);
   const limit = Math.max(1, Math.min(500, options.limit ?? 20));
-  const where: string[] = [scopeSql('o.store_id', options.scope)];
+  const where: string[] = [scopeSql('o.store_id', options.scope), branchSql('o.branch_id', options.branchIds)];
   const args: (string | number)[] = [];
-  if (isBrickOrderStatus(options.status)) {
+  if (options.status === 'invoiced') {
+    // « Facturée » n'est pas un statut stocké : c'est une commande qui porte sa facture.
+    where.push('o.sales_invoice_id IS NOT NULL');
+  } else if (isBrickOrderStatus(options.status)) {
     where.push('o.status = ?');
     args.push(options.status);
   } else if (!options.includeCancelled) {
@@ -351,9 +367,10 @@ export async function listBrickOrders(
   return { data: rows.map(mapOrderRow), total, page, limit, totalPages: Math.ceil(total / limit) || 1 };
 }
 
-export async function countBrickOrdersByStatus(scope: StoreScope): Promise<Record<BrickOrderStatus, number>> {
+export async function countBrickOrdersByStatus(scope: StoreScope, branchIds: number[]): Promise<Record<BrickOrderStatus, number>> {
   const rows = await rawAll<{ status: string; count: number }>(
-    `SELECT status, COUNT(*) AS count FROM brick_orders WHERE ${scopeSql('store_id', scope)} GROUP BY status`,
+    `SELECT status, COUNT(*) AS count FROM brick_orders
+      WHERE ${scopeSql('store_id', scope)} AND ${branchSql('branch_id', branchIds)} GROUP BY status`,
   );
   const result = Object.fromEntries(BRICK_ORDER_STATUSES.map((status) => [status, 0])) as Record<BrickOrderStatus, number>;
   for (const row of rows) if (isBrickOrderStatus(row.status)) result[row.status] = num(row.count);
@@ -380,9 +397,9 @@ export async function getBrickOrder(id: number): Promise<BrickOrderDetail | null
  * Écriture (magasin actif uniquement)
  * ------------------------------------------------------------------ */
 
-async function assertOrderInStore(id: number, storeId: number): Promise<BrickOrderRow> {
+async function assertOrderInStore(id: number, storeId: number, branchId: number): Promise<BrickOrderRow> {
   const order = await getBrickOrderRow(id);
-  if (!order) throw new NotFoundError('Commande introuvable');
+  if (!order || order.branchId !== Number(branchId)) throw new NotFoundError('Commande introuvable dans cette filiale');
   if (order.storeId !== Number(storeId)) {
     throw new ValidationError(
       `Cette commande appartient au magasin ${order.storeName ?? 'd’un autre magasin'} : elle ne se modifie que depuis ce magasin.`,
@@ -409,17 +426,20 @@ async function insertItems(orderId: number, items: Awaited<ReturnType<typeof bui
   }
 }
 
-export async function createBrickOrder(input: BrickOrderInput & { storeId: number }): Promise<BrickOrderDetail> {
+export async function createBrickOrder(input: BrickOrderInput & { storeId: number; branch: ProductionBranch }): Promise<BrickOrderDetail> {
+  const branch = input.branch;
   const orderId = await withTransaction(async () => {
-    const items = await buildItems(input.items, input.storeId);
+    const items = await buildItems(input.items, input.storeId, branch.id);
     const customer = await resolveCustomer(input.customerId ? Number(input.customerId) : null, input.customerName ?? null, input.storeId);
+    await assertCustomerInBranch(branch, customer.customerId);
     const date = cleanDate(input.date, 'date') ?? today();
     const totals = computeOrderTotals(items, num(input.discount));
     const inserted = await db
       .insert(brickOrders)
       .values({
         storeId: input.storeId,
-        orderNumber: await nextDocumentNumber('brick_order', input.storeId),
+        branchId: branch.id,
+        orderNumber: await nextDocumentNumber('brick_order', input.storeId, { prefix: branch.orderPrefix }),
         customerId: customer.customerId,
         customerName: customer.customerName,
         userId: input.userId ?? null,
@@ -446,15 +466,21 @@ export async function createBrickOrder(input: BrickOrderInput & { storeId: numbe
 }
 
 /** Modification : les lignes sont **remplacées**, les paiements ne bougent pas. */
-export async function updateBrickOrder(id: number, input: BrickOrderInput, storeId: number): Promise<BrickOrderDetail> {
+export async function updateBrickOrder(
+  id: number,
+  input: BrickOrderInput,
+  storeId: number,
+  branch: ProductionBranch,
+): Promise<BrickOrderDetail> {
   await withTransaction(async () => {
-    const existing = await assertOrderInStore(id, storeId);
+    const existing = await assertOrderInStore(id, storeId, branch.id);
     assertOrderEditable(existing);
-    const items = await buildItems(input.items, storeId);
+    const items = await buildItems(input.items, storeId, branch.id);
     const customer =
       input.customerId || input.customerName
         ? await resolveCustomer(input.customerId ? Number(input.customerId) : null, input.customerName ?? existing.customerName, storeId)
         : { customerId: existing.customerId, customerName: existing.customerName };
+    if (customer.customerId !== existing.customerId) await assertCustomerInBranch(branch, customer.customerId);
     const totals = computeOrderTotals(items, num(input.discount));
     // Le montant ne descend jamais sous ce que le client a déjà payé.
     if (totals.total + 0.01 < existing.amountPaid) {
@@ -487,10 +513,15 @@ export async function updateBrickOrder(id: number, input: BrickOrderInput, store
 }
 
 /** Changement d'état, avec transitions contrôlées (l'annulation passe par `cancelBrickOrder`). */
-export async function updateBrickOrderStatus(id: number, status: BrickOrderStatus, storeId: number): Promise<BrickOrderRow> {
+export async function updateBrickOrderStatus(
+  id: number,
+  status: BrickOrderStatus,
+  storeId: number,
+  branchId: number,
+): Promise<BrickOrderRow> {
   if (!isBrickOrderStatus(status)) throw new ValidationError('Statut de commande invalide');
   if (status === 'cancelled') throw new ValidationError('L’annulation exige un motif : utilisez « Annuler la commande ».');
-  const order = await assertOrderInStore(id, storeId);
+  const order = await assertOrderInStore(id, storeId, branchId);
   if (order.isCancelled) throw new ConflictError('Cette commande est déjà annulée');
   if (!STATUS_TRANSITIONS[order.status].includes(status)) {
     throw new ValidationError(
@@ -514,9 +545,10 @@ export async function registerBrickOrderDelivery(
   id: number,
   deliveries: { itemId: number; quantity: number }[],
   storeId: number,
+  branchId: number,
 ): Promise<BrickOrderDetail> {
   await withTransaction(async () => {
-    const order = await assertOrderInStore(id, storeId);
+    const order = await assertOrderInStore(id, storeId, branchId);
     if (order.isCancelled) throw new ConflictError('Cette commande est annulée');
     if (!['ready', 'partially_delivered'].includes(order.status)) {
       throw new ValidationError('Une livraison ne s’enregistre que sur une commande « Prête » ou « Partiellement livrée ».');
@@ -553,10 +585,15 @@ export async function registerBrickOrderDelivery(
 }
 
 /** Annulation motivée — jamais de suppression. Refusée si la commande est facturée ou a reçu un acompte. */
-export async function cancelBrickOrder(id: number, reason: string, user: { id: number; storeId: number }): Promise<BrickOrderRow> {
+export async function cancelBrickOrder(
+  id: number,
+  reason: string,
+  user: { id: number; storeId: number },
+  branchId: number,
+): Promise<BrickOrderRow> {
   const motif = (reason ?? '').trim();
   if (!motif) throw new ValidationError('Le motif d’annulation est obligatoire');
-  const order = await assertOrderInStore(id, user.storeId);
+  const order = await assertOrderInStore(id, user.storeId, branchId);
   if (order.isCancelled) throw new ConflictError('Cette commande est déjà annulée');
   if (order.salesInvoiceId) {
     const invoice = await rawGet<{ status: string }>('SELECT status FROM sales_invoices WHERE id = ?', [order.salesInvoiceId]);
@@ -581,9 +618,10 @@ export async function cancelBrickOrder(id: number, reason: string, user: { id: n
 export async function invoiceBrickOrder(
   id: number,
   user: { id: number; storeId: number },
+  branchId: number,
 ): Promise<{ order: BrickOrderRow; invoiceId: number; invoiceNumber: string }> {
   return withTransaction(async () => {
-    const order = await assertOrderInStore(id, user.storeId);
+    const order = await assertOrderInStore(id, user.storeId, branchId);
     if (order.isCancelled) throw new ConflictError('Cette commande est annulée');
     if (order.salesInvoiceId) throw new ConflictError(`Cette commande est déjà facturée (${order.salesInvoiceNumber}).`);
     if (order.status === 'draft') throw new ValidationError('Confirmez la commande avant de la facturer.');
@@ -603,6 +641,7 @@ export async function invoiceBrickOrder(
       notes: text(`Commande ${order.orderNumber}${order.notes ? ` — ${order.notes}` : ''}`),
       status: 'active',
       channel: 'brick',
+      productionBranchId: branchId,
       userId: user.id,
       lines: items.map((item) => ({
         productId: Number(item.productId),

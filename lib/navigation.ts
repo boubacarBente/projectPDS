@@ -97,13 +97,17 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   {
-    // Fabrication : atelier de meubles (README §29) et briqueterie (README §30), rétablis par magasin le 7 octobre 2026.
+    /*
+     * Fabrication : atelier de meubles (README §29) et **filiales de production**
+     * (README §31). Chaque filiale active et autorisée reçoit son propre lien,
+     * inséré par `components/app-shell.tsx` (liste lue sur
+     * `/api/filiales/navigation`) juste avant la page générale ci-dessous.
+     */
     title: 'Fabrication',
     items: [
       { href: '/atelier', label: 'Commandes d’atelier', iconKey: 'workshop', action: 'furniture.view' },
       { href: '/atelier/modeles', label: 'Modèles de meubles', iconKey: 'furnitureModels', action: 'furniture.view' },
-      // Briqueterie (README §30) : une entrée, ses écrans sont des onglets.
-      { href: '/briqueterie', label: 'Briqueterie', iconKey: 'bricks', action: 'brick.view' },
+      { href: '/filiales', label: 'Filiales de production', iconKey: 'bricks', action: 'brick.view' },
     ],
   },
   {

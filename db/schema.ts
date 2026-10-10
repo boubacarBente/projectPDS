@@ -383,8 +383,10 @@ export const salesInvoices = sqliteTable('sales_invoices', {
   paymentMethod: text('payment_method').notNull().default('Espèces'),
   /** draft | active | cancelled */
   status: text('status', { enum: ['draft', 'active', 'cancelled'] }).notNull().default('active'),
-  /** Canal de vente (conservé pour compatibilité ; `general` uniquement). */
+  /** Canal de vente : `general`, ou `brick` = vente d'une filiale de production (README §31). */
   channel: text('channel', { enum: ['general', 'brick'] }).notNull().default('general'),
+  /** Filiale de la vente du canal `brick` — clé étrangère déclarée (invariant 20). */
+  productionBranchId: integer('production_branch_id').references((): AnySQLiteColumn => productionBranches.id),
   cancelReason: text('cancel_reason'),
   cancelledBy: integer('cancelled_by').references(() => users.id),
   cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
@@ -1013,6 +1015,82 @@ export const furnitureOrderMaterials = sqliteTable('furniture_order_materials', 
 ]);
 
 /* ------------------------------------------------------------------ *
+ * 7 ter. Filiales de production (README §31)
+ *
+ * Demande client du 9 octobre 2026 : la briqueterie devient **une filiale de
+ * production parmi d'autres** (vitrerie, meubles…), créée et nommée par
+ * l'administrateur. Une filiale est une donnée **centrale** (créée au siège,
+ * comme les magasins) ; ses modèles, productions et commandes restent ceux
+ * **d'un magasin** (tables `brick_*`, colonne `branch_id`).
+ *
+ * Les tables `brick_*` gardent leur nom : les renommer obligerait chaque poste
+ * déjà en service à migrer des tables synchronisées et casserait les journaux
+ * (`reference_type = 'brick_production'`). Leur sens est désormais générique.
+ * ------------------------------------------------------------------ */
+
+export const PRODUCTION_BRANCH_ACTIVITIES = ['bricks', 'glass', 'furniture', 'other'] as const;
+export const PRODUCTION_BRANCH_STATUSES = ['active', 'suspended', 'archived'] as const;
+
+export const productionBranches = sqliteTable('production_branches', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** Nom choisi par l'administrateur, affiché dans le menu : « Briqueterie », « Vitrerie »… */
+  name: text('name').notNull(),
+  activity: text('activity', { enum: PRODUCTION_BRANCH_ACTIVITIES }).notNull().default('other'),
+  description: text('description'),
+  /** Magasin propriétaire ; `null` = la filiale travaille dans tous les magasins. */
+  storeId: integer('store_id').references(() => stores.id),
+  status: text('status', { enum: PRODUCTION_BRANCH_STATUSES }).notNull().default('active'),
+  /** Jeton de couleur du thème (`primary`, `accent`…) — jamais une couleur figée (invariant 11). */
+  color: text('color'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  /** Unité principale proposée aux nouveaux modèles (pièce, m², lot…). */
+  unit: text('unit').notNull().default('pièce'),
+  /**
+   * Étapes de fabrication, JSON `[{ key, label }]`, **avant** la mise en stock
+   * (toujours la dernière, clé `stored`). Briqueterie : moulage, séchage, cuisson.
+   */
+  stages: text('stages').notNull().default('[{"key":"in_progress","label":"En cours"}]'),
+  /** Libellé des pertes de fabrication : « Cassées », « Rebuts », « Chutes »… */
+  lossLabel: text('loss_label').notNull().default('Pertes'),
+  batchPrefix: text('batch_prefix').notNull().default('PRD'),
+  orderPrefix: text('order_prefix').notNull().default('CMD'),
+  /** `all` : tout utilisateur ayant les droits « Filiales » ; `restricted` : seulement les comptes listés. */
+  accessMode: text('access_mode', { enum: ['all', 'restricted'] }).notNull().default('all'),
+  /** `all` : tous les clients du magasin ; `selected` : seulement les clients partagés avec la filiale. */
+  customerMode: text('customer_mode', { enum: ['all', 'selected'] }).notNull().default('all'),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  uniqueIndex('production_branches_name_unique').on(t.name),
+]);
+
+/** Comptes autorisés sur une filiale `restricted`, avec un niveau qui **plafonne** leurs droits. */
+export const productionBranchUsers = sqliteTable('production_branch_users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  branchId: integer('branch_id').notNull().references(() => productionBranches.id),
+  userId: integer('user_id').notNull().references(() => users.id),
+  /** view | edit | manage — mêmes niveaux que le domaine « Filiales de production ». */
+  level: text('level', { enum: ['view', 'edit', 'manage'] }).notNull().default('edit'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  uniqueIndex('production_branch_users_unique').on(t.branchId, t.userId),
+]);
+
+/** Clients partagés avec une filiale `selected` (le client reste celui de son magasin). */
+export const productionBranchCustomers = sqliteTable('production_branch_customers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  branchId: integer('branch_id').notNull().references(() => productionBranches.id),
+  customerId: integer('customer_id').notNull().references(() => customers.id),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  uniqueIndex('production_branch_customers_unique').on(t.branchId, t.customerId),
+]);
+
+/* ------------------------------------------------------------------ *
  * 7 bis. Briqueterie par magasin (README §30)
  *
  * Retirée en v2 (migration 0004), rétablie le 7 octobre 2026, rattachée à un
@@ -1035,24 +1113,37 @@ export const BRICK_ORDER_STATUS_VALUES = [
 export const brickTypes = sqliteTable('brick_types', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   storeId: integer('store_id').notNull().references(() => stores.id),
+  /** Filiale du modèle (README §31) ; renseignée pour toute ligne depuis la migration 0015. */
+  branchId: integer('branch_id').references(() => productionBranches.id),
   productId: integer('product_id').notNull().references(() => products.id),
   name: text('name').notNull(),
   /** solid | hollow | block */
   shape: text('shape', { enum: ['solid', 'hollow', 'block'] }).notNull().default('solid'),
   dimensions: text('dimensions'),
   description: text('description'),
+  /** Modèle générique (README §31.3) : catégorie libre, unité de production, dimensions chiffrées, seuil. */
+  category: text('category'),
+  productionUnit: text('production_unit'),
+  length: real('length'),
+  width: real('width'),
+  height: real('height'),
+  thickness: real('thickness'),
+  /** Seuil d'alerte du modèle ; `null` = celui du produit dans le magasin. */
+  alertThreshold: real('alert_threshold'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   userId: integer('user_id').references(() => users.id),
   createdAt: createdAt(),
   ...syncCols(),
 }, (t) => [
   index('brick_types_store_idx').on(t.storeId),
+  index('brick_types_branch_idx').on(t.branchId),
 ]);
 
 /** Lot de fabrication. */
 export const brickProductions = sqliteTable('brick_productions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   storeId: integer('store_id').notNull().references(() => stores.id),
+  branchId: integer('branch_id').references(() => productionBranches.id),
   batchNumber: text('batch_number').notNull().unique(),
   brickTypeId: integer('brick_type_id').notNull().references(() => brickTypes.id),
   plannedQuantity: real('planned_quantity').notNull().default(0),
@@ -1060,8 +1151,11 @@ export const brickProductions = sqliteTable('brick_productions', {
   brokenQuantity: real('broken_quantity').notNull().default(0),
   startDate: text('start_date'),
   endDate: text('end_date'),
-  /** molding | drying | firing | stored (mise en stock = terminée) */
-  stage: text('stage', { enum: BRICK_STAGE_VALUES }).notNull().default('molding'),
+  /**
+   * Clé d'une étape de la filiale (`production_branches.stages`) ou `stored`
+   * (mise en stock = terminée). Briqueterie : molding | drying | firing | stored.
+   */
+  stage: text('stage').notNull().default('molding'),
   /** registered | finished | cancelled */
   status: text('status', { enum: ['registered', 'finished', 'cancelled'] }).notNull().default('registered'),
   /** Équipe ou responsable (texte libre). */
@@ -1075,6 +1169,7 @@ export const brickProductions = sqliteTable('brick_productions', {
   ...syncCols(),
 }, (t) => [
   index('brick_productions_store_idx').on(t.storeId),
+  index('brick_productions_branch_idx').on(t.branchId),
 ]);
 
 export const brickProductionWorkers = sqliteTable('brick_production_workers', {
@@ -1100,6 +1195,7 @@ export const brickProductionWorkers = sqliteTable('brick_production_workers', {
 export const brickOrders = sqliteTable('brick_orders', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   storeId: integer('store_id').notNull().references(() => stores.id),
+  branchId: integer('branch_id').references(() => productionBranches.id),
   orderNumber: text('order_number').notNull().unique(),
   customerId: integer('customer_id').references(() => customers.id),
   customerName: text('customer_name').notNull(),
@@ -1127,6 +1223,7 @@ export const brickOrders = sqliteTable('brick_orders', {
   ...syncCols(),
 }, (t) => [
   index('brick_orders_store_idx').on(t.storeId),
+  index('brick_orders_branch_idx').on(t.branchId),
 ]);
 
 export const brickOrderItems = sqliteTable('brick_order_items', {

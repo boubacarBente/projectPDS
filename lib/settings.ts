@@ -167,10 +167,19 @@ export async function storeNumberTag(storeId: number | null | undefined): Promis
  * Si le numéro existe déjà (base restaurée, poste réinstallé qui a reçu
  * l'historique du serveur), on avance jusqu'au premier numéro libre.
  */
-export async function nextDocumentNumber(kind: DocumentKind, storeId?: number | null): Promise<string> {
+export async function nextDocumentNumber(
+  kind: DocumentKind,
+  storeId?: number | null,
+  /**
+   * Préfixe propre à une filiale de production (README §31) : « VIT » pour la
+   * vitrerie, « BRI » pour la briqueterie. La séquence suit le préfixe, pour
+   * que chaque filiale numérote à partir de 1.
+   */
+  options: { prefix?: string } = {},
+): Promise<string> {
   const settings = await getSettings();
 
-  const prefix = {
+  const defaultPrefix = {
     invoice: settings.invoicePrefix,
     purchase: settings.purchasePrefix,
     receipt: settings.receiptPrefix,
@@ -183,13 +192,17 @@ export async function nextDocumentNumber(kind: DocumentKind, storeId?: number | 
     brick: settings.brickPrefix,
     brick_order: settings.brickOrderPrefix,
   }[kind];
+  const prefix = options.prefix || defaultPrefix;
+  // La briqueterie reprise garde son compteur historique (même préfixe = même séquence).
+  const ownSequence = Boolean(options.prefix) && options.prefix !== defaultPrefix;
 
   const tag = await storeNumberTag(storeId);
   const year = new Date().getFullYear();
   const target = DOCUMENT_TARGETS[kind];
 
   for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    const sequence = await nextSequence(`${kind}:${storeId ?? 0}`, year);
+    const sequenceName = ownSequence ? `${kind}:${options.prefix}:${storeId ?? 0}` : `${kind}:${storeId ?? 0}`;
+    const sequence = await nextSequence(sequenceName, year);
     const number = renderDocumentNumber(prefix, sequence, settings.invoiceNumberFormat, year, tag);
     const taken = await rawAll(
       `SELECT 1 FROM ${target.table} WHERE ${target.column} = ? LIMIT 1`,

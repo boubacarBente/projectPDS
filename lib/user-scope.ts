@@ -41,6 +41,7 @@ export class UserScopeError extends Error {
 export const ADMIN_ONLY_ACTIONS: readonly Action[] = [
   'stores.viewAll',
   'stores.manage',
+  'brick.branches',
   'users.manage',
   'settings.critical',
   'backup.manage',
