@@ -41,6 +41,8 @@ export const TABLE_SCOPES = new Map([
   ["brick_production_workers",{"kind":"child","parentTable":"brick_productions","parentColumn":"production_id"}],
   ["brick_orders",{"kind":"store","column":"store_id"}],
   ["brick_order_items",{"kind":"child","parentTable":"brick_orders","parentColumn":"order_id"}],
+  ["production_model_materials",{"kind":"child","parentTable":"brick_types","parentColumn":"model_id"}],
+  ["production_materials",{"kind":"child","parentTable":"brick_productions","parentColumn":"production_id"}],
   ["stock_transfers",{"kind":"transfer"}],
   ["stock_transfer_items",{"kind":"child","parentTable":"stock_transfers","parentColumn":"transfer_id"}],
   ["stock_transfer_events",{"kind":"child","parentTable":"stock_transfers","parentColumn":"transfer_id"}],

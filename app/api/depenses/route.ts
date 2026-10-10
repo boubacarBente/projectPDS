@@ -13,6 +13,7 @@ import {
 } from '@/lib/api';
 import { createExpense, listExpenses, type ExpenseApprovalStatus } from '@/lib/expenses';
 import { writeAudit } from '@/lib/audit';
+import { hiddenBranchIds } from '@/lib/branches';
 import { today } from '@/lib/format';
 
 /**
@@ -42,6 +43,7 @@ export async function GET(request: NextRequest) {
       paymentMethod: params.get('paymentMethod') ?? undefined,
       from: params.get('from') ?? undefined,
       to: params.get('to') ?? undefined,
+      excludeBranchIds: await hiddenBranchIds(user),
       page,
       limit,
     });

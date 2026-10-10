@@ -275,6 +275,27 @@ export default function BrickProductionDetailPage() {
     }
   }
 
+  /* ── Sortie des matières prévues par la nomenclature (tout ou rien) ── */
+  async function consumePlanned() {
+    if (!detail) return;
+    setIsSubmitting(true);
+    try {
+      const response = await fetch(branchApiUrl(`/productions/${detail.production.id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action: 'consume_planned' }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response, 'Les matières prévues n’ont pas pu être sorties.'));
+      toast.success('Matières prévues sorties du stock.');
+      refresh();
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : 'Les matières prévues n’ont pas pu être sorties.', { autoClose: 9000 });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   /* ── Retrait d'une ligne de matière ───────────────────────────────── */
   async function removeMaterial() {
     if (!detail || !materialToRemove) return;
@@ -453,7 +474,10 @@ export default function BrickProductionDetailPage() {
     );
   }
 
-  const { production, brickType, product, materials, workers: assignments, expenses, costs } = detail;
+  const { production, brickType, product, materials, workers: assignments, expenses, costs, requirements } = detail;
+  // Les matières se corrigent tant que la production n'est pas en stock (le serveur fait foi).
+  const materialsEditable = production.status === 'registered';
+  const plannedLeft = requirements?.lines.filter((line) => line.toConsumeQuantity > 0).length ?? 0;
   const isCancelled = production.isCancelled;
   /** Un lot ne se modifie que depuis son magasin (README §30) ; annulé, il est figé. */
   const productionStoreId = (production as { storeId?: number }).storeId;
@@ -724,43 +748,91 @@ export default function BrickProductionDetailPage() {
       </SectionCard>
 
       {/*
-        Matières premières **historiques** : seuls les lots saisis avant la
-        révision §20 en portent. On les affiche en lecture seule plutôt que de
-        les masquer — leur coût est réel et il entre encore dans le total.
+        Matières (README §31.4) : besoins calculés par la nomenclature du modèle,
+        et matières réellement sorties du stock (chutes comprises) — les seules
+        qui comptent dans le coût. Facultatif : une filiale sans nomenclature
+        (briqueterie) saisit ses intrants en dépenses ci-dessus.
       */}
-      {materials.length > 0 && (
+      {(materials.length > 0 || (requirements?.lines.length ?? 0) > 0 || (canUpdate && !readOnly && materialsEditable)) && (
         <SectionCard
-          title="Matières premières (lots antérieurs)"
-          subtitle="Lignes héritées : les matières premières ne sont plus un module, elles se saisissent désormais en dépenses ci-dessus."
+          title="Matières"
+          subtitle="Une ligne = une sortie de stock réelle, chutes comprises. Retirer une ligne rend la matière au stock."
+          actions={
+            canUpdate && !readOnly && materialsEditable ? (
+              <div className="flex flex-wrap gap-2">
+                {plannedLeft > 0 && (
+                  <ToolbarButton onClick={() => void consumePlanned()} disabled={isSubmitting}>
+                    Sortir les matières prévues
+                  </ToolbarButton>
+                )}
+                <ToolbarButton variant="primary" onClick={() => setIsMaterialOpen(true)}>
+                  Ajouter une matière
+                </ToolbarButton>
+              </div>
+            ) : null
+          }
         >
-          <ResponsiveTable
-            columns={productionMaterialColumns}
-            data={materials}
-            getRowKey={(material) => material.id}
-            emptyMessage="Aucune matière première."
-            actions={
-              canUpdate && !readOnly
-                ? (material) => (
-                    <ToolbarButton
-                      variant="error"
-                      onClick={() => {
-                        setMaterialToRemove(material);
-                        setIsRemoveMaterialOpen(true);
-                      }}
-                    >
-                      Retirer
-                    </ToolbarButton>
-                  )
-                : undefined
-            }
-          />
-          <div className="mt-4 flex justify-end border-t border-base-200 pt-4">
-            <div className="w-full space-y-1 sm:w-80">
-              <InfoRow label="Total matières premières">
-                <MoneyText value={costs.materialCost} currency={currency} bold />
-              </InfoRow>
+          {requirements && requirements.lines.length > 0 && (
+            <div className="mb-4 space-y-2">
+              <h3 className="text-sm font-semibold">
+                Besoins prévus (nomenclature × {formatNumber(requirements.quantity)} {unit})
+              </h3>
+              <ul className="divide-y divide-base-200 rounded-xl border border-base-200 text-sm">
+                {requirements.lines.map((line) => (
+                  <li key={line.productId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                    <span className="font-medium">{line.productName}</span>
+                    <span className="tabular text-right text-base-content/80">
+                      prévu {formatQuantity(line.requiredQuantity, line.unit)} · sorti {formatQuantity(line.consumedQuantity, line.unit)}
+                      {line.toConsumeQuantity > 0 && (
+                        <>
+                          {' '}· reste {formatQuantity(line.toConsumeQuantity, line.unit)}{' '}
+                          {line.isCovered ? (
+                            <Badge tone="success">en stock</Badge>
+                          ) : (
+                            <Badge tone="error">manque {formatQuantity(line.missingQuantity, line.unit)}</Badge>
+                          )}
+                        </>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
+          )}
+          {materials.length === 0 ? (
+            <p className="text-sm text-base-content/60">Aucune matière sortie du stock pour cette production.</p>
+          ) : (
+            <>
+              <ResponsiveTable
+                columns={productionMaterialColumns}
+                data={materials}
+                getRowKey={(material) => material.id}
+                emptyMessage="Aucune matière."
+                actions={
+                  canUpdate && !readOnly && materialsEditable
+                    ? (material) => (
+                        <ToolbarButton
+                          variant="error"
+                          onClick={() => {
+                            setMaterialToRemove(material);
+                            setIsRemoveMaterialOpen(true);
+                          }}
+                        >
+                          Retirer
+                        </ToolbarButton>
+                      )
+                    : undefined
+                }
+              />
+              <div className="mt-4 flex justify-end border-t border-base-200 pt-4">
+                <div className="w-full space-y-1 sm:w-80">
+                  <InfoRow label="Total des matières">
+                    <MoneyText value={costs.materialCost} currency={currency} bold />
+                  </InfoRow>
+                </div>
+              </div>
+            </>
+          )}
         </SectionCard>
       )}
 

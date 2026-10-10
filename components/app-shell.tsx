@@ -145,7 +145,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const branchItems: NavItem[] = branchLinks.map((link) => ({
     href: link.href,
     label: link.name,
-    iconKey: 'bricks',
+    // Icône choisie par l'administrateur (README §31.2).
+    iconKey: link.icon ?? 'factory',
     action: 'brick.view',
   }));
   const visibleGroups = NAVIGATION.map((group) => {

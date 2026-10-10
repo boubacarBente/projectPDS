@@ -1,6 +1,6 @@
 // Fichier généré par `npm run db:dbml` depuis db/schema.ts — ne pas modifier.
 // À coller dans https://dbdiagram.io pour obtenir le diagramme.
-// 57 tables, 124 liens ; colonnes de synchronisation masquées (--complet pour les voir).
+// 62 tables, 146 liens ; colonnes de synchronisation masquées (--complet pour les voir).
 
 Project planete_deco {
   database_type: 'SQLite'
@@ -15,13 +15,6 @@ Enum brick_orders_status {
   "partially_delivered"
   "delivered"
   "cancelled"
-}
-
-Enum brick_productions_stage {
-  "molding"
-  "drying"
-  "firing"
-  "stored"
 }
 
 Enum brick_productions_status {
@@ -102,6 +95,35 @@ Enum payments_payment_label {
   "deposit"
   "balance"
   "full"
+}
+
+Enum production_branch_users_level {
+  "view"
+  "edit"
+  "manage"
+}
+
+Enum production_branches_activity {
+  "bricks"
+  "glass"
+  "furniture"
+  "other"
+}
+
+Enum production_branches_status {
+  "active"
+  "suspended"
+  "archived"
+}
+
+Enum production_branches_access_mode {
+  "all"
+  "restricted"
+}
+
+Enum production_branches_customer_mode {
+  "all"
+  "selected"
 }
 
 Enum purchase_invoices_status {
@@ -274,6 +296,7 @@ Table brick_order_items {
 Table brick_orders {
   id integer [pk, increment]
   store_id integer [not null]
+  branch_id integer
   order_number text [not null, unique]
   customer_id integer
   customer_name text [not null]
@@ -298,6 +321,7 @@ Table brick_orders {
 
   Indexes {
     (store_id) [name: 'brick_orders_store_idx']
+    (branch_id) [name: 'brick_orders_branch_idx']
   }
 
   Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
@@ -324,6 +348,7 @@ Table brick_production_workers {
 Table brick_productions {
   id integer [pk, increment]
   store_id integer [not null]
+  branch_id integer
   batch_number text [not null, unique]
   brick_type_id integer [not null]
   planned_quantity real [not null, default: 0]
@@ -331,7 +356,7 @@ Table brick_productions {
   broken_quantity real [not null, default: 0]
   start_date text
   end_date text
-  stage brick_productions_stage [not null, default: 'molding']
+  stage text [not null, default: 'molding']
   status brick_productions_status [not null, default: 'registered']
   team text
   cancel_reason text
@@ -343,6 +368,7 @@ Table brick_productions {
 
   Indexes {
     (store_id) [name: 'brick_productions_store_idx']
+    (branch_id) [name: 'brick_productions_branch_idx']
   }
 
   Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
@@ -351,17 +377,27 @@ Table brick_productions {
 Table brick_types {
   id integer [pk, increment]
   store_id integer [not null]
+  branch_id integer
   product_id integer [not null]
   name text [not null]
   shape brick_types_shape [not null, default: 'solid']
   dimensions text
   description text
+  category text
+  production_unit text
+  length real
+  width real
+  height real
+  thickness real
+  alert_threshold real
+  furniture_model_id integer
   is_active integer [not null, default: true]
   user_id integer
   created_at integer [not null]
 
   Indexes {
     (store_id) [name: 'brick_types_store_idx']
+    (branch_id) [name: 'brick_types_branch_idx']
   }
 
   Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
@@ -377,6 +413,7 @@ Table cash_movements {
   reference_type text
   reference_id integer
   session_id integer
+  production_branch_id integer
   balance_after real [not null, default: 0]
   date text [not null]
   user_id integer
@@ -385,6 +422,7 @@ Table cash_movements {
   Indexes {
     (store_id, date) [name: 'cash_movements_store_date_idx']
     (session_id) [name: 'cash_movements_session_idx']
+    (production_branch_id) [name: 'cash_movements_branch_idx']
   }
 
   Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
@@ -466,6 +504,7 @@ Table expenses {
   payment_method text [not null, default: 'Espèces']
   reference_type text
   reference_id integer
+  production_branch_id integer
   beneficiary text
   approval_status expenses_approval_status [not null, default: 'approved']
   approved_by integer
@@ -476,6 +515,7 @@ Table expenses {
 
   Indexes {
     (store_id, date) [name: 'expenses_store_date_idx']
+    (production_branch_id) [name: 'expenses_branch_idx']
   }
 
   Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
@@ -500,6 +540,7 @@ Table furniture_model_materials {
 Table furniture_models {
   id integer [pk, increment]
   store_id integer [not null]
+  branch_id integer
   code text [not null]
   name text [not null]
   description text
@@ -557,6 +598,7 @@ Table furniture_order_workers {
 Table furniture_orders {
   id integer [pk, increment]
   store_id integer [not null]
+  branch_id integer
   order_number text [not null, unique]
   purpose furniture_orders_purpose [not null, default: 'customer']
   customer_id integer
@@ -598,6 +640,7 @@ Table inventories {
   store_id integer [not null]
   status inventories_status [not null, default: 'open']
   category_id integer
+  production_branch_id integer
   opened_by integer
   validated_by integer
   validated_at integer
@@ -710,6 +753,96 @@ Table product_stocks {
   Indexes {
     (store_id, product_id) [name: 'product_stocks_store_product_unique', unique]
     (product_id) [name: 'product_stocks_product_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table production_branch_customers {
+  id integer [pk, increment]
+  branch_id integer [not null]
+  customer_id integer [not null]
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (branch_id, customer_id) [name: 'production_branch_customers_unique', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table production_branch_users {
+  id integer [pk, increment]
+  branch_id integer [not null]
+  user_id integer [not null]
+  level production_branch_users_level [not null, default: 'edit']
+  created_at integer [not null]
+
+  Indexes {
+    (branch_id, user_id) [name: 'production_branch_users_unique', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table production_branches {
+  id integer [pk, increment]
+  name text [not null]
+  activity production_branches_activity [not null, default: 'other']
+  description text
+  store_id integer
+  status production_branches_status [not null, default: 'active']
+  color text
+  icon text [not null, default: 'factory']
+  sort_order integer [not null, default: 0]
+  unit text [not null, default: 'pièce']
+  stages text [not null, default: '[{"key":"in_progress","label":"En cours"}]']
+  loss_label text [not null, default: 'Pertes']
+  batch_prefix text [not null, default: 'PRD']
+  order_prefix text [not null, default: 'CMD']
+  access_mode production_branches_access_mode [not null, default: 'all']
+  customer_mode production_branches_customer_mode [not null, default: 'all']
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (name) [name: 'production_branches_name_unique', unique]
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table production_materials {
+  id integer [pk, increment]
+  production_id integer [not null]
+  product_id integer
+  product_name text [not null]
+  unit text [not null, default: 'pièce']
+  quantity real [not null]
+  wastage_quantity real [not null, default: 0]
+  unit_cost real [not null, default: 0]
+  amount real [not null, default: 0]
+  user_id integer
+  created_at integer [not null]
+
+  Indexes {
+    (production_id) [name: 'production_materials_production_idx']
+  }
+
+  Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
+}
+
+Table production_model_materials {
+  id integer [pk, increment]
+  model_id integer [not null]
+  product_id integer [not null]
+  quantity real [not null, default: 0]
+  notes text
+  created_at integer [not null]
+
+  Indexes {
+    (model_id) [name: 'production_model_materials_model_idx']
   }
 
   Note: '+ 4 colonnes de synchronisation (sync_id, updated_at, deleted_at, origin_device_id)'
@@ -887,6 +1020,7 @@ Table sales_invoices {
   payment_method text [not null, default: 'Espèces']
   status sales_invoices_status [not null, default: 'active']
   channel sales_invoices_channel [not null, default: 'general']
+  production_branch_id integer
   cancel_reason text
   cancelled_by integer
   cancelled_at integer
@@ -1328,6 +1462,7 @@ Ref: brick_order_items.order_id > brick_orders.id
 Ref: brick_order_items.brick_type_id > brick_types.id
 Ref: brick_order_items.product_id > products.id
 Ref: brick_orders.store_id > stores.id
+Ref: brick_orders.branch_id > production_branches.id
 Ref: brick_orders.customer_id > customers.id
 Ref: brick_orders.user_id > users.id
 Ref: brick_orders.sales_invoice_id > sales_invoices.id
@@ -1335,31 +1470,38 @@ Ref: brick_orders.cancelled_by > users.id
 Ref: brick_production_workers.production_id > brick_productions.id
 Ref: brick_production_workers.worker_id > workers.id
 Ref: brick_productions.store_id > stores.id
+Ref: brick_productions.branch_id > production_branches.id
 Ref: brick_productions.brick_type_id > brick_types.id
 Ref: brick_productions.cancelled_by > users.id
 Ref: brick_productions.user_id > users.id
 Ref: brick_types.store_id > stores.id
+Ref: brick_types.branch_id > production_branches.id
 Ref: brick_types.product_id > products.id
+Ref: brick_types.furniture_model_id > furniture_models.id
 Ref: brick_types.user_id > users.id
 Ref: cash_movements.store_id > stores.id
 Ref: cash_movements.session_id > cash_sessions.id
+Ref: cash_movements.production_branch_id > production_branches.id
 Ref: cash_movements.user_id > users.id
 Ref: cash_sessions.store_id > stores.id
 Ref: cash_sessions.opened_by > users.id
 Ref: cash_sessions.closed_by > users.id
 Ref: customers.store_id > stores.id
 Ref: expenses.store_id > stores.id
+Ref: expenses.production_branch_id > production_branches.id
 Ref: expenses.approved_by > users.id
 Ref: expenses.user_id > users.id
 Ref: furniture_model_materials.model_id > furniture_models.id
 Ref: furniture_model_materials.product_id > products.id
 Ref: furniture_models.store_id > stores.id
+Ref: furniture_models.branch_id > production_branches.id
 Ref: furniture_models.user_id > users.id
 Ref: furniture_order_materials.order_id > furniture_orders.id
 Ref: furniture_order_materials.product_id > products.id
 Ref: furniture_order_workers.order_id > furniture_orders.id
 Ref: furniture_order_workers.worker_id > workers.id
 Ref: furniture_orders.store_id > stores.id
+Ref: furniture_orders.branch_id > production_branches.id
 Ref: furniture_orders.customer_id > customers.id
 Ref: furniture_orders.model_id > furniture_models.id
 Ref: furniture_orders.cancelled_by > users.id
@@ -1367,6 +1509,7 @@ Ref: furniture_orders.product_id > products.id
 Ref: furniture_orders.user_id > users.id
 Ref: inventories.store_id > stores.id
 Ref: inventories.category_id > categories.id
+Ref: inventories.production_branch_id > production_branches.id
 Ref: inventories.opened_by > users.id
 Ref: inventories.validated_by > users.id
 Ref: inventory_items.inventory_id > inventories.id [delete: cascade]
@@ -1380,6 +1523,18 @@ Ref: payments.store_id > stores.id
 Ref: payments.user_id > users.id
 Ref: product_stocks.store_id > stores.id
 Ref: product_stocks.product_id > products.id
+Ref: production_branch_customers.branch_id > production_branches.id
+Ref: production_branch_customers.customer_id > customers.id
+Ref: production_branch_customers.user_id > users.id
+Ref: production_branch_users.branch_id > production_branches.id
+Ref: production_branch_users.user_id > users.id
+Ref: production_branches.store_id > stores.id
+Ref: production_branches.user_id > users.id
+Ref: production_materials.production_id > brick_productions.id
+Ref: production_materials.product_id > products.id
+Ref: production_materials.user_id > users.id
+Ref: production_model_materials.model_id > brick_types.id
+Ref: production_model_materials.product_id > products.id
 Ref: products.category_id > categories.id
 Ref: products.owner_store_id > stores.id
 Ref: purchase_invoice_items.invoice_id > purchase_invoices.id [delete: cascade]
@@ -1402,6 +1557,7 @@ Ref: sales_invoice_items.product_id > products.id
 Ref: sales_invoices.store_id > stores.id
 Ref: sales_invoices.customer_id > customers.id
 Ref: sales_invoices.user_id > users.id
+Ref: sales_invoices.production_branch_id > production_branches.id
 Ref: sales_invoices.cancelled_by > users.id
 Ref: service_job_items.job_id > service_jobs.id
 Ref: service_job_items.service_id > services.id
@@ -1530,4 +1686,12 @@ TableGroup "Synchronisation" [color: #475569] {
   sync_conflicts
   sync_pending
   sync_state
+}
+
+TableGroup "Autres" [color: #64748b] {
+  production_branch_customers
+  production_branch_users
+  production_branches
+  production_materials
+  production_model_materials
 }

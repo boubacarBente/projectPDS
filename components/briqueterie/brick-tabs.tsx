@@ -39,19 +39,26 @@ export function useBrickScope() {
 type Tab = {
   path: string;
   label: string;
-  action: 'brick.view' | 'sales.view' | 'customers.view' | 'reports';
+  action: 'brick.view' | 'sales.view' | 'customers.view' | 'reports' | 'inventory.view' | 'expenses.view' | 'cash.view' | 'atelier';
 };
 
+/** Onglets d'une filiale, dans l'ordre du cahier des charges (README §31.2). */
 const TABS: Tab[] = [
   { path: '', label: 'Tableau de bord', action: 'brick.view' },
   { path: '/modeles', label: 'Modèles', action: 'brick.view' },
   { path: '/productions', label: 'Productions', action: 'brick.view' },
   { path: '/stock', label: 'Stock', action: 'brick.view' },
+  { path: '/inventaire', label: 'Inventaire', action: 'inventory.view' },
   { path: '/commandes', label: 'Commandes', action: 'brick.view' },
   { path: '/ventes', label: 'Ventes', action: 'sales.view' },
+  { path: '/depenses', label: 'Dépenses', action: 'expenses.view' },
+  { path: '/caisse', label: 'Caisse', action: 'cash.view' },
   { path: '/clients', label: 'Clients', action: 'customers.view' },
   // Rapport complet = rentabilité comprise : rapports et soldes requis.
   { path: '/rapports', label: 'Rapports', action: 'reports' },
+  { path: '/parametres', label: 'Paramètres', action: 'brick.view' },
+  // Historique de l'ancien module /atelier (README §31.9) : filiale « Meubles » seulement.
+  { path: '/atelier', label: 'Atelier (historique)', action: 'atelier' },
 ];
 
 export function BrickTabs({
@@ -66,6 +73,9 @@ export function BrickTabs({
   const canViewSales = usePermission('sales.view');
   const canCreateSales = usePermission('sales.create');
   const canViewCustomers = usePermission('customers.view');
+  const canViewInventory = usePermission('inventory.view');
+  const canViewExpenses = usePermission('expenses.view');
+  const canViewCash = usePermission('cash.view');
   const canViewAllReports = usePermission('reports.viewAll');
   const canViewBalances = usePermission('balances.view');
   const canViewReports = canViewAllReports && canViewBalances;
@@ -75,6 +85,10 @@ export function BrickTabs({
     if (tab.action === 'sales.view') return canViewSales;
     if (tab.action === 'customers.view') return canViewCustomers;
     if (tab.action === 'reports') return canViewReports;
+    if (tab.action === 'inventory.view') return canViewInventory;
+    if (tab.action === 'expenses.view') return canViewExpenses;
+    if (tab.action === 'cash.view') return canViewCash;
+    if (tab.action === 'atelier') return branch.activity === 'furniture';
     return true;
   });
 
@@ -92,29 +106,8 @@ export function BrickTabs({
           aucune nouvelle opération n’est acceptée.
         </div>
       )}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <nav aria-label={`Navigation de la filiale ${branch.name}`} className="-mb-px min-w-0 overflow-x-auto">
-          <ul className="flex min-w-max items-center gap-1 border-b border-base-200">
-            {visible.map((tab) => {
-              const isActive = tab.path === activePath;
-              return (
-                <li key={tab.path || 'dashboard'}>
-                  <Link
-                    href={href(tab.path)}
-                    aria-current={isActive ? 'page' : undefined}
-                    className={`inline-flex min-h-11 items-center whitespace-nowrap rounded-t-lg border-b-2 px-3 text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-transparent text-base-content/70 hover:border-base-300 hover:bg-base-200/60 hover:text-base-content'
-                    }`}
-                  >
-                    {tab.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+      {/* Treize onglets : ils ont leur propre ligne (défilante), les commandes au-dessus. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <span className={`hidden items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold lg:inline-flex ${color.soft}`}>
             <span aria-hidden="true" className={`h-2 w-2 rounded-full ${color.dot}`} />
@@ -130,6 +123,28 @@ export function BrickTabs({
           )}
         </div>
       </div>
+      <nav aria-label={`Navigation de la filiale ${branch.name}`} className="-mb-px min-w-0 overflow-x-auto">
+        <ul className="flex min-w-max items-center gap-1 border-b border-base-200">
+          {visible.map((tab) => {
+            const isActive = tab.path === activePath;
+            return (
+              <li key={tab.path || 'dashboard'}>
+                <Link
+                  href={href(tab.path)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`inline-flex min-h-11 items-center whitespace-nowrap rounded-t-lg border-b-2 px-3 text-sm font-medium transition-colors ${
+                    isActive
+                      ? 'border-primary bg-primary/5 text-primary'
+                      : 'border-transparent text-base-content/70 hover:border-base-300 hover:bg-base-200/60 hover:text-base-content'
+                  }`}
+                >
+                  {tab.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
     </div>
   );
 }

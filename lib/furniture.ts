@@ -43,6 +43,7 @@ import {
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api';
 import { assertCustomerInStore } from '@/lib/customers';
 import { addStockMovement } from '@/lib/stock';
+import { getFurnitureBranch } from '@/lib/branches';
 import { listPayments, recomputeDocumentPayments, type PaymentRow } from '@/lib/payments';
 import { nextDocumentNumber } from '@/lib/settings';
 import { roundMoney, today } from '@/lib/format';
@@ -480,6 +481,8 @@ export async function createFurnitureModel(
     .insert(furnitureModels)
     .values({
       storeId: input.storeId,
+      // L'atelier appartient à la filiale « Meuble » (README §31.9).
+      branchId: (await getFurnitureBranch())?.id ?? null,
       code,
       name,
       description: trimmed(input.description),
@@ -981,6 +984,7 @@ export async function createFurnitureOrder(
       .insert(furnitureOrders)
       .values({
         storeId: input.storeId,
+        branchId: (await getFurnitureBranch())?.id ?? null,
         orderNumber: await nextDocumentNumber('furniture', input.storeId),
         purpose,
         customerId,

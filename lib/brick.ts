@@ -95,8 +95,15 @@ export const EXPENSE_COST_SQL = `(SELECT COALESCE(SUM(e.amount), 0) FROM expense
    WHERE e.reference_type = 'brick_production' AND e.reference_id = p.id
      AND e.deleted_at IS NULL AND e.approval_status IN ('approved', 'to_pay'))`;
 
-/** Coût total d'un lot `p` (SQL), jamais stocké. */
-export const TOTAL_COST_SQL = `(${LABOR_COST_SQL} + ${EXPENSE_COST_SQL})`;
+/**
+ * Matières **réellement sorties** pour une production `p` (SQL), chutes comprises
+ * (README §31.4). Une ligne retirée (rendue au stock) porte `deleted_at`.
+ */
+export const MATERIAL_COST_SQL = `(SELECT COALESCE(SUM(m.amount), 0) FROM production_materials m
+   WHERE m.production_id = p.id AND m.deleted_at IS NULL)`;
+
+/** Coût total d'un lot `p` (SQL), jamais stocké : matières + équipe + dépenses. */
+export const TOTAL_COST_SQL = `(${MATERIAL_COST_SQL} + ${LABOR_COST_SQL} + ${EXPENSE_COST_SQL})`;
 
 /* ------------------------------------------------------------------ *
  * Types publics (formes de l'API, inchangées depuis la v1 + magasin)
@@ -184,7 +191,7 @@ export type BrickProductionRow = {
   lossLabel: string;
   status: BrickProductionStatus;
   team: string | null;
-  /** Toujours 0 : plus de module matières (§20) ; conservé pour l'interface. */
+  /** Matières sorties du stock (chutes comprises), README §31.4. */
   materialCost: number;
   laborCost: number;
   expenseCost: number;
@@ -202,6 +209,20 @@ export type BrickProductionRow = {
   cancelReason: string | null;
   cancelledAt: Date | null;
   cancelledByName: string | null;
+  createdAt: Date | null;
+};
+
+export type ProductionMaterialRow = {
+  id: number;
+  productionId: number;
+  productId: number | null;
+  productName: string;
+  unit: string;
+  quantity: number;
+  wastageQuantity: number;
+  unitCost: number;
+  amount: number;
+  userName: string | null;
   createdAt: Date | null;
 };
 
@@ -260,8 +281,8 @@ export type BrickProductionDetail = {
   production: BrickProductionRow;
   brickType: BrickTypeRow | null;
   product: { id: number; name: string; unit: string; stock: number; salePrice: number } | null;
-  /** Toujours vide (plus de module matières) ; conservé pour l'interface. */
-  materials: never[];
+  /** Matières sorties du stock pour cette production. */
+  materials: ProductionMaterialRow[];
   workers: BrickProductionWorkerRow[];
   expenses: BrickProductionExpenseRow[];
   costs: ProductionCosts;
@@ -557,8 +578,10 @@ const PRODUCTION_SELECT = `
          p.start_date, p.end_date, p.stage, p.status, p.team,
          p.cancel_reason, p.cancelled_at, cu.name AS cancelled_by_name,
          p.user_id, u.name AS user_name, p.notes, p.created_at,
+         ${MATERIAL_COST_SQL} AS material_cost,
          ${LABOR_COST_SQL} AS labor_cost,
          ${EXPENSE_COST_SQL} AS expense_cost,
+         (SELECT COUNT(*) FROM production_materials m WHERE m.production_id = p.id AND m.deleted_at IS NULL) AS materials_count,
          (SELECT COUNT(*) FROM brick_production_workers w WHERE w.production_id = p.id) AS workers_count,
          (SELECT COUNT(*) FROM expenses e
            WHERE e.reference_type = 'brick_production' AND e.reference_id = p.id AND e.deleted_at IS NULL) AS expenses_count,
@@ -578,9 +601,10 @@ function mapProductionRow(row: any): BrickProductionRow {
   const stageIndex = Math.max(0, flow.findIndex((s) => s.key === stageKey));
   const produced = num(row.produced_quantity);
   const broken = num(row.broken_quantity);
+  const materialCost = roundMoney(num(row.material_cost));
   const laborCost = roundMoney(num(row.labor_cost));
   const expenseCost = roundMoney(num(row.expense_cost));
-  const totalCost = roundMoney(laborCost + expenseCost);
+  const totalCost = roundMoney(materialCost + laborCost + expenseCost);
   const isCancelled = row.status === 'cancelled';
   return {
     id: num(row.id),
@@ -610,13 +634,13 @@ function mapProductionRow(row: any): BrickProductionRow {
     lossLabel: row.branch_loss_label || 'Pertes',
     status: isBrickProductionStatus(row.status) ? row.status : 'registered',
     team: row.team ?? null,
-    materialCost: 0,
+    materialCost,
     laborCost,
     expenseCost,
     totalCost,
     unitCost: unitCostOf(totalCost, roundMoney(produced - broken)),
     stored: num(row.stored_count) > 0,
-    materialsCount: 0,
+    materialsCount: num(row.materials_count),
     workersCount: num(row.workers_count),
     expensesCount: num(row.expenses_count),
     userId: row.user_id == null ? null : num(row.user_id),
@@ -703,6 +727,28 @@ export async function listProductionWorkers(productionId: number): Promise<Brick
   }));
 }
 
+/** Matières sorties pour la production (lignes retirées exclues). */
+export async function listProductionMaterials(productionId: number): Promise<ProductionMaterialRow[]> {
+  const rows = await rawAll<any>(
+    `SELECT m.*, u.name AS user_name FROM production_materials m LEFT JOIN users u ON u.id = m.user_id
+      WHERE m.production_id = ? AND m.deleted_at IS NULL ORDER BY m.id`,
+    [productionId],
+  );
+  return rows.map((row) => ({
+    id: num(row.id),
+    productionId: num(row.production_id),
+    productId: row.product_id == null ? null : num(row.product_id),
+    productName: row.product_name,
+    unit: row.unit,
+    quantity: num(row.quantity),
+    wastageQuantity: num(row.wastage_quantity),
+    unitCost: num(row.unit_cost),
+    amount: roundMoney(num(row.amount)),
+    userName: row.user_name ?? null,
+    createdAt: toDate(row.created_at),
+  }));
+}
+
 /** Dépenses rattachées au lot (annulées exclues, en attente comprises : on les voit). */
 export async function listProductionExpenses(productionId: number): Promise<BrickProductionExpenseRow[]> {
   const rows = await rawAll<any>(
@@ -733,10 +779,11 @@ export async function listProductionExpenses(productionId: number): Promise<Bric
 export async function getBrickProduction(id: number): Promise<BrickProductionDetail | null> {
   const production = await getBrickProductionRow(id);
   if (!production) return null;
-  const [brickType, workers, expenses] = await Promise.all([
+  const [brickType, workers, expenses, materials] = await Promise.all([
     getBrickType(production.brickTypeId),
     listProductionWorkers(id),
     listProductionExpenses(id),
+    listProductionMaterials(id),
   ]);
   const good = roundMoney(production.producedQuantity - production.brokenQuantity);
   return {
@@ -745,11 +792,11 @@ export async function getBrickProduction(id: number): Promise<BrickProductionDet
     product: brickType
       ? { id: brickType.productId, name: brickType.productName, unit: brickType.unit, stock: brickType.stock, salePrice: brickType.salePrice }
       : null,
-    materials: [],
+    materials,
     workers,
     expenses,
     costs: {
-      materialCost: 0,
+      materialCost: production.materialCost,
       laborCost: production.laborCost,
       expenseCost: production.expenseCost,
       totalCost: production.totalCost,
@@ -762,10 +809,10 @@ export async function getBrickProduction(id: number): Promise<BrickProductionDet
 }
 
 /** Coûts et coût unitaire masqués (invariant 13 : sans `balances.view`). */
-export function hideProductionCosts<T extends { laborCost?: number | null; expenseCost?: number | null; totalCost?: number | null; unitCost?: number | null }>(
-  row: T,
-): T {
-  return { ...row, laborCost: null, expenseCost: null, totalCost: null, unitCost: null };
+export function hideProductionCosts<
+  T extends { materialCost?: number | null; laborCost?: number | null; expenseCost?: number | null; totalCost?: number | null; unitCost?: number | null },
+>(row: T): T {
+  return { ...row, materialCost: null, laborCost: null, expenseCost: null, totalCost: null, unitCost: null };
 }
 
 /* ------------------------------------------------------------------ *
@@ -788,6 +835,7 @@ export async function getBrickSummary(options: { scope: StoreScope; branchIds: n
   const productions = await rawAll<any>(
     `SELECT p.brick_type_id, bt.name AS brick_type_name, COUNT(*) AS lots,
             SUM(p.produced_quantity) AS produced, SUM(p.broken_quantity) AS broken,
+            SUM(${MATERIAL_COST_SQL}) AS material_cost,
             SUM(${LABOR_COST_SQL}) AS labor_cost, SUM(${EXPENSE_COST_SQL}) AS expense_cost
        FROM brick_productions p INNER JOIN brick_types bt ON bt.id = p.brick_type_id
       WHERE ${prodWhere.join(' AND ')}
@@ -839,6 +887,7 @@ export async function getBrickSummary(options: { scope: StoreScope; branchIds: n
   const byType = new Map<number, BrickSummary['byType'][number]>();
   let produced = 0;
   let broken = 0;
+  let materialsCost = 0;
   let laborCost = 0;
   let expensesCost = 0;
   let productionsCount = 0;
@@ -846,9 +895,10 @@ export async function getBrickSummary(options: { scope: StoreScope; branchIds: n
     const typeId = num(row.brick_type_id);
     const typeProduced = num(row.produced);
     const typeBroken = num(row.broken);
-    const typeCost = num(row.labor_cost) + num(row.expense_cost);
+    const typeCost = num(row.material_cost) + num(row.labor_cost) + num(row.expense_cost);
     produced += typeProduced;
     broken += typeBroken;
+    materialsCost += num(row.material_cost);
     laborCost += num(row.labor_cost);
     expensesCost += num(row.expense_cost);
     productionsCount += num(row.lots);
@@ -865,7 +915,7 @@ export async function getBrickSummary(options: { scope: StoreScope; branchIds: n
     if (byType.has(typeId)) continue;
     byType.set(typeId, { brickTypeId: typeId, brickTypeName: typeNameById.get(typeId) ?? `Modèle #${typeId}`, produced: 0, broken: 0, sold: quantity, unitCost: 0 });
   }
-  const totalCost = roundMoney(laborCost + expensesCost);
+  const totalCost = roundMoney(materialsCost + laborCost + expensesCost);
   const good = roundMoney(produced - broken);
   return {
     from,
@@ -876,7 +926,7 @@ export async function getBrickSummary(options: { scope: StoreScope; branchIds: n
     good,
     sold: roundMoney(sold),
     soldRevenue: roundMoney(soldRevenue),
-    materialsCost: 0,
+    materialsCost: roundMoney(materialsCost),
     laborCost: roundMoney(laborCost),
     expensesCost: roundMoney(expensesCost),
     totalCost,
@@ -889,7 +939,7 @@ export async function getBrickSummary(options: { scope: StoreScope; branchIds: n
  * Lots — écriture (magasin actif uniquement)
  * ------------------------------------------------------------------ */
 
-async function assertProductionEditable(id: number, storeId: number, branchId: number): Promise<BrickProductionRow> {
+export async function assertProductionEditable(id: number, storeId: number, branchId: number): Promise<BrickProductionRow> {
   const production = await getBrickProductionRow(id);
   if (!production || production.branchId !== Number(branchId)) throw new NotFoundError('Production introuvable dans cette filiale');
   if (production.storeId !== Number(storeId)) {
@@ -1163,6 +1213,7 @@ export async function addProductionExpense(
     date: input.date,
     referenceType: PRODUCTION_EXPENSE_REFERENCE,
     referenceId: productionId,
+    productionBranchId: branchId,
     userId: input.userId ?? null,
   });
   const row = (await listProductionExpenses(productionId)).find((e) => e.id === expense.id);
@@ -1285,6 +1336,20 @@ export async function cancelBrickProduction(
         motif: `annulation production ${production.batchNumber} : ${motif}`,
         userId: user.id,
       });
+    }
+    // Matières sorties : rendues au stock avec leurs chutes (même règle que l'atelier, README §29).
+    const materials = await listProductionMaterials(id);
+    for (const material of materials) {
+      const back = roundMoney(material.quantity + material.wastageQuantity);
+      if (material.productId && back > 0) {
+        await addStockMovement(material.productId, 'entry', back, {
+          storeId: user.storeId,
+          referenceType: 'production_material',
+          referenceId: id,
+          motif: `annulation production ${production.batchNumber} : retour ${material.productName}`,
+          userId: user.id,
+        });
+      }
     }
     await db
       .update(brickProductions)

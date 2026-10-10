@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { assertAtelierAccess } from '@/lib/branches';
 import {
   assertStoreVisible,
   fail,
@@ -41,7 +42,8 @@ async function detailFor(user: SessionUser, id: number) {
 /** GET /api/atelier/commandes/[id] — fiche : matières, équipe, besoins, coûts, paiements. */
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    const user = await requireAction('furniture.view');
+    const user = await requireAction('brick.view');
+    await assertAtelierAccess(user);
     const { id } = await params;
     return ok(await detailFor(user, parseId(id)));
   } catch (error) {
@@ -68,7 +70,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const orderId = parseId(id);
     const body = await readJson<any>(request);
     const action = typeof body.action === 'string' ? body.action : 'update';
-    const user = await requireAction('furniture.update');
+    const user = await requireAction('brick.update');
+    await assertAtelierAccess(user, true);
     const storeId = await requireActiveStore(user);
 
     if (action === 'advance') {
@@ -208,7 +211,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
  */
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
-    const user = await requireAction('furniture.delete');
+    const user = await requireAction('brick.delete');
+    await assertAtelierAccess(user, true);
     const { id } = await params;
     const orderId = parseId(id);
     const body = await readJson<any>(request).catch(() => ({}) as any);

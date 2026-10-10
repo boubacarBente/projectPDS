@@ -3,6 +3,8 @@ import { fail, ok, requireAction, scopeFromRequest, ValidationError } from '@/li
 import { getBrickReports } from '@/lib/brick-analytics';
 import { requireBranch } from '@/lib/branches';
 import { startOfMonth, today } from '@/lib/format';
+import { getBranchCashSummary } from '@/lib/caisse';
+import { listInventories } from '@/lib/inventories';
 
 type Params = { params: Promise<{ branchId: string }> };
 
@@ -24,7 +26,18 @@ export async function GET(request: NextRequest, { params }: Params) {
     const from = rawFrom && /^\d{4}-\d{2}-\d{2}$/.test(rawFrom) ? rawFrom : startOfMonth(todayDate);
     const to = rawTo && /^\d{4}-\d{2}-\d{2}$/.test(rawTo) ? rawTo : todayDate;
     if (from > to) throw new ValidationError('La date de début doit précéder la date de fin');
-    return ok(await getBrickReports(from, to, scopeFromRequest(user, request), [branch.id]));
+    const scope = scopeFromRequest(user, request);
+    const [report, cash, inventories] = await Promise.all([
+      getBrickReports(from, to, scope, [branch.id]),
+      getBranchCashSummary({ scope, branchId: branch.id, from, to }),
+      listInventories({ scope, branchId: branch.id, status: 'all', limit: 200 }),
+    ]);
+    // Caisse et inventaires de la filiale (README §31.6, §31.8) ; inventaires ouverts sur la période.
+    const inPeriod = inventories.data.filter((row) => {
+      const day = row.createdAt ? row.createdAt.toISOString().slice(0, 10) : '';
+      return day >= from && day <= to;
+    });
+    return ok({ ...report, cash, inventories: inPeriod });
   } catch (error) {
     return fail(error);
   }

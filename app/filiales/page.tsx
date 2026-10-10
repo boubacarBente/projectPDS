@@ -27,7 +27,7 @@ import {
   type BranchStatus,
   type ProductionBranch,
 } from '@/lib/branches-shared';
-import { formatNumber, startOfMonth, today } from '@/lib/format';
+import { formatCurrency, formatNumber, startOfMonth, today } from '@/lib/format';
 import { formatDateShort } from '@/lib/date-format';
 
 /**
@@ -53,6 +53,10 @@ type OverviewRow = {
   outstanding: number;
   productionCost: number | null;
   margin: number | null;
+  globalExpenses: number | null;
+  profit: number | null;
+  cashBalance: number | null;
+  stockPurchaseValue: number | null;
   producedQuantity: number;
   lossQuantity: number;
   productionsCount: number;
@@ -71,6 +75,10 @@ type Overview = {
     outstanding: number;
     productionCost: number | null;
     margin: number | null;
+    globalExpenses: number | null;
+    profit: number | null;
+    cashBalance: number | null;
+    stockPurchaseValue: number | null;
     stockSaleValue: number;
     openOrders: number;
   };
@@ -162,6 +170,7 @@ export default function FilialesPage() {
   }, [reload]);
 
   const withCosts = overview?.totals.margin !== null && overview?.totals.margin !== undefined;
+  const withCash = overview?.totals.cashBalance !== null && overview?.totals.cashBalance !== undefined;
 
   const overviewColumns: Column<OverviewRow>[] = useMemo(
     () => [
@@ -170,64 +179,77 @@ export default function FilialesPage() {
         label: 'Filiale',
         primary: true,
         render: (row) => (
-          <Link href={`/filiales/${row.branchId}`} className="link link-hover flex items-center gap-2 font-medium">
+          <Link href={`/filiales/${row.branchId}`} className="link link-hover flex flex-wrap items-center gap-x-2 gap-y-1 font-medium">
             <BranchDot color={row.color} />
             {row.name}
             {row.status !== 'active' && <Badge tone={STATUS_TONES[row.status]}>{BRANCH_STATUS_LABELS[row.status]}</Badge>}
           </Link>
         ),
       },
-      { key: 'revenue', label: 'Ventes', className: 'text-right', render: (row) => <MoneyText value={row.revenue} bold /> },
-      { key: 'collected', label: 'Encaissé', className: 'text-right', hideOnMobile: true, render: (row) => <MoneyText value={row.collected} /> },
+      // Cellules à deux lignes : les indicateurs tiennent en 1366 px (README §28.4).
+      {
+        key: 'revenue',
+        label: 'Ventes',
+        className: 'text-right',
+        render: (row) => (
+          <div className="text-right">
+            <MoneyText value={row.revenue} bold />
+            <div className="whitespace-nowrap text-xs text-base-content/60">
+              encaissé <MoneyText value={row.collected} />
+            </div>
+          </div>
+        ),
+      },
       {
         key: 'outstanding',
-        label: 'Reste à encaisser',
+        label: 'Reste dû',
         className: 'text-right',
         render: (row) => <MoneyText value={row.outstanding} remaining />,
       },
       ...(withCosts
         ? ([
             {
-              key: 'cost',
-              label: 'Coût de production',
+              key: 'profit',
+              label: 'Bénéfice',
+              className: 'text-right',
+              render: (row: OverviewRow) => (
+                <div className="text-right">
+                  <MoneyText value={row.profit ?? 0} colored bold />
+                  <div className="whitespace-nowrap text-xs text-base-content/60">
+                    coûts <MoneyText value={(row.productionCost ?? 0) + (row.globalExpenses ?? 0)} />
+                  </div>
+                </div>
+              ),
+            },
+          ] as Column<OverviewRow>[])
+        : []),
+      ...(withCash
+        ? ([
+            {
+              key: 'cash',
+              label: 'Solde caisse',
               className: 'text-right',
               hideOnMobile: true,
-              render: (row: OverviewRow) => <MoneyText value={row.productionCost ?? 0} />,
-            },
-            {
-              key: 'margin',
-              label: 'Marge',
-              className: 'text-right',
-              render: (row: OverviewRow) => <MoneyText value={row.margin ?? 0} colored bold />,
+              render: (row: OverviewRow) => <MoneyText value={row.cashBalance ?? 0} colored />,
             },
           ] as Column<OverviewRow>[])
         : []),
       {
         key: 'produced',
-        label: 'Produit',
+        label: 'Activité',
         hideOnMobile: true,
         render: (row) => (
-          <span className="tabular text-sm">
+          <span className="whitespace-nowrap tabular text-sm">
             {formatNumber(row.producedQuantity)} {row.unit}
-            <span className="block text-xs text-base-content/60">{row.productionsCount} production(s)</span>
+            <span className="block text-xs text-base-content/60">
+              {row.productionsCount} prod. · {row.openOrders} cmd en cours
+            </span>
+            {row.lowStockCount > 0 && <span className="block text-xs text-warning">{row.lowStockCount} modèle(s) sous le seuil</span>}
           </span>
         ),
       },
-      { key: 'orders', label: 'Commandes en cours', hideOnMobile: true, render: (row) => <span className="tabular">{row.openOrders}</span> },
-      {
-        key: 'stock',
-        label: 'Stock (prix de vente)',
-        className: 'text-right',
-        hideOnMobile: true,
-        render: (row) => (
-          <div className="text-right">
-            <MoneyText value={row.stockSaleValue} />
-            {row.lowStockCount > 0 && <div className="text-xs text-warning">{row.lowStockCount} modèle(s) sous le seuil</div>}
-          </div>
-        ),
-      },
     ],
-    [withCosts],
+    [withCosts, withCash],
   );
 
   const adminColumns: Column<ProductionBranch>[] = [
@@ -380,12 +402,12 @@ export default function FilialesPage() {
                     value={<MoneyText value={overview.totals.outstanding} remaining />}
                     tooltip="Ce que les clients doivent encore sur les ventes des filiales, toutes dates confondues : un dû de l’an dernier reste un dû."
                   />
-                  {overview.totals.margin !== null ? (
+                  {overview.totals.profit !== null ? (
                     <StatCardDelta
-                      label="Marge sur production"
+                      label="Bénéfice des filiales"
                       tone="success"
-                      value={<MoneyText value={overview.totals.margin} colored bold />}
-                      tooltip="Ventes de la période moins le coût de production des lots de la période (équipe + dépenses rattachées validées). Les dépenses générales des magasins (loyer…) n’y sont pas : elles restent dans le bénéfice de l’entreprise (/soldes)."
+                      value={<MoneyText value={overview.totals.profit} colored bold />}
+                      tooltip={`Ventes de la période moins le coût des productions de la période (matières, équipe, dépenses de lot) moins les dépenses globales des filiales. Marge sur production : ${formatCurrency(overview.totals.margin ?? 0)} ; dépenses globales : ${formatCurrency(overview.totals.globalExpenses ?? 0)}.`}
                     />
                   ) : (
                     <StatCardDelta

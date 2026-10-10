@@ -330,11 +330,12 @@ export async function getBrickDashboard(scope: StoreScope, branchIds: number[], 
     [PRODUCTION_EXPENSE_REFERENCE, month.from, month.to],
   );
 
-  // Dépenses générales du mois : tout ce qui n'est pas rattaché à un lot.
+  // Dépenses globales de la filiale du mois (README §31.7) : ses dépenses non rattachées à un lot.
+  // ⚠️ Avant la v2.3, toutes les dépenses du magasin étaient comptées ici, filiale ou non.
   const generalExpensesMonth = await rawGet<{ total: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) AS total
        FROM expenses
-      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND date >= ? AND date <= ?
+      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND ${branchSql('production_branch_id', branchIds)} AND date >= ? AND date <= ?
         AND (reference_type IS NULL OR reference_type <> ?)`,
     [month.from, month.to, PRODUCTION_EXPENSE_REFERENCE],
   );
@@ -411,7 +412,7 @@ export async function getBrickDashboard(scope: StoreScope, branchIds: number[], 
             COALESCE(SUM(CASE WHEN reference_type = ? THEN amount ELSE 0 END), 0) AS production,
             COALESCE(SUM(CASE WHEN reference_type IS NULL OR reference_type <> ? THEN amount ELSE 0 END), 0) AS general
        FROM expenses
-      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND date >= ? AND date <= ?
+      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND ${branchSql('production_branch_id', branchIds)} AND date >= ? AND date <= ?
       GROUP BY date`,
     [PRODUCTION_EXPENSE_REFERENCE, PRODUCTION_EXPENSE_REFERENCE, chartFrom, reference],
   );
@@ -697,7 +698,7 @@ export async function getBrickReports(from: string, to: string, scope: StoreScop
   const generalExpensesByCategory = await rawAll<any>(
     `SELECT category, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count
        FROM expenses
-      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND date >= ? AND date <= ?
+      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND ${branchSql('production_branch_id', branchIds)} AND date >= ? AND date <= ?
         AND (reference_type IS NULL OR reference_type <> ?)
       GROUP BY category
       ORDER BY total DESC`,
@@ -803,7 +804,7 @@ export async function getBrickReports(from: string, to: string, scope: StoreScop
 
   const generalRow = await rawGet<{ total: number | null }>(
     `SELECT COALESCE(SUM(amount), 0) AS total FROM expenses
-      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND date >= ? AND date <= ?
+      WHERE ${COUNTED_EXPENSE} AND ${EXS} AND ${branchSql('production_branch_id', branchIds)} AND date >= ? AND date <= ?
         AND (reference_type IS NULL OR reference_type <> ?)`,
     [from, to, PRODUCTION_EXPENSE_REFERENCE],
   );
@@ -949,8 +950,16 @@ export type BranchOverviewRow = {
   collected: number;
   outstanding: number;
   productionCost: number;
-  /** Marge sur coût de production (le résultat d'une filiale, sans dépenses générales). */
+  /** Marge sur coût de production (ventes − coût des productions). */
   margin: number;
+  /** Dépenses globales décaissées de la filiale sur la période (README §31.7). */
+  globalExpenses: number;
+  /** Bénéfice = marge − dépenses globales. */
+  profit: number;
+  /** Solde cumulé de caisse de la filiale (README §31.8). */
+  cashBalance: number;
+  /** Stock valorisé au prix d'achat. */
+  stockPurchaseValue: number;
   producedQuantity: number;
   lossQuantity: number;
   productionsCount: number;
@@ -1006,6 +1015,7 @@ export async function getBranchesOverview(
   const stock = await rawAll<any>(
     `SELECT bt.branch_id,
             COALESCE(SUM(COALESCE(ps.quantity, 0) * p.sale_price), 0) AS sale_value,
+            COALESCE(SUM(COALESCE(ps.quantity, 0) * p.purchase_price), 0) AS purchase_value,
             SUM(CASE WHEN COALESCE(ps.quantity, 0) <= COALESCE(bt.alert_threshold, ps.stock_min, p.stock_min, 0)
                       AND COALESCE(bt.alert_threshold, ps.stock_min, p.stock_min, 0) > 0 THEN 1 ELSE 0 END) AS low
        FROM brick_types bt
@@ -1013,6 +1023,21 @@ export async function getBranchesOverview(
        LEFT JOIN product_stocks ps ON ps.product_id = bt.product_id AND ps.store_id = bt.store_id
       WHERE bt.is_active = 1 AND ${scopeSql('bt.store_id', scope)} AND ${branchSql('bt.branch_id', ids)}
       GROUP BY bt.branch_id`,
+  );
+  const globalExpenses = await rawAll<any>(
+    `SELECT production_branch_id AS branch_id, COALESCE(SUM(amount), 0) AS total FROM expenses
+      WHERE ${COUNTED_EXPENSE} AND ${scopeSql('store_id', scope)} AND ${branchSql('production_branch_id', ids)}
+        AND reference_type = 'production_branch' AND date >= ? AND date <= ?
+      GROUP BY production_branch_id`,
+    [from, to],
+  );
+  const cash = await rawAll<any>(
+    `SELECT production_branch_id AS branch_id,
+            COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE -amount END), 0) AS balance
+       FROM cash_movements
+      WHERE deleted_at IS NULL AND ${scopeSql('store_id', scope)} AND ${branchSql('production_branch_id', ids)} AND date <= ?
+      GROUP BY production_branch_id`,
+    [to],
   );
   const pick = (rows: any[], id: number) => rows.find((r) => Number(r.branch_id) === id);
   return ids.map((id) => {
@@ -1028,6 +1053,10 @@ export async function getBranchesOverview(
       outstanding: roundMoney(Number(pick(outstanding, id)?.outstanding ?? 0)),
       productionCost,
       margin: roundMoney(revenue - productionCost),
+      globalExpenses: roundMoney(Number(pick(globalExpenses, id)?.total ?? 0)),
+      profit: roundMoney(revenue - productionCost - Number(pick(globalExpenses, id)?.total ?? 0)),
+      cashBalance: roundMoney(Number(pick(cash, id)?.balance ?? 0)),
+      stockPurchaseValue: roundMoney(Number(pick(stock, id)?.purchase_value ?? 0)),
       producedQuantity: roundMoney(Number(p?.produced ?? 0)),
       lossQuantity: roundMoney(Number(p?.broken ?? 0)),
       productionsCount: Number(p?.n ?? 0),

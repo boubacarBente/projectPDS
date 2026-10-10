@@ -36,6 +36,7 @@ export async function POST(request: NextRequest) {
         description: body.description ?? null,
         storeId: body.storeId ? Number(body.storeId) : null,
         color: body.color ?? null,
+        icon: body.icon ?? null,
         sortOrder: body.sortOrder === undefined || body.sortOrder === '' ? undefined : Number(body.sortOrder),
         unit: body.unit,
         stages: Array.isArray(body.stages) ? body.stages : undefined,

@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { assertAtelierAccess } from '@/lib/branches';
 import {
   assertStoreVisible,
   fail,
@@ -37,7 +38,8 @@ async function modelFor(user: SessionUser, id: number, quantity = 0) {
 /** GET /api/atelier/modeles/[id] — `?quantity=3` calcule les besoins pour 3 unités. */
 export async function GET(request: NextRequest, { params }: Params) {
   try {
-    const user = await requireAction('furniture.view');
+    const user = await requireAction('brick.view');
+    await assertAtelierAccess(user);
     const { id } = await params;
     return ok(await modelFor(user, parseId(id), toNumber(request.nextUrl.searchParams.get('quantity'), 0)));
   } catch (error) {
@@ -51,7 +53,8 @@ export async function GET(request: NextRequest, { params }: Params) {
  */
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
-    const user = await requireAction('furniture.models');
+    const user = await requireAction('brick.types');
+    await assertAtelierAccess(user, true);
     const { id } = await params;
     const modelId = parseId(id);
     const body = await readJson<any>(request);
@@ -99,7 +102,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
  */
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
-    const user = await requireAction('furniture.models');
+    const user = await requireAction('brick.types');
+    await assertAtelierAccess(user, true);
     const { id } = await params;
     const modelId = parseId(id);
     const storeId = await requireActiveStore(user);

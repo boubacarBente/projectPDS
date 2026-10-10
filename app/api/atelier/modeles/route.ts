@@ -1,17 +1,7 @@
 import { NextRequest } from 'next/server';
-import {
-  fail,
-  ok,
-  parsePagination,
-  readJson,
-  requireAction,
-  requireActiveStore,
-  scopeFromRequest,
-  toBool,
-  toNumber,
-} from '@/lib/api';
-import { createFurnitureModel, listFurnitureModels, setModelMaterials } from '@/lib/furniture';
-import { writeAudit } from '@/lib/audit';
+import { assertAtelierAccess } from '@/lib/branches';
+import { fail, ok, parsePagination, requireAction, scopeFromRequest, toBool, ConflictError } from '@/lib/api';
+import { listFurnitureModels } from '@/lib/furniture';
 
 /**
  * GET /api/atelier/modeles — modèles de meubles du magasin (README §29).
@@ -19,7 +9,8 @@ import { writeAudit } from '@/lib/audit';
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireAction('furniture.view');
+    const user = await requireAction('brick.view');
+    await assertAtelierAccess(user);
     const params = request.nextUrl.searchParams;
     const { page, limit } = parsePagination(params);
     return ok(
@@ -37,39 +28,18 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** POST /api/atelier/modeles — nouveau modèle du magasin actif (nomenclature facultative). */
-export async function POST(request: NextRequest) {
+/**
+ * POST — **fermé** : l'atelier est repris par la filiale Meuble (README §31.9).
+ * Les anciennes commandes s'achèvent (`PUT /api/atelier/commandes/[id]`) ; tout
+ * nouveau travail passe par `/api/filiales/[branchId]/*`.
+ */
+export async function POST() {
   try {
-    const user = await requireAction('furniture.models');
-    const body = await readJson<any>(request);
-    const storeId = await requireActiveStore(user);
-
-    const model = await createFurnitureModel({
-      storeId,
-      userId: user.id,
-      code: body.code ?? null,
-      name: body.name,
-      description: body.description ?? null,
-      standardDimensions: body.standardDimensions ?? null,
-      laborHours: toNumber(body.laborHours, 0),
-      salePrice: toNumber(body.salePrice, 0),
-    });
-    if (Array.isArray(body.materials) && body.materials.length > 0) {
-      await setModelMaterials(
-        model.id,
-        body.materials.map((line: any) => ({ productId: toNumber(line?.productId, 0), quantity: toNumber(line?.quantity, 0) })),
-        storeId,
-      );
-    }
-
-    await writeAudit({
-      user,
-      action: 'create',
-      entity: 'furniture_model',
-      entityId: model.id,
-      details: { code: model.code, name: model.name, salePrice: model.salePrice },
-    });
-    return ok(model, 201);
+    const user = await requireAction('brick.view');
+    await assertAtelierAccess(user);
+    throw new ConflictError(
+      'L’atelier de meubles est désormais la filiale « Meuble » : créez vos modèles, productions et commandes depuis son espace (menu de gauche).',
+    );
   } catch (error) {
     return fail(error);
   }

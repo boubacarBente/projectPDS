@@ -57,6 +57,33 @@ export function branchColorClasses(color: string | null | undefined) {
   return BRANCH_COLOR_CLASSES[(BRANCH_COLORS as readonly string[]).includes(color ?? '') ? (color as BranchColor) : 'primary'];
 }
 
+/**
+ * Icônes proposées pour le menu (README §31.2) : clés de `components/nav-icons.tsx`.
+ */
+export const BRANCH_ICONS = ['bricks', 'furniture', 'glass', 'factory', 'stock', 'tools', 'door'] as const;
+export type BranchIcon = (typeof BRANCH_ICONS)[number];
+
+export const BRANCH_ICON_LABELS: Record<BranchIcon, string> = {
+  bricks: 'Briques',
+  furniture: 'Meuble',
+  glass: 'Vitrerie',
+  factory: 'Usine',
+  stock: 'Stock / colis',
+  tools: 'Outils',
+  door: 'Porte / aluminium',
+};
+
+export const DEFAULT_BRANCH_ICON: Record<BranchActivity, BranchIcon> = {
+  bricks: 'bricks',
+  glass: 'glass',
+  furniture: 'furniture',
+  other: 'factory',
+};
+
+export function branchIcon(value: string | null | undefined): BranchIcon {
+  return (BRANCH_ICONS as readonly string[]).includes(value ?? '') ? (value as BranchIcon) : 'factory';
+}
+
 /** Unités proposées (le champ reste libre). */
 export const BRANCH_UNITS = ['pièce', 'm²', 'm³', 'mètre', 'paquet', 'lot', 'kg', 'sac', 'planche', 'feuille'] as const;
 
@@ -100,6 +127,7 @@ export type ProductionBranch = {
   storeName: string | null;
   status: BranchStatus;
   color: BranchColor;
+  icon: BranchIcon;
   sortOrder: number;
   unit: string;
   stages: BranchStage[];
@@ -121,7 +149,7 @@ export type ProductionBranch = {
 };
 
 /** Lien de menu d'une filiale (barre latérale). */
-export type BranchNavLink = { id: number; name: string; color: BranchColor; href: string };
+export type BranchNavLink = { id: number; name: string; color: BranchColor; icon: BranchIcon; href: string };
 
 export function branchHref(branchId: number, path = ''): string {
   return `/filiales/${branchId}${path}`;
@@ -141,3 +169,46 @@ export function nextStage(branch: Pick<ProductionBranch, 'flow'>, key: string): 
   const index = branch.flow.findIndex((s) => s.key === key);
   return index >= 0 && index < branch.flow.length - 1 ? branch.flow[index + 1] : null;
 }
+
+/**
+ * Catégories **fermées** des dépenses rattachées à une production (README §30,
+ * §31.7) : ce qui entre dans le coût de revient. Distinctes de la liste des
+ * Paramètres, qui décrit les frais de fonctionnement.
+ */
+export const PRODUCTION_EXPENSE_CATEGORIES = [
+  'Matières premières',
+  'Ciment',
+  'Sable',
+  'Argile / terre',
+  'Bois de chauffe',
+  'Carburant',
+  "Main-d'œuvre",
+  'Électricité',
+  'Eau',
+  'Transport',
+  'Découpe / façonnage',
+  'Entretien',
+  'Autre',
+] as const;
+
+/**
+ * Catégories **fermées** des dépenses globales d'une filiale (README §31.7) :
+ * elles concernent toute la filiale, sans lot précis, et diminuent le
+ * bénéfice de la période.
+ */
+export const BRANCH_EXPENSE_CATEGORIES = [
+  'Matières premières',
+  "Main-d'œuvre",
+  'Salaires',
+  'Transport',
+  'Entretien des machines',
+  'Loyer et charges',
+  'Électricité',
+  'Eau',
+  'Outillage',
+  'Pertes exceptionnelles',
+  'Autre',
+] as const;
+
+/** Rattachement d'une dépense globale de filiale (`expenses.reference_type`). */
+export const BRANCH_EXPENSE_REFERENCE = 'production_branch';

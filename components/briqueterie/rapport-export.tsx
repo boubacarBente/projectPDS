@@ -68,6 +68,26 @@ export type BrickReports = {
     count: number;
   }[];
   generalExpensesByCategory: { category: string; total: number; count: number }[];
+  /** Caisse de la filiale (README §31.8) : entrées, sorties, solde. */
+  cash?: {
+    income: number;
+    expense: number;
+    net: number;
+    balance: number;
+    movementsCount: number;
+    byMethod: { method: string; income: number; expense: number; net: number }[];
+  };
+  /** Inventaires de la filiale ouverts sur la période (README §31.6). */
+  inventories?: {
+    id: number;
+    reference: string;
+    storeName: string;
+    status: 'open' | 'validated' | 'cancelled';
+    itemCount: number;
+    discrepancyCount: number;
+    discrepancyValue: number;
+    createdAt: string | null;
+  }[];
   salesByPeriod: {
     date: string;
     count: number;
@@ -218,7 +238,7 @@ export function brickProfitabilityIndicators(
     {
       key: 'estimatedResult',
       label: 'Résultat estimé',
-      formula: 'Marge brute − dépenses générales',
+      formula: 'Marge brute − dépenses globales de la filiale',
       amount: p.estimatedResult,
     },
   ];
@@ -361,7 +381,7 @@ export function buildBrickSections(
       ]),
     },
     {
-      title: 'Dépenses générales par catégorie',
+      title: 'Dépenses globales de la filiale par catégorie',
       head: ['Catégorie', 'Écritures', 'Montant'],
       numeric: [1, 2],
       rows: report.generalExpensesByCategory.map((row) => [
@@ -369,10 +389,43 @@ export function buildBrickSections(
         quantityCell(row.count, row.count === 1 ? 'écriture' : 'écritures'),
         moneyCell(row.total, currency),
       ]),
-      note: `Total des dépenses générales : ${formatCurrency(p.generalExpenses, currency)} sur ${formatNumber(
+      note: `Total des dépenses globales : ${formatCurrency(p.generalExpenses, currency)} sur ${formatNumber(
         countRows(report.generalExpensesByCategory),
       )} écriture(s).`,
     },
+    ...(report.cash
+      ? [
+          {
+            title: 'Caisse de la filiale',
+            head: ['Moyen', 'Entrées', 'Sorties', 'Net'],
+            numeric: [1, 2, 3],
+            rows: report.cash.byMethod.map((row) => [
+              labelCell(row.method),
+              moneyCell(row.income, currency),
+              moneyCell(row.expense, currency),
+              moneyCell(row.net, currency),
+            ]),
+            note: `Entrées ${formatCurrency(report.cash.income, currency)} · sorties ${formatCurrency(report.cash.expense, currency)} · solde cumulé de la filiale ${formatCurrency(report.cash.balance, currency)}.`,
+          },
+        ]
+      : []),
+    ...(report.inventories
+      ? [
+          {
+            title: 'Inventaires',
+            head: ['Inventaire', 'Magasin', 'Statut', 'Produits', 'Écarts', 'Valeur des écarts'],
+            numeric: [3, 4, 5],
+            rows: report.inventories.map((row) => [
+              labelCell(row.reference),
+              labelCell(row.storeName),
+              labelCell(row.status === 'validated' ? 'Validé' : row.status === 'cancelled' ? 'Annulé' : 'En cours'),
+              quantityCell(row.itemCount, 'produit(s)'),
+              quantityCell(row.discrepancyCount, 'écart(s)'),
+              moneyCell(row.discrepancyValue, currency),
+            ]),
+          },
+        ]
+      : []),
     {
       title: 'Ventes par période',
       head: ['Date', 'Ventes', 'Chiffre d’affaires', 'Encaissé', 'Reste à encaisser'],
@@ -529,7 +582,7 @@ export function buildBrickDecisionSummary(report: BrickReports, currency = 'GNF'
   );
 
   sentences.push(
-    `Après ${money(p.generalExpenses)} de dépenses générales, le résultat estimé de la période est ` +
+    `Après ${money(p.generalExpenses)} de dépenses globales de la filiale, le résultat estimé de la période est ` +
       `${p.estimatedResult >= 0 ? 'bénéficiaire' : 'déficitaire'} de ${money(Math.abs(p.estimatedResult))}.`,
   );
 

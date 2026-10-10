@@ -23,7 +23,7 @@ import { getSettings } from '@/lib/settings';
 
 export type StockMovementType = 'entry' | 'exit' | 'adjustment';
 
-export type StockReferenceType = 'sale' | 'purchase' | 'service_job' | 'furniture_order' | 'brick_production' | 'inventory' | 'transfer';
+export type StockReferenceType = 'sale' | 'purchase' | 'service_job' | 'furniture_order' | 'brick_production' | 'production_material' | 'inventory' | 'transfer';
 
 export type AddStockMovementOptions = {
   /** Magasin concerné — obligatoire. */

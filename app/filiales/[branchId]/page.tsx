@@ -9,10 +9,11 @@
  * chiffres affichés appartiennent au même instant**.
  *
  * Rappels de la révision §20 que cette page doit rendre lisibles :
- *  - **il n'y a pas de module de matières premières** : le ciment, le sable et le
- *    carburant sont des **dépenses rattachées à un lot**, qui sortent de la caisse ;
- *  - le **coût de production** ne contient que ces dépenses rattachées (plus la
- *    main-d'œuvre des affectations), **jamais** les dépenses générales — un loyer
+ *  - les intrants d'une production sont des **matières sorties du stock** (selon
+ *    la nomenclature du modèle, README §31.4) ou des **dépenses rattachées au lot**
+ *    (ciment, carburant… pour la briqueterie), qui sortent de la caisse ;
+ *  - le **coût de production** ne contient que matières, dépenses rattachées et
+ *    main-d'œuvre des affectations, **jamais** les dépenses globales de la filiale — un loyer
  *    ne doit pas augmenter le prix de revient d'une brique ;
  *  - les **ventes de briques** sont celles du canal `brick` : elles n'apparaissent
  *    pas dans la liste `/ventes` du commerce général.
@@ -438,14 +439,14 @@ export default function BriqueterieDashboardPage() {
               tooltip="Dépenses validées rattachées aux lots commencés ce mois-ci : ciment, sable, carburant… Elles font le coût des pièces."
               tone="warning"
               value={<MoneyText value={data.expenses.productionMonth} currency={currency} />}
-              hint="Ciment, sable, carburant, main-d’œuvre… rattachés aux lots du mois"
+              hint="Main-d’œuvre, carburant, colle, découpe… rattachés aux lots du mois"
             />
             <StatCardDelta
-              label="Dépenses générales"
-              tooltip="Dépenses validées du mois qui ne sont rattachées à aucun lot (loyer, transport…) : elles ne changent pas le coût d’une pièce."
+              label="Dépenses globales"
+              tooltip="Dépenses décaissées du mois de la filiale qui ne sont rattachées à aucun lot (loyer, salaires, entretien…) : elles ne changent pas le coût d’une pièce mais diminuent le bénéfice."
               tone="neutral"
               value={<MoneyText value={data.expenses.generalMonth} currency={currency} />}
-              hint="Transport, loyer, électricité… hors production"
+              hint="Loyer, salaires, entretien… de la filiale"
             />
             {data.profitability && (
               <>
@@ -458,10 +459,10 @@ export default function BriqueterieDashboardPage() {
                 />
                 <StatCardDelta
                   label="Bénéfice estimé du mois"
-                  tooltip="Chiffre d’affaires des pièces moins le coût de production des lots du mois et les dépenses générales du mois. C’est une estimation : les pièces vendues ne sont pas toutes celles fabriquées ce mois-ci."
+                  tooltip="Chiffre d’affaires des pièces moins le coût de production des lots du mois et les dépenses globales de la filiale du mois. C’est une estimation : les pièces vendues ne sont pas toutes celles fabriquées ce mois-ci."
                   tone={data.profitability.estimatedResult >= 0 ? 'success' : 'error'}
                   value={<MoneyText value={data.profitability.estimatedResult} currency={currency} />}
-                  hint={`CA − coûts de production − dépenses générales · marge ${formatPercent(data.profitability.marginRate)}`}
+                  hint={`CA − coûts de production − dépenses globales de la filiale · marge ${formatPercent(data.profitability.marginRate)}`}
                 />
               </>
             )}
@@ -577,7 +578,7 @@ export default function BriqueterieDashboardPage() {
                     tone: 2,
                   },
                   {
-                    label: 'Dépenses générales',
+                    label: 'Dépenses globales',
                     values: data.charts.expenses.map((p) => p.general),
                     tone: 4,
                   },

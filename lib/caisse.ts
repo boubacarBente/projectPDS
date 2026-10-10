@@ -289,6 +289,8 @@ export async function addCashMovement(input: {
   userId?: number | null;
   /** Force une session précise (import, correction). */
   sessionId?: number | null;
+  /** Filiale concernée (README §31.8) : vente, commande ou dépense d'une filiale. */
+  productionBranchId?: number | null;
 }): Promise<{ id: number; balanceAfter: number; sessionId: number | null }> {
   const amount = Number(input.amount) || 0;
   if (amount < 0) throw new CashSessionError('Le montant d’un mouvement de caisse doit être positif');
@@ -330,6 +332,7 @@ export async function addCashMovement(input: {
       referenceType: input.referenceType ?? null,
       referenceId: input.referenceId ?? null,
       sessionId,
+      productionBranchId: input.productionBranchId ?? null,
       balanceAfter,
       date: input.date ?? today(),
       userId: input.userId ?? null,
@@ -356,10 +359,13 @@ export type CashMovementRow = {
   userId: number | null;
   userName: string | null;
   createdAt: Date | null;
+  productionBranchId: number | null;
 };
 
 export async function listCashMovements(options: {
   scope: StoreScope;
+  /** Mouvements d'une ou plusieurs filiales de production (README §31.8). */
+  branchIds?: number[];
   type?: CashMovementType;
   paymentMethod?: string;
   sessionId?: number;
@@ -379,6 +385,9 @@ export async function listCashMovements(options: {
   if (options.type) conditions.push(eq(cashMovements.type, options.type));
   if (options.paymentMethod) conditions.push(eq(cashMovements.paymentMethod, options.paymentMethod));
   if (options.sessionId) conditions.push(eq(cashMovements.sessionId, options.sessionId));
+  if (options.branchIds) {
+    conditions.push(options.branchIds.length > 0 ? inArray(cashMovements.productionBranchId, options.branchIds) : sql`0 = 1`);
+  }
   if (options.from) conditions.push(gte(cashMovements.date, options.from));
   if (options.to) conditions.push(lte(cashMovements.date, options.to));
   if (options.search) {
@@ -417,6 +426,7 @@ export async function listCashMovements(options: {
       userId: m.userId,
       userName: m.user?.name ?? null,
       createdAt: m.createdAt,
+      productionBranchId: m.productionBranchId ?? null,
     })),
     total,
     page,
@@ -652,3 +662,93 @@ export const CASH_REFERENCE_LABELS: Record<string, string> = {
   service_job: 'Chantier',
   furniture_order: 'Atelier de meubles',
 };
+
+/* ------------------------------------------------------------------ *
+ * Caisse d'une filiale (README §31.8 — option B)
+ * ------------------------------------------------------------------ */
+
+export type BranchCashSummary = {
+  from: string | null;
+  to: string | null;
+  income: number;
+  expense: number;
+  net: number;
+  /** Solde cumulé de la filiale depuis son premier mouvement (jusqu'à `to`). */
+  balance: number;
+  movementsCount: number;
+  byMethod: { method: string; income: number; expense: number; net: number }[];
+  byOrigin: { origin: string; income: number; expense: number }[];
+};
+
+/**
+ * Entrées, sorties et solde d'une filiale. La caisse reste **celle du
+ * magasin** (une seule session ouverte par magasin, clôture inchangée) ; chaque
+ * mouvement porte sa filiale, ce qui donne une lecture par activité sans
+ * multiplier les tiroirs à contrôler.
+ */
+export async function getBranchCashSummary(options: {
+  scope: StoreScope;
+  branchId: number;
+  from?: string | null;
+  to?: string | null;
+}): Promise<BranchCashSummary> {
+  const base = [`m.deleted_at IS NULL`, `m.production_branch_id = ${Number(options.branchId)}`, scopeSql('m.store_id', options.scope)];
+  const period = [...base];
+  const args: string[] = [];
+  if (options.from) {
+    period.push('m.date >= ?');
+    args.push(options.from);
+  }
+  if (options.to) {
+    period.push('m.date <= ?');
+    args.push(options.to);
+  }
+  const [totals, cumulative, byMethod, byOrigin] = await Promise.all([
+    rawGet<{ income: number | null; expense: number | null; n: number }>(
+      `SELECT SUM(CASE WHEN m.type = 'income' THEN m.amount ELSE 0 END) AS income,
+              SUM(CASE WHEN m.type = 'expense' THEN m.amount ELSE 0 END) AS expense, COUNT(*) AS n
+         FROM cash_movements m WHERE ${period.join(' AND ')}`,
+      args,
+    ),
+    rawGet<{ balance: number | null }>(
+      `SELECT SUM(CASE WHEN m.type = 'income' THEN m.amount ELSE -m.amount END) AS balance
+         FROM cash_movements m WHERE ${base.join(' AND ')}${options.to ? ' AND m.date <= ?' : ''}`,
+      options.to ? [options.to] : [],
+    ),
+    rawAll<{ method: string; income: number | null; expense: number | null }>(
+      `SELECT m.payment_method AS method,
+              SUM(CASE WHEN m.type = 'income' THEN m.amount ELSE 0 END) AS income,
+              SUM(CASE WHEN m.type = 'expense' THEN m.amount ELSE 0 END) AS expense
+         FROM cash_movements m WHERE ${period.join(' AND ')} GROUP BY m.payment_method ORDER BY m.payment_method`,
+      args,
+    ),
+    rawAll<{ origin: string | null; income: number | null; expense: number | null }>(
+      `SELECT COALESCE(m.reference_type, 'manual') AS origin,
+              SUM(CASE WHEN m.type = 'income' THEN m.amount ELSE 0 END) AS income,
+              SUM(CASE WHEN m.type = 'expense' THEN m.amount ELSE 0 END) AS expense
+         FROM cash_movements m WHERE ${period.join(' AND ')} GROUP BY origin ORDER BY origin`,
+      args,
+    ),
+  ]);
+  const income = roundMoney(Number(totals?.income ?? 0));
+  const expense = roundMoney(Number(totals?.expense ?? 0));
+  return {
+    from: options.from ?? null,
+    to: options.to ?? null,
+    income,
+    expense,
+    net: roundMoney(income - expense),
+    balance: roundMoney(Number(cumulative?.balance ?? 0)),
+    movementsCount: Number(totals?.n ?? 0),
+    byMethod: byMethod.map((r) => {
+      const i = roundMoney(Number(r.income ?? 0));
+      const e = roundMoney(Number(r.expense ?? 0));
+      return { method: r.method, income: i, expense: e, net: roundMoney(i - e) };
+    }),
+    byOrigin: byOrigin.map((r) => ({
+      origin: String(r.origin ?? 'manual'),
+      income: roundMoney(Number(r.income ?? 0)),
+      expense: roundMoney(Number(r.expense ?? 0)),
+    })),
+  };
+}

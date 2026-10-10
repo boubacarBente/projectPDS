@@ -1,11 +1,14 @@
 'use client';
 
 /**
- * Commandes de l'atelier de meubles (README §29, page `/atelier`).
+ * Historique de l'ancien atelier de meubles, dans la filiale Meuble
+ * (README §29, §31.9 ; ancienne page `/atelier`).
  *
- * `PageHeader` → cartes de synthèse → `DataToolbar` → `ResponsiveTable` →
- * `Pagination` → modale de création. La liste suit la portée de magasins
- * (`?store=`) ; une commande se crée toujours dans le magasin actif.
+ * Le module `/atelier` est supprimé : ses commandes restent consultables ici
+ * et celles en cours s'achèvent (étapes, matières, équipe, encaissements) sur
+ * leur fiche. Aucune nouvelle commande d'atelier : le nouveau travail passe par
+ * les productions et commandes de la filiale. Portée de magasins commune aux
+ * onglets de la filiale.
  *
  * ⚠️ Aucun import runtime de `lib/furniture.ts` (serveur) : types en
  * `import type`, constantes depuis `lib/furniture-shared.ts`.
@@ -14,7 +17,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { toast } from 'react-toastify';
+import { BrickTabs, useBrickScope } from '@/components/briqueterie/brick-tabs';
+import { useBranch } from '@/components/filiales/branch-context';
 import { PageHeader } from '@/components/page-header';
 import { DataToolbar } from '@/components/data-toolbar';
 import { IconAction } from '@/components/row-actions';
@@ -30,21 +34,12 @@ import {
   SkeletonTable,
   StatCardDelta,
 } from '@/components/design-system';
-import { usePermission } from '@/components/role-gate';
-import { StoreScopeSelect, StoreTag, scopeShowsStore, useStoreScope } from '@/components/store-scope';
+import { StoreTag } from '@/components/store-scope';
 import { useViewStateRehydration, writeViewState, clampPage } from '@/lib/view-state';
-import type { FurnitureOrderRow, FurnitureModelRow, WorkshopSummary } from '@/lib/furniture';
+import type { FurnitureOrderRow, WorkshopSummary } from '@/lib/furniture';
 import { FURNITURE_STAGES, FURNITURE_STAGE_LABELS, type FurnitureStage } from '@/lib/furniture-shared';
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber, formatQuantity } from '@/lib/format';
-import {
-  FurnitureOrderFormModal,
-  fetchCustomers,
-  fetchFurnitureModels,
-  fetchProducts,
-  type CustomerOption,
-  type ProductOption,
-} from '@/components/atelier/atelier-modals';
 
 const ORDERS_LIMIT = 20;
 const VIEW_NAME = 'atelier-commandes';
@@ -97,12 +92,10 @@ function stageTone(order: FurnitureOrderRow): 'success' | 'warning' | 'info' | '
   return tones[order.stage] ?? 'neutral';
 }
 
-export default function AtelierPage() {
+export default function AtelierHistoryPage() {
   const router = useRouter();
-  const canCreate = usePermission('furniture.create');
-  const { scope, setScope, apply } = useStoreScope('atelier');
-  const storeParam = apply(new URLSearchParams()).get('store') ?? undefined;
-  const showStore = scopeShowsStore(scope);
+  const { href, branch } = useBranch();
+  const { scope, setScope, storeParam, showStore } = useBrickScope();
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -121,38 +114,10 @@ export default function AtelierPage() {
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
-  const [models, setModels] = useState<FurnitureModelRow[]>([]);
-  const [customers, setCustomers] = useState<CustomerOption[]>([]);
-  const [products, setProducts] = useState<ProductOption[]>([]);
-  const [isOptionsLoading, setIsOptionsLoading] = useState(false);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
   }, [search]);
-
-  /* Options du formulaire : chargées à l'ouverture (magasin actif). */
-  useEffect(() => {
-    if (!isFormOpen) return;
-    const controller = new AbortController();
-    setIsOptionsLoading(true);
-    void Promise.all([
-      fetchFurnitureModels(controller.signal).catch(() => [] as FurnitureModelRow[]),
-      fetchCustomers(controller.signal).catch(() => [] as CustomerOption[]),
-      fetchProducts(controller.signal).catch(() => [] as ProductOption[]),
-    ])
-      .then(([modelList, customerList, productList]) => {
-        if (controller.signal.aborted) return;
-        setModels(modelList);
-        setCustomers(customerList);
-        setProducts(productList);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setIsOptionsLoading(false);
-      });
-    return () => controller.abort();
-  }, [isFormOpen]);
 
   /* Synthèse de la période (indépendante de la pagination). */
   useEffect(() => {
@@ -248,7 +213,7 @@ export default function AtelierPage() {
         render: (order) => (
           <div className="min-w-0">
             <Link
-              href={`/atelier/${order.id}`}
+              href={href(`/atelier/${order.id}`)}
               className="font-semibold text-primary hover:underline"
               onClick={(event) => event.stopPropagation()}
             >
@@ -342,21 +307,16 @@ export default function AtelierPage() {
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
       <PageHeader
-        eyebrow="Atelier"
-        title="Atelier de meubles"
-        description="Commandes de meubles standard ou sur mesure : étapes, matières et chutes, équipe, coût de revient, encaissements et respect du délai promis."
-        actions={
-          <>
-            <Link href="/atelier/modeles" className="btn btn-ghost min-h-11 border border-base-300">
-              Modèles
-            </Link>
-            {canCreate && (
-              <button type="button" className="btn btn-primary min-h-11" onClick={() => setIsFormOpen(true)}>
-                Nouvelle commande
-              </button>
-            )}
-          </>
-        }
+        eyebrow={branch.name}
+        title="Atelier — historique"
+        description="Commandes de l’ancien module « Atelier de meubles », reprises par cette filiale. Les commandes en cours s’achèvent depuis leur fiche (étapes, matières, équipe, encaissements) ; tout nouveau travail se saisit dans Productions et Commandes."
+      />
+      <BrickTabs
+        scope={scope}
+        onScopeChange={(value) => {
+          setScope(value);
+          setPage(1);
+        }}
       />
 
       {!summary ? (
@@ -427,14 +387,6 @@ export default function AtelierPage() {
         searchPlaceholder="Rechercher un n° de commande, un client, un modèle…"
         filters={
           <>
-            <StoreScopeSelect
-              value={scope}
-              onChange={(value) => {
-                setScope(value);
-                setPage(1);
-              }}
-              className="min-h-11 w-full sm:w-52"
-            />
             <div className="w-full sm:w-48">
               <FilterSelect
                 value={stage}
@@ -508,20 +460,16 @@ export default function AtelierPage() {
           description={
             activeFilterCount > 0 || debouncedSearch
               ? 'Aucune commande ne correspond à ces filtres.'
-              : 'Commencez par décrire vos modèles de meubles et leurs matières, puis créez une commande.'
+              : 'L’ancien atelier n’avait aucune commande dans cette portée de magasins.'
           }
           action={
             activeFilterCount > 0 || debouncedSearch ? (
               <button type="button" className="btn btn-primary min-h-11" onClick={resetFilters}>
                 Réinitialiser les filtres
               </button>
-            ) : canCreate ? (
-              <button type="button" className="btn btn-primary min-h-11" onClick={() => setIsFormOpen(true)}>
-                Créer la première commande
-              </button>
             ) : (
-              <Link href="/atelier/modeles" className="btn btn-primary min-h-11">
-                Voir les modèles
+              <Link href={href('/productions')} className="btn btn-primary min-h-11">
+                Voir les productions
               </Link>
             )
           }
@@ -532,13 +480,13 @@ export default function AtelierPage() {
             columns={columns}
             data={orders}
             getRowKey={(order) => order.id}
-            onRowClick={(order) => router.push(`/atelier/${order.id}`)}
+            onRowClick={(order) => router.push(href(`/atelier/${order.id}`))}
             actions={(order) => (
               <IconAction
                 icon="view"
                 tone="primary"
                 label={`Ouvrir la commande ${order.orderNumber}`}
-                onClick={() => router.push(`/atelier/${order.id}`)}
+                onClick={() => router.push(href(`/atelier/${order.id}`))}
               />
             )}
           />
@@ -549,19 +497,6 @@ export default function AtelierPage() {
         </>
       )}
 
-      <FurnitureOrderFormModal
-        isOpen={isFormOpen}
-        onClose={() => setIsFormOpen(false)}
-        onSaved={(saved) => {
-          toast.success('Commande d’atelier créée.');
-          setIsFormOpen(false);
-          router.push(`/atelier/${saved.id}`);
-        }}
-        models={models}
-        customers={customers}
-        products={products}
-        isOptionsLoading={isOptionsLoading}
-      />
     </div>
   );
 }

@@ -33,6 +33,13 @@ import { addCashMovement } from '@/lib/caisse';
 import { getSettings } from '@/lib/settings';
 import { formatCurrency, roundMoney } from '@/lib/format';
 import { scopeSql, type StoreScope } from '@/lib/stores';
+import {
+  BRANCH_EXPENSE_CATEGORIES,
+  BRANCH_EXPENSE_REFERENCE,
+  PRODUCTION_EXPENSE_CATEGORIES,
+} from '@/lib/branches-shared';
+
+export { PRODUCTION_EXPENSE_CATEGORIES, BRANCH_EXPENSE_CATEGORIES };
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -64,6 +71,9 @@ export type ExpenseRow = {
   paymentMethod: string;
   referenceType: string | null;
   referenceId: number | null;
+  /** Filiale de production de la dépense (README §31.7), `null` = dépense du magasin. */
+  productionBranchId: number | null;
+  productionBranchName: string | null;
   beneficiary: string | null;
   /** Date **métier** `YYYY-MM-DD`. */
   date: string;
@@ -85,6 +95,8 @@ export type ExpenseInput = {
   paymentMethod?: string;
   referenceType?: string | null;
   referenceId?: number | null;
+  /** Filiale de la dépense : obligatoire pour une dépense de lot ou globale de filiale. */
+  productionBranchId?: number | null;
   beneficiary?: string | null;
   date: string;
   userId?: number | null;
@@ -115,6 +127,12 @@ export type ExpenseListOptions = {
   page?: number;
   limit?: number;
   includeCancelled?: boolean;
+  /** Dépenses d'une ou plusieurs filiales (production + globales). */
+  branchIds?: number[];
+  /** `production` (rattachées à un lot) | `global` (toute la filiale). */
+  branchKind?: 'production' | 'global';
+  /** Filiales non autorisées au compte : leurs dépenses sont exclues. */
+  excludeBranchIds?: number[];
 };
 
 export type ExpenseListResult = {
@@ -141,29 +159,20 @@ export type ExpensesSummary = {
  * ------------------------------------------------------------------ */
 
 /** Catégorie validée contre la liste fermée des paramètres (casse canonique). */
-/**
- * Catégories **fermées** des dépenses rattachées à un lot de briques (README
- * §30, repris du §20 de la v1) : elles décrivent ce qui entre dans le coût
- * d'une brique et ne dépendent pas de la liste des paramètres, qui décrit les
- * frais de fonctionnement.
- */
-export const PRODUCTION_EXPENSE_CATEGORIES = [
-  'Ciment',
-  'Sable',
-  'Argile / terre',
-  'Bois de chauffe',
-  'Carburant',
-  "Main-d'œuvre",
-  'Électricité',
-  'Eau',
-  'Transport',
-  'Entretien',
-  'Autre',
-] as const;
 
 export async function validateExpenseCategory(value: unknown, referenceType?: string | null): Promise<string> {
   const category = String(value ?? '').trim();
   if (!category) throw new ValidationError('La catégorie est obligatoire');
+
+  if (referenceType === BRANCH_EXPENSE_REFERENCE) {
+    const match = BRANCH_EXPENSE_CATEGORIES.find(
+      (item) => item.toLocaleLowerCase('fr-FR') === category.toLocaleLowerCase('fr-FR'),
+    );
+    if (!match) {
+      throw new ValidationError(`Catégorie « ${category} » inconnue pour une dépense de filiale (${BRANCH_EXPENSE_CATEGORIES.join(', ')}).`);
+    }
+    return match;
+  }
 
   if (referenceType === 'brick_production') {
     const match = PRODUCTION_EXPENSE_CATEGORIES.find(
@@ -203,9 +212,15 @@ async function validateExpenseReference(
   type: string | null | undefined,
   id: number | null | undefined,
   storeId: number,
+  productionBranchId?: number | null,
 ): Promise<{ referenceType: string; referenceId: number | null }> {
   const kind = type || 'expense';
   if (kind === 'expense') return { referenceType: 'expense', referenceId: null };
+  if (kind === BRANCH_EXPENSE_REFERENCE) {
+    // Dépense globale de filiale (README §31.7) : la filiale est la clé étrangère déclarée.
+    if (!productionBranchId) throw new ValidationError('Filiale obligatoire pour une dépense de filiale.');
+    return { referenceType: kind, referenceId: null };
+  }
   const refId = Number(id);
   if (!Number.isInteger(refId) || refId <= 0) throw new ValidationError('Document rattaché invalide.');
 
@@ -235,8 +250,14 @@ async function validateExpenseReference(
   }
   if (kind === 'brick_production') {
     // Lot de la briqueterie (README §30) : même magasin, lot non annulé.
-    const lot = await rawGet<{ store_id: number; status: string }>('SELECT store_id, status FROM brick_productions WHERE id = ?', [refId]);
+    const lot = await rawGet<{ store_id: number; status: string; branch_id: number | null }>(
+      'SELECT store_id, status, branch_id FROM brick_productions WHERE id = ?',
+      [refId],
+    );
     if (!lot) throw new NotFoundError('Lot de fabrication introuvable');
+    if (productionBranchId && lot.branch_id != null && Number(lot.branch_id) !== Number(productionBranchId)) {
+      throw new ValidationError('Cette production appartient à une autre filiale.');
+    }
     if (Number(lot.store_id) !== Number(storeId)) {
       throw new ValidationError('Ce lot appartient à un autre magasin : sa dépense se saisit depuis ce magasin.');
     }
@@ -283,6 +304,8 @@ function mapExpenseRow(row: any): ExpenseRow {
     paymentMethod: row.payment_method ?? 'Espèces',
     referenceType: row.reference_type ?? null,
     referenceId: row.reference_id == null ? null : Number(row.reference_id),
+    productionBranchId: row.production_branch_id == null ? null : Number(row.production_branch_id),
+    productionBranchName: row.production_branch_name ?? null,
     beneficiary: row.beneficiary ?? null,
     date: row.date,
     userId: row.user_id == null ? null : Number(row.user_id),
@@ -296,11 +319,12 @@ function mapExpenseRow(row: any): ExpenseRow {
 }
 
 const EXPENSE_SELECT = `
-  SELECT e.*, u.name AS user_name, a.name AS approved_by_name, s.name AS store_name
+  SELECT e.*, u.name AS user_name, a.name AS approved_by_name, s.name AS store_name, pb.name AS production_branch_name
     FROM expenses e
     LEFT JOIN users u ON u.id = e.user_id
     LEFT JOIN users a ON a.id = e.approved_by
-    LEFT JOIN stores s ON s.id = e.store_id`;
+    LEFT JOIN stores s ON s.id = e.store_id
+    LEFT JOIN production_branches pb ON pb.id = e.production_branch_id`;
 
 /** Une dépense **comptée** : approuvée et non annulée. */
 export const COUNTED_EXPENSE_SQL = `deleted_at IS NULL AND approval_status = 'approved'`;
@@ -318,6 +342,16 @@ export async function listExpenses(options: ExpenseListOptions): Promise<Expense
   const args: (string | number)[] = [];
 
   if (!options.includeCancelled) where.push('e.deleted_at IS NULL');
+  if (options.branchIds) {
+    const ids = options.branchIds.filter((id) => Number.isInteger(id) && id > 0);
+    where.push(ids.length ? `e.production_branch_id IN (${ids.join(',')})` : '1 = 0');
+  }
+  if (options.excludeBranchIds?.length) {
+    const ids = options.excludeBranchIds.filter((id) => Number.isInteger(id) && id > 0);
+    if (ids.length) where.push(`(e.production_branch_id IS NULL OR e.production_branch_id NOT IN (${ids.join(',')}))`);
+  }
+  if (options.branchKind === 'production') where.push(`e.reference_type = 'brick_production'`);
+  if (options.branchKind === 'global') where.push(`e.reference_type = '${BRANCH_EXPENSE_REFERENCE}'`);
   if (options.approvalStatus && options.approvalStatus !== 'all') {
     where.push('e.approval_status = ?');
     args.push(options.approvalStatus);
@@ -396,7 +430,8 @@ export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
   const threshold = Number(settings.expenseApprovalThreshold ?? 0) || 0;
   const needsApproval = threshold > 0 && amount > threshold && !input.canSkipApproval;
 
-  const reference = await validateExpenseReference(input.referenceType, input.referenceId, input.storeId);
+  const reference = await validateExpenseReference(input.referenceType, input.referenceId, input.storeId, input.productionBranchId);
+  const productionBranchId = input.productionBranchId ? Number(input.productionBranchId) : null;
 
   return withTransaction(async () => {
     const inserted = await db
@@ -409,6 +444,7 @@ export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
         paymentMethod,
         referenceType: reference.referenceType,
         referenceId: reference.referenceId,
+        productionBranchId,
         beneficiary,
         date,
         userId: input.userId ?? null,
@@ -429,6 +465,7 @@ export async function createExpense(input: ExpenseInput): Promise<ExpenseRow> {
         motif: `Dépense — ${category}`,
         referenceType: 'expense',
         referenceId: id,
+        productionBranchId,
         date,
         userId: input.userId ?? null,
       });
@@ -514,6 +551,7 @@ export async function payExpense(id: number, options: { userId: number; storeId:
       motif: `Dépense — ${expense.category}`,
       referenceType: 'expense',
       referenceId: id,
+      productionBranchId: expense.productionBranchId,
       date: expense.date,
       userId: options.userId,
     });
@@ -570,7 +608,7 @@ export async function updateExpense(
       referenceId: patch.referenceId !== undefined ? patch.referenceId : previous.referenceId,
     };
     if (patch.referenceType !== undefined || patch.referenceId !== undefined) {
-      const reference = await validateExpenseReference(next.referenceType, next.referenceId, Number(previous.storeId));
+      const reference = await validateExpenseReference(next.referenceType, next.referenceId, Number(previous.storeId), previous.productionBranchId);
       next.referenceType = reference.referenceType;
       next.referenceId = reference.referenceId;
     }
@@ -619,6 +657,7 @@ export async function updateExpense(
         motif: `Contre-passation — Dépense ${previous.category} (modification)`,
         referenceType: 'expense',
         referenceId: id,
+        productionBranchId: previous.productionBranchId,
         date: previous.date,
         userId,
       });
@@ -630,6 +669,7 @@ export async function updateExpense(
         motif: `Dépense — ${next.category}`,
         referenceType: 'expense',
         referenceId: id,
+        productionBranchId: previous.productionBranchId,
         date: next.date,
         userId,
       });
@@ -670,6 +710,7 @@ export async function cancelExpense(
         motif: `Annulation dépense — ${previous.category} : ${reason}`,
         referenceType: 'expense',
         referenceId: id,
+        productionBranchId: previous.productionBranchId,
         date: previous.date,
         userId: options.userId ?? null,
       });
@@ -754,5 +795,66 @@ export async function getExpensesSummary(options: {
       storeName: String(row.name),
       total: Number(row.total ?? 0),
     })),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Dépenses d'une filiale (README §31.7)
+ * ------------------------------------------------------------------ */
+
+export type BranchExpensesSummary = {
+  /** Décaissées sur la période (comptées dans le bénéfice). */
+  totalAmount: number;
+  productionAmount: number;
+  globalAmount: number;
+  /** En attente d'approbation ou approuvées à décaisser. */
+  pendingCount: number;
+  pendingAmount: number;
+  byCategory: { category: string; total: number; count: number }[];
+};
+
+export async function getBranchExpensesSummary(options: {
+  scope: StoreScope;
+  branchId: number;
+  from?: string;
+  to?: string;
+}): Promise<BranchExpensesSummary> {
+  const where = [COUNTED_EXPENSE_SQL, scopeSql('store_id', options.scope), `production_branch_id = ${Number(options.branchId)}`];
+  const args: string[] = [];
+  if (options.from) {
+    where.push('date >= ?');
+    args.push(options.from);
+  }
+  if (options.to) {
+    where.push('date <= ?');
+    args.push(options.to);
+  }
+  const whereSql = `WHERE ${where.join(' AND ')}`;
+  const [totals, byCategory, pending] = await Promise.all([
+    rawGet<{ total: number | null; production: number | null; global: number | null }>(
+      `SELECT COALESCE(SUM(amount), 0) AS total,
+              COALESCE(SUM(CASE WHEN reference_type = 'brick_production' THEN amount ELSE 0 END), 0) AS production,
+              COALESCE(SUM(CASE WHEN reference_type = '${BRANCH_EXPENSE_REFERENCE}' THEN amount ELSE 0 END), 0) AS global
+         FROM expenses ${whereSql}`,
+      args,
+    ),
+    rawAll<{ category: string; total: number | null; count: number }>(
+      `SELECT category, COALESCE(SUM(amount), 0) AS total, COUNT(*) AS count FROM expenses ${whereSql}
+        GROUP BY category ORDER BY total DESC, category COLLATE NOCASE`,
+      args,
+    ),
+    rawGet<{ count: number; total: number | null }>(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM expenses
+        WHERE deleted_at IS NULL AND approval_status IN ('pending', 'to_pay')
+          AND production_branch_id = ${Number(options.branchId)} AND ${scopeSql('store_id', options.scope)}`,
+    ),
+  ]);
+  return {
+    totalAmount: roundMoney(Number(totals?.total ?? 0)),
+    productionAmount: roundMoney(Number(totals?.production ?? 0)),
+    globalAmount: roundMoney(Number(totals?.global ?? 0)),
+    pendingCount: Number(pending?.count ?? 0),
+    pendingAmount: roundMoney(Number(pending?.total ?? 0)),
+    byCategory: byCategory.map((r) => ({ category: r.category, total: roundMoney(Number(r.total ?? 0)), count: Number(r.count ?? 0) })),
   };
 }

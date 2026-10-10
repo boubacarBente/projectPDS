@@ -38,7 +38,10 @@ import {
   BRANCH_ACTIVITIES,
   BRANCH_COLORS,
   BRANCH_STATUSES,
+  BRANCH_ICONS,
+  DEFAULT_BRANCH_ICON,
   DEFAULT_LOSS_LABELS,
+  branchIcon,
   DEFAULT_STAGES,
   STORED_STAGE,
   branchHref,
@@ -96,6 +99,7 @@ function mapBranch(row: any): ProductionBranch {
     storeName: row.store_name ?? null,
     status: (BRANCH_STATUSES as readonly string[]).includes(row.status) ? row.status : 'active',
     color: (BRANCH_COLORS as readonly string[]).includes(row.color) ? row.color : 'primary',
+    icon: branchIcon(row.icon),
     sortOrder: num(row.sort_order),
     unit: row.unit || 'pièce',
     stages,
@@ -136,6 +140,31 @@ export async function getDefaultBrickBranch(): Promise<ProductionBranch | null> 
       ORDER BY CASE WHEN activity = 'bricks' THEN 0 ELSE 1 END, sort_order, id LIMIT 1`,
   );
   return row ? getBranch(num(row.id)) : null;
+}
+
+/**
+ * Filiale qui reprend l'ancien atelier de meubles (README §31.9, migration
+ * 0016) : celle de ses commandes, sinon la première filiale « Meubles ».
+ */
+export async function getFurnitureBranch(): Promise<ProductionBranch | null> {
+  const row = await rawGet<{ id: number }>(
+    `SELECT COALESCE(
+       (SELECT branch_id FROM furniture_orders WHERE branch_id IS NOT NULL LIMIT 1),
+       (SELECT branch_id FROM furniture_models WHERE branch_id IS NOT NULL LIMIT 1),
+       (SELECT id FROM production_branches WHERE activity = 'furniture' AND deleted_at IS NULL ORDER BY id LIMIT 1)) AS id`,
+  );
+  return row?.id ? getBranch(num(row.id)) : null;
+}
+
+/**
+ * Garde des anciennes routes `/api/atelier/*` : l'historique de l'atelier
+ * appartient à la filiale Meuble, il ne se lit qu'avec l'accès à cette filiale.
+ */
+export async function assertAtelierAccess(user: SessionUser, write = false): Promise<void> {
+  const branch = await getFurnitureBranch();
+  if (!branch) return;
+  if ((await branchLevelFor(user, branch)) === 'none') throw new BranchAccessError();
+  if (write && branch.status !== 'active') assertBranchWritable(branch, user);
 }
 
 /* ------------------------------------------------------------------ *
@@ -202,7 +231,7 @@ export async function listAccessibleBranches(
 /** Liens de la barre latérale : filiales **actives** et autorisées, dans l'ordre choisi. */
 export async function listBranchNavLinks(user: SessionUser): Promise<BranchNavLink[]> {
   const branches = await listAccessibleBranches(user);
-  return branches.map((b) => ({ id: b.id, name: b.name, color: b.color as BranchColor, href: branchHref(b.id) }));
+  return branches.map((b) => ({ id: b.id, name: b.name, color: b.color as BranchColor, icon: b.icon, href: branchHref(b.id) }));
 }
 
 export class BranchAccessError extends Error {
@@ -251,6 +280,20 @@ export function assertBranchWritable(branch: ProductionBranch, user: { storeId: 
   }
 }
 
+/**
+ * Filiales que le compte **ne peut pas** ouvrir : leurs dépenses restent hors
+ * des écrans généraux (`/depenses`), sans quoi le cloisonnement des filiales
+ * s'arrêterait à leur propre espace (README §31.10).
+ */
+export async function hiddenBranchIds(user: SessionUser): Promise<number[]> {
+  const all = await listBranches({ includeArchived: true });
+  const hidden: number[] = [];
+  for (const branch of all) {
+    if ((await branchLevelFor(user, branch)) === 'none') hidden.push(branch.id);
+  }
+  return hidden;
+}
+
 /** Filtre SQL « appartient à ces filiales ». Liste vide = aucune ligne. */
 export function branchSql(column: string, branchIds: number[]): string {
   const ids = branchIds.filter((id) => Number.isInteger(id) && id > 0);
@@ -267,6 +310,7 @@ export type BranchInput = {
   description?: string | null;
   storeId?: number | null;
   color?: string | null;
+  icon?: string | null;
   sortOrder?: number;
   unit?: string;
   /** Libellés des étapes, dans l'ordre ; la mise en stock s'ajoute toujours. */
@@ -353,6 +397,9 @@ function normalizeInput(input: BranchInput, current?: ProductionBranch) {
   if (input.storeId !== undefined) values.storeId = input.storeId ? Number(input.storeId) : null;
   if (input.color !== undefined || !current) {
     values.color = (BRANCH_COLORS as readonly string[]).includes(String(input.color)) ? input.color : current?.color ?? 'primary';
+  }
+  if (input.icon !== undefined || !current) {
+    values.icon = (BRANCH_ICONS as readonly string[]).includes(String(input.icon)) ? input.icon : current?.icon ?? DEFAULT_BRANCH_ICON[activity];
   }
   if (input.sortOrder !== undefined) values.sortOrder = Math.max(0, Math.min(999, Math.round(num(input.sortOrder))));
   if (input.unit !== undefined || !current) values.unit = cleanText(input.unit, 20) ?? 'pièce';

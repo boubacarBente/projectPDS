@@ -25,6 +25,12 @@ import {
   updateProductionExpense,
 } from '@/lib/brick';
 import { requireBranch } from '@/lib/branches';
+import {
+  addProductionMaterial,
+  computeProductionRequirements,
+  consumePlannedMaterials,
+  removeProductionMaterial,
+} from '@/lib/production-materials';
 import { canViewSalesProfit } from '@/lib/sales';
 import { today } from '@/lib/format';
 import { writeAudit } from '@/lib/audit';
@@ -37,9 +43,21 @@ async function detailFor(user: SessionUser, branchId: number, id: number) {
   // Une production d'une autre filiale n'existe pas depuis cet espace.
   if (!detail || detail.production.branchId !== branchId) throw new NotFoundError('Production introuvable dans cette filiale');
   assertStoreVisible(user, detail.production.storeId);
-  if (await canViewSalesProfit(user)) return detail;
-  // Invariant 13 : coût de revient masqué sans `balances.view`.
-  return { ...detail, production: hideProductionCosts(detail.production), costs: hideProductionCosts(detail.costs) };
+  // Besoins en matières (nomenclature × quantité prévue, déjà sorti déduit).
+  const requirements = await computeProductionRequirements(id);
+  if (await canViewSalesProfit(user)) return { ...detail, requirements };
+  // Invariant 13 : coût de revient masqué sans `balances.view` (matières comprises).
+  return {
+    ...detail,
+    production: hideProductionCosts(detail.production),
+    costs: hideProductionCosts(detail.costs),
+    materials: detail.materials.map((m) => ({ ...m, unitCost: null, amount: null })),
+    requirements: {
+      ...requirements,
+      estimatedCost: null,
+      lines: requirements.lines.map((l) => ({ ...l, purchasePrice: null, estimatedCost: null })),
+    },
+  };
 }
 
 /** Ligne de la production renvoyée après une écriture (contrat des écrans). */
@@ -71,6 +89,9 @@ export async function GET(_request: NextRequest, { params }: Params) {
  * | `remove_expense`  | annulation motivée d'une dépense                              |
  * | `add_worker`      | affectation `jours × tarif`                                   |
  * | `remove_worker`   | retrait d'une affectation                                     |
+ * | `add_material`    | sortie d'une matière du stock (+ chutes), comptée au coût     |
+ * | `consume_planned` | sort tout le reste prévu par la nomenclature, ou rien         |
+ * | `remove_material` | rend une matière au stock avec ses chutes                     |
  */
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
@@ -161,6 +182,32 @@ export async function PUT(request: NextRequest, { params }: Params) {
           branch.id,
         );
         await audit({ worker: line.workerName, days: line.days, amount: line.amount });
+        return ok(await row());
+      }
+      case 'add_material': {
+        const line = await addProductionMaterial(
+          productionId,
+          {
+            productId: toNumber(body.productId, 0),
+            quantity: toNumber(body.quantity, 0),
+            wastageQuantity: toNumber(body.wastageQuantity, 0),
+            unitCost: body.unitCost === undefined || body.unitCost === null || body.unitCost === '' ? null : toNumber(body.unitCost, 0),
+            userId: user.id,
+          },
+          storeId,
+          branch,
+        );
+        await audit({ material: line.productName, quantity: line.quantity, wastage: line.wastageQuantity }, 'stock_adjust');
+        return ok(await row());
+      }
+      case 'consume_planned': {
+        const lines = await consumePlannedMaterials(productionId, storeId, branch, user.id);
+        await audit({ consumedPlanned: lines.map((l) => ({ product: l.productName, quantity: l.quantity })) }, 'stock_adjust');
+        return ok(await row());
+      }
+      case 'remove_material': {
+        const line = await removeProductionMaterial(productionId, toNumber(body.materialId, 0), storeId, branch, user.id);
+        await audit({ removedMaterial: line.productName, returned: line.quantity + line.wastageQuantity }, 'stock_adjust');
         return ok(await row());
       }
       case 'remove_worker': {

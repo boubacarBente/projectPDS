@@ -100,12 +100,21 @@
   Recette : `npm run verify:briqueterie` (53 contrôles). **Reste** : `verify:ui` à 400 px,
   données de démonstration de la briqueterie (les boutons de la v1 supprimaient des lignes :
   non repris).
-- **Atelier de meubles rétabli par magasin** (README §29, demande du 7 octobre 2026) :
+- **Filiales de production complètes** (README §31, cahier du 10 octobre 2026) : le
+  module `/atelier` est supprimé et devient la filiale **Meuble** (onglet « Atelier
+  (historique) », reprise des modèles avec nomenclature) ; chaque filiale a ses
+  onglets Inventaire, Dépenses (production + globales), Caisse (option B : caisse du
+  magasin filtrée par filiale) et Paramètres ; icône et ordre dans le menu ; vue
+  consolidée avec dépenses globales, bénéfice et solde de caisse. Recette :
+  `npm run verify:filiales` (48 contrôles). **Reste** : `verify:ui` à 400 px sur les
+  nouveaux onglets.
+- **Atelier de meubles rétabli par magasin** (README §29, demande du 7 octobre 2026 —
+  *remplacé par la filiale Meuble, README §31.9*) :
   modèles et commandes propres au magasin, commande client encaissée (`furniture_order`)
   ou fabrication pour le stock, matières sorties réellement (nomenclature = besoins),
   chutes coûtées, annulation avec motif, bénéfice dans `lib/profit.ts`. Écrans
   `/atelier`, `/atelier/[id]`, `/atelier/modeles`, menu « Fabrication ». Recette :
-  `npm run verify:atelier` (52 contrôles). **Reste** : passer `verify:ui` sur les trois
+  `verify:atelier` (52 contrôles, retiré depuis). **Reste** : passer `verify:ui` sur les trois
   écrans (1366 et 400 px) et détailler l'atelier dans `/rapports`.
 - **Super administrateur et correctifs de sécurité** (README §17.2, §28.1, revue du
   4 octobre 2026) : un seul super administrateur (le compte de l'installation) qui

@@ -538,6 +538,11 @@ export const cashMovements = sqliteTable('cash_movements', {
   referenceType: text('reference_type'),
   referenceId: integer('reference_id'),
   sessionId: integer('session_id').references(() => cashSessions.id),
+  /**
+   * Filiale concernée (README §31.8, caisse générale filtrée par filiale) :
+   * encaissement d'une vente ou commande de filiale, décaissement d'une dépense de filiale.
+   */
+  productionBranchId: integer('production_branch_id').references((): AnySQLiteColumn => productionBranches.id),
   balanceAfter: real('balance_after').notNull().default(0),
   /** Date métier YYYY-MM-DD */
   date: text('date').notNull(),
@@ -547,6 +552,7 @@ export const cashMovements = sqliteTable('cash_movements', {
 }, (t) => [
   index('cash_movements_store_date_idx').on(t.storeId, t.date),
   index('cash_movements_session_idx').on(t.sessionId),
+  index('cash_movements_branch_idx').on(t.productionBranchId),
 ]);
 
 /** Une dépense sort de la caisse et n'affecte jamais le stock (§9, §14). */
@@ -560,6 +566,8 @@ export const expenses = sqliteTable('expenses', {
   paymentMethod: text('payment_method').notNull().default('Espèces'),
   referenceType: text('reference_type'),
   referenceId: integer('reference_id'),
+  /** Filiale de la dépense : de production (rattachée à un lot) ou globale (README §31.7). */
+  productionBranchId: integer('production_branch_id').references((): AnySQLiteColumn => productionBranches.id),
   beneficiary: text('beneficiary'),
   /** approved (décaissée) | pending (en attente) | to_pay (approuvée, à décaisser) | rejected — §12 */
   approvalStatus: text('approval_status', { enum: ['approved', 'pending', 'to_pay', 'rejected'] })
@@ -574,6 +582,7 @@ export const expenses = sqliteTable('expenses', {
   ...syncCols(),
 }, (t) => [
   index('expenses_store_date_idx').on(t.storeId, t.date),
+  index('expenses_branch_idx').on(t.productionBranchId),
 ]);
 
 /* ------------------------------------------------------------------ *
@@ -921,6 +930,8 @@ export const FURNITURE_STAGE_VALUES = ['cutting', 'assembly', 'sanding', 'painti
 export const furnitureModels = sqliteTable('furniture_models', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   storeId: integer('store_id').notNull().references(() => stores.id),
+  /** Filiale « Meuble » qui reprend l'ancien atelier (README §31.9, migration 0016). */
+  branchId: integer('branch_id').references((): AnySQLiteColumn => productionBranches.id),
   /** Unique dans le magasin (`MOD-0001`). */
   code: text('code').notNull(),
   name: text('name').notNull(),
@@ -954,6 +965,8 @@ export const furnitureModelMaterials = sqliteTable('furniture_model_materials', 
 export const furnitureOrders = sqliteTable('furniture_orders', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   storeId: integer('store_id').notNull().references(() => stores.id),
+  /** Filiale « Meuble » qui reprend l'ancien atelier (README §31.9, migration 0016). */
+  branchId: integer('branch_id').references((): AnySQLiteColumn => productionBranches.id),
   orderNumber: text('order_number').notNull().unique(),
   /**
    * `customer` : commande d'un client, facturée au prix convenu et encaissée
@@ -1042,6 +1055,8 @@ export const productionBranches = sqliteTable('production_branches', {
   status: text('status', { enum: PRODUCTION_BRANCH_STATUSES }).notNull().default('active'),
   /** Jeton de couleur du thème (`primary`, `accent`…) — jamais une couleur figée (invariant 11). */
   color: text('color'),
+  /** Icône du menu (brique, meuble, vitrerie, usine, stock, outils…) — README §31.2. */
+  icon: text('icon').notNull().default('factory'),
   sortOrder: integer('sort_order').notNull().default(0),
   /** Unité principale proposée aux nouveaux modèles (pièce, m², lot…). */
   unit: text('unit').notNull().default('pièce'),
@@ -1130,6 +1145,8 @@ export const brickTypes = sqliteTable('brick_types', {
   thickness: real('thickness'),
   /** Seuil d'alerte du modèle ; `null` = celui du produit dans le magasin. */
   alertThreshold: real('alert_threshold'),
+  /** Modèle de l'ancien atelier repris dans la filiale Meuble (import unique, README §31.9). */
+  furnitureModelId: integer('furniture_model_id').references(() => furnitureModels.id),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   userId: integer('user_id').references(() => users.id),
   createdAt: createdAt(),
@@ -1244,6 +1261,47 @@ export const brickOrderItems = sqliteTable('brick_order_items', {
   index('brick_order_items_order_idx').on(t.orderId),
 ]);
 
+/**
+ * Nomenclature d'un modèle de production (README §31.3) : matières nécessaires
+ * pour **une** unité. Reprise de la nomenclature de l'atelier ; elle donne des
+ * **besoins**, jamais des sorties de stock.
+ */
+export const productionModelMaterials = sqliteTable('production_model_materials', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  modelId: integer('model_id').notNull().references(() => brickTypes.id),
+  productId: integer('product_id').notNull().references(() => products.id),
+  quantity: real('quantity').notNull().default(0),
+  notes: text('notes'),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('production_model_materials_model_idx').on(t.modelId),
+]);
+
+/**
+ * Matière **réellement sortie** du stock pour une production (README §31.4) :
+ * une ligne = une sortie (`stock_movements.reference_type = 'production_material'`),
+ * chutes comprises ; elle entre dans le coût de la production.
+ */
+export const productionMaterials = sqliteTable('production_materials', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  productionId: integer('production_id').notNull().references(() => brickProductions.id),
+  productId: integer('product_id').references(() => products.id),
+  productName: text('product_name').notNull(),
+  unit: text('unit').notNull().default('pièce'),
+  quantity: real('quantity').notNull(),
+  /** Chutes, casse, rebuts de matière : sortie distincte, comptée dans le coût. */
+  wastageQuantity: real('wastage_quantity').notNull().default(0),
+  unitCost: real('unit_cost').notNull().default(0),
+  /** (quantité + chutes) × coût unitaire, figé à la sortie. */
+  amount: real('amount').notNull().default(0),
+  userId: integer('user_id').references(() => users.id),
+  createdAt: createdAt(),
+  ...syncCols(),
+}, (t) => [
+  index('production_materials_production_idx').on(t.productionId),
+]);
+
 export const furnitureOrderWorkers = sqliteTable('furniture_order_workers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   orderId: integer('order_id').notNull().references(() => furnitureOrders.id),
@@ -1356,6 +1414,8 @@ export const inventories = sqliteTable('inventories', {
   status: text('status', { enum: ['open', 'validated', 'cancelled'] }).notNull().default('open'),
   /** Catégorie inventoriée (null = tout le catalogue). */
   categoryId: integer('category_id').references(() => categories.id),
+  /** Inventaire d'une filiale de production : ses modèles seulement (README §31.6). */
+  productionBranchId: integer('production_branch_id').references((): AnySQLiteColumn => productionBranches.id),
   openedBy: integer('opened_by').references(() => users.id),
   validatedBy: integer('validated_by').references(() => users.id),
   validatedAt: integer('validated_at', { mode: 'timestamp' }),

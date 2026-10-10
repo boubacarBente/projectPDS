@@ -10,7 +10,8 @@ décrite, et tout code non trivial y renvoie par `§`.
 Application de gestion commerciale de **Planète Déco Sarlu (filiale Meubles)** —
 quincaillerie, décoration, chantiers — en **réseau de plusieurs magasins** depuis la v2
 (branche `multi-magasins`). Next.js 16 (App Router), React 19, TypeScript, Drizzle ORM
-sur **SQLite local**, livrée en Electron. La briqueterie et l'atelier ont été retirés en v2.
+sur **SQLite local**, livrée en Electron. Briqueterie, meubles, vitrerie… sont des
+**filiales de production** (README §31) ; le module `/atelier` est supprimé (filiale Meuble).
 
 Chaque **poste** a sa base SQLite et travaille hors ligne ; un serveur central
 (`server/`, PostgreSQL) échange les changements entre postes. Un poste **autonome**
@@ -32,8 +33,8 @@ npm run verify:routes  # découvre et appelle toutes les pages et routes d'API :
 npm run verify:draft   # politique du brouillon de vente (stock, caisse, sync, validation)
 npm run verify:purchases
 npm run verify:chantiers  # prestations de chantier : cloisonnement magasins, prix figés, rentabilité
-npm run verify:atelier    # atelier de meubles : cloisonnement, matières et chutes, encaissements, mise en stock
 npm run verify:briqueterie # briqueterie : cloisonnement, coût des lots, mise en stock, commandes facturées
+npm run verify:filiales   # filiales (§31) : /atelier → Meuble, nomenclature, matières et chutes, dépenses, caisse, inventaire, accès
 npm run verify:comptes    # super administrateur, périmètre des gérants (failles de la revue du 4/10/2026)
 npm run sync:scopes       # régénère server/sync-scopes.mjs après tout ajout de table synchronisée
 npm run db:dbml           # régénère docs/schema.dbml (diagramme dbdiagram.io) après toute migration
@@ -171,6 +172,16 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
     chutes sortent du stock et comptent dans le coût. Seule une fabrication **pour le
     stock** fait entrer un meuble fini ; une commande client s'encaisse par
     `payments` (`furniture_order`), jamais par un acompte saisi (README §29).
+26. **Filiales de production (README §31).** Toute route `/api/filiales/[branchId]/*`
+    passe par `requireBranch` (accès à **cette** filiale ; `write` = filiale active et
+    magasin de la filiale). Une matière de production = une sortie de stock réelle
+    (`production_material`), chutes comprises et coûtées ; la nomenclature ne donne
+    que des besoins. Une dépense ou un mouvement de caisse d'une filiale porte
+    `production_branch_id` (posé par `createExpense` / `createPayment` /
+    `addCashMovement`) : ne jamais créer de dépense de filiale sans lui. Caisse =
+    option B (caisse du magasin filtrée par filiale). Un seul inventaire ouvert par
+    magasin, filiales comprises. `/atelier` n'accepte plus de création (409) : les
+    anciennes commandes s'achèvent dans l'onglet « Atelier (historique) ».
 25. **Briqueterie : le coût d'un lot ne se stocke pas.** Équipe + dépenses rattachées
     validées, calculées par `TOTAL_COST_SQL` (`lib/brick.ts`). Une dépense de lot passe
     par `createExpense` (approbation, caisse). Une vente de briques porte
@@ -190,7 +201,8 @@ Toute fonctionnalité d'interface ou d'export se vérifie **dans un vrai navigat
 | **Bénéfice d'une période** (CA, COGS, marge, dépenses, main-d'œuvre) — source unique du tableau de bord, de `/soldes` et de `/rapports` | `lib/profit.ts` |
 | **Magasins** (contexte, accès, indicateurs) | `lib/stores.ts`, `lib/api.ts` (portée), `lib/user-scope.ts` ; écrans `app/magasins/*`, `components/magasins/store-ui.tsx`, `components/store-scope.tsx` |
 | **Briqueterie** (types, lots, dépenses de production, commandes, ventes du canal `brick`) — README §30 | `lib/brick.ts`, `lib/brick-orders.ts`, `lib/brick-analytics.ts` ; écrans `app/briqueterie/*` (portée de magasins dans `components/briqueterie/brick-tabs.tsx`) ; `components/briqueterie/*` |
-| **Atelier de meubles** (modèles, commandes client ou pour le stock, matières, chutes, équipe) — README §29 | `lib/furniture.ts` (serveur), `lib/furniture-shared.ts` (constantes pour l'interface) ; écrans `app/atelier/*` ; `components/atelier/atelier-modals.tsx` |
+| **Filiales de production** (administration, menu, accès, clients partagés, nomenclatures, matières, dépenses, caisse, inventaire) — README §31 | `lib/branches.ts`, `lib/branches-shared.ts`, `lib/production-materials.ts` ; écrans `app/filiales/*` ; `components/filiales/*` |
+| **Atelier de meubles — historique** (anciennes commandes, repris par la filiale Meuble) — README §29, §31.9 | `lib/furniture.ts`, `lib/furniture-shared.ts` ; écrans `app/filiales/[branchId]/atelier/*` ; `components/atelier/atelier-modals.tsx` |
 | **Prestations de chantier** (catalogue par magasin, demandes, devis, chantiers, pilotage) — README §19 | `lib/services.ts`, `lib/service-requests.ts`, `lib/quotes.ts`, `lib/jobs.ts`, `lib/jobs-dashboard.ts` ; écrans `app/prestations`, `app/chantiers/*`, `app/ouvriers`, `app/sous-traitants` ; composants `components/prestations/*`, `components/chantiers/*` ; démonstration `lib/seed-jobs.ts` |
 | **Transferts / inventaires** | `lib/transfers.ts`, `lib/transfer-actions.ts`, `lib/inventories.ts` |
 | **Synchronisation** (poste, push/pull, serveur) | `lib/device.ts`, `lib/sync-engine.ts`, `db/sync-registry.ts`, `db/triggers.ts`, `server/` |

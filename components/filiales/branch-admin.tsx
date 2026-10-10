@@ -6,12 +6,16 @@ import { Modal } from '@/components/modal';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { FormField } from '@/components/design-system';
 import { readApiError } from '@/components/workers/workers-modals';
+import { NavIcon } from '@/components/nav-icons';
 import {
   BRANCH_ACCESS_LABELS,
   BRANCH_ACTIVITIES,
   BRANCH_ACTIVITY_LABELS,
   BRANCH_COLORS,
   BRANCH_COLOR_LABELS,
+  BRANCH_ICONS,
+  BRANCH_ICON_LABELS,
+  DEFAULT_BRANCH_ICON,
   BRANCH_UNITS,
   DEFAULT_LOSS_LABELS,
   DEFAULT_STAGES,
@@ -53,6 +57,7 @@ export function BranchFormModal({
   const [description, setDescription] = useState('');
   const [storeId, setStoreId] = useState('');
   const [color, setColor] = useState('primary');
+  const [icon, setIcon] = useState<string>('factory');
   const [sortOrder, setSortOrder] = useState('');
   const [unit, setUnit] = useState('pièce');
   const [stages, setStages] = useState<string[]>([]);
@@ -73,6 +78,7 @@ export function BranchFormModal({
     setDescription(branch?.description ?? '');
     setStoreId(branch?.storeId ? String(branch.storeId) : '');
     setColor(branch?.color ?? 'primary');
+    setIcon(branch?.icon ?? DEFAULT_BRANCH_ICON[a]);
     setSortOrder(branch ? String(branch.sortOrder) : '');
     setUnit(branch?.unit ?? 'pièce');
     setStages(branch ? branch.stages.map((s) => s.label) : [...DEFAULT_STAGES[a]]);
@@ -100,6 +106,7 @@ export function BranchFormModal({
     setBatchPrefix(PREFIX_SUGGESTIONS[next][0]);
     setOrderPrefix(PREFIX_SUGGESTIONS[next][1]);
     if (next === 'glass') setUnit('m²');
+    setIcon(DEFAULT_BRANCH_ICON[next]);
   }
 
   async function submit() {
@@ -125,6 +132,7 @@ export function BranchFormModal({
           description: description.trim() || null,
           storeId: storeId ? Number(storeId) : null,
           color,
+          icon,
           sortOrder: sortOrder === '' ? undefined : Number(sortOrder),
           unit: unit.trim() || 'pièce',
           stages: cleanStages,
@@ -236,6 +244,24 @@ export function BranchFormModal({
                 {BRANCH_COLORS.map((value) => (
                   <option key={value} value={value}>
                     {BRANCH_COLOR_LABELS[value]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </FormField>
+          <FormField label="Icône du menu" htmlFor="branch-icon">
+            <div className="flex items-center gap-2">
+              <NavIcon iconKey={(BRANCH_ICONS as readonly string[]).includes(icon) ? (icon as (typeof BRANCH_ICONS)[number]) : 'factory'} className="h-5 w-5 shrink-0" />
+              <select
+                id="branch-icon"
+                className="select select-bordered min-h-11 w-full"
+                value={icon}
+                onChange={(event) => setIcon(event.target.value)}
+                disabled={isSubmitting}
+              >
+                {BRANCH_ICONS.map((value) => (
+                  <option key={value} value={value}>
+                    {BRANCH_ICON_LABELS[value]}
                   </option>
                 ))}
               </select>

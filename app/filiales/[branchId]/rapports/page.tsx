@@ -40,6 +40,7 @@ import { ExportDropdown, shareOnWhatsApp } from '@/components/export-dropdown';
 import {
   Badge,
   Card,
+  MiniStat,
   EmptyState,
   ErrorState,
   MoneyText,
@@ -566,7 +567,7 @@ export default function BrickRapportsPage() {
         hint={`Taux : ${formatPercent(report.profitability.marginRate)}`}
       />
       <StatCardDelta
-        label="Dépenses générales"
+        label="Dépenses globales"
         tooltip="Dépenses approuvées de la période qui ne sont rattachées à aucun lot."
         tone="neutral"
         value={<MoneyText value={report.profitability.generalExpenses} currency={currency} />}
@@ -574,7 +575,7 @@ export default function BrickRapportsPage() {
       />
       <StatCardDelta
         label="Résultat estimé"
-        tooltip="Marge brute moins les dépenses générales : une estimation, car les pièces vendues ne sont pas toutes celles fabriquées sur la période."
+        tooltip="Marge brute moins les dépenses globales de la filiale : une estimation, car les pièces vendues ne sont pas toutes celles fabriquées sur la période."
         tone={report.profitability.estimatedResult >= 0 ? 'success' : 'error'}
         value={
           <MoneyText
@@ -583,7 +584,7 @@ export default function BrickRapportsPage() {
             colored
           />
         }
-        hint="Marge brute − dépenses générales"
+        hint="Marge brute − dépenses globales de la filiale"
       />
     </div>
   ) : null;
@@ -989,8 +990,8 @@ export default function BrickRapportsPage() {
           </PageSection>
 
           <PageSection
-            title="Dépenses générales par catégorie"
-            subtitle="Dépenses qui ne sont rattachées à aucun lot : elles se déduisent du résultat estimé."
+            title="Dépenses globales de la filiale par catégorie"
+            subtitle="Dépenses de la filiale qui ne sont rattachées à aucun lot (loyer, salaires, entretien…) : elles se déduisent du résultat estimé."
           >
             <Card padded={false} className="overflow-hidden">
               <div className="p-2">
@@ -1015,11 +1016,48 @@ export default function BrickRapportsPage() {
                   ]}
                   data={report.generalExpensesByCategory}
                   getRowKey={(row) => row.category}
-                  emptyMessage="Aucune dépense générale sur la période."
+                  emptyMessage="Aucune dépense globale sur la période."
                 />
               </div>
             </Card>
           </PageSection>
+
+          {report.cash && (
+            <PageSection
+              title="Caisse de la filiale"
+              subtitle="Mouvements de la caisse du magasin marqués pour la filiale : encaissements de ses ventes et commandes, décaissements de ses dépenses."
+            >
+              <Card>
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <MiniStat label="Entrées" tone="success" value={<MoneyText value={report.cash.income} currency={currency} />} />
+                  <MiniStat label="Sorties" tone="error" value={<MoneyText value={report.cash.expense} currency={currency} />} />
+                  <MiniStat label="Net de la période" tone="info" value={<MoneyText value={report.cash.net} currency={currency} colored />} />
+                  <MiniStat label="Solde cumulé" tone="primary" value={<MoneyText value={report.cash.balance} currency={currency} colored />} />
+                </div>
+              </Card>
+            </PageSection>
+          )}
+
+          {report.inventories && (
+            <PageSection title="Inventaires" subtitle="Inventaires de la filiale ouverts sur la période ; un écart validé reste visible dans l’historique.">
+              <Card padded={false} className="overflow-hidden">
+                <div className="p-2">
+                  <ResponsiveTable
+                    columns={[
+                      { key: 'date', label: 'Ouvert le', render: (row) => formatDateShort(row.createdAt) },
+                      { key: 'reference', label: 'Inventaire', primary: true, render: (row) => <span className="text-sm font-medium">{row.reference}</span> },
+                      { key: 'status', label: 'Statut', render: (row) => (row.status === 'validated' ? 'Validé' : row.status === 'cancelled' ? 'Annulé' : 'En cours') },
+                      { key: 'gaps', label: 'Écarts', render: (row) => quantity(row.discrepancyCount) },
+                      { key: 'value', label: 'Valeur des écarts', render: (row) => <MoneyText value={row.discrepancyValue} currency={currency} colored /> },
+                    ]}
+                    data={report.inventories}
+                    getRowKey={(row) => row.id}
+                    emptyMessage="Aucun inventaire de la filiale sur la période."
+                  />
+                </div>
+              </Card>
+            </PageSection>
+          )}
 
           {/* ── Ventes ─────────────────────────────────────────────────────── */}
           <PageSection

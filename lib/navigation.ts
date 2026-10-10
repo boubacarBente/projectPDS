@@ -41,6 +41,11 @@ export type IconKey =
   | 'workshop'
   | 'bricks'
   | 'furnitureModels'
+  | 'furniture'
+  | 'glass'
+  | 'factory'
+  | 'tools'
+  | 'door'
   | 'stores'
   | 'transfers'
   | 'inventory'
@@ -98,15 +103,13 @@ export const NAVIGATION: NavGroup[] = [
   },
   {
     /*
-     * Fabrication : atelier de meubles (README §29) et **filiales de production**
-     * (README §31). Chaque filiale active et autorisée reçoit son propre lien,
+     * Fabrication : **filiales de production** (README §31). L'ancien module
+     * `/atelier` est supprimé : c'est la filiale « Meuble » (README §31.9). Chaque filiale active et autorisée reçoit son propre lien,
      * inséré par `components/app-shell.tsx` (liste lue sur
      * `/api/filiales/navigation`) juste avant la page générale ci-dessous.
      */
     title: 'Fabrication',
     items: [
-      { href: '/atelier', label: 'Commandes d’atelier', iconKey: 'workshop', action: 'furniture.view' },
-      { href: '/atelier/modeles', label: 'Modèles de meubles', iconKey: 'furnitureModels', action: 'furniture.view' },
       { href: '/filiales', label: 'Filiales de production', iconKey: 'bricks', action: 'brick.view' },
     ],
   },

@@ -1,19 +1,9 @@
 import { NextRequest } from 'next/server';
-import {
-  fail,
-  ok,
-  parsePagination,
-  readJson,
-  requireAction,
-  requireActiveStore,
-  scopeFromRequest,
-  toBool,
-  toNumber,
-} from '@/lib/api';
-import { createFurnitureOrder, getWorkshopSummary, hideOrderCosts, listFurnitureOrders } from '@/lib/furniture';
+import { assertAtelierAccess } from '@/lib/branches';
+import { fail, ok, parsePagination, requireAction, scopeFromRequest, toBool, toNumber, ConflictError } from '@/lib/api';
+import { getWorkshopSummary, hideOrderCosts, listFurnitureOrders } from '@/lib/furniture';
 import { isFurnitureStage } from '@/lib/furniture-shared';
 import { canViewSalesProfit } from '@/lib/sales';
-import { writeAudit } from '@/lib/audit';
 
 /**
  * GET /api/atelier/commandes — commandes de l'atelier de meubles (README §29).
@@ -26,7 +16,8 @@ import { writeAudit } from '@/lib/audit';
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireAction('furniture.view');
+    const user = await requireAction('brick.view');
+    await assertAtelierAccess(user);
     const params = request.nextUrl.searchParams;
     const scope = scopeFromRequest(user, request);
     const withCosts = await canViewSalesProfit(user);
@@ -64,48 +55,18 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/** POST /api/atelier/commandes — nouvelle commande **dans le magasin actif**. */
-export async function POST(request: NextRequest) {
+/**
+ * POST — **fermé** : l'atelier est repris par la filiale Meuble (README §31.9).
+ * Les anciennes commandes s'achèvent (`PUT /api/atelier/commandes/[id]`) ; tout
+ * nouveau travail passe par `/api/filiales/[branchId]/*`.
+ */
+export async function POST() {
   try {
-    const user = await requireAction('furniture.create');
-    const body = await readJson<any>(request);
-    const storeId = await requireActiveStore(user);
-
-    const order = await createFurnitureOrder({
-      storeId,
-      userId: user.id,
-      purpose: body.purpose === 'stock' ? 'stock' : 'customer',
-      customerId: toNumber(body.customerId, 0) || null,
-      customerName: body.customerName ?? null,
-      modelId: toNumber(body.modelId, 0) || null,
-      modelName: body.modelName ?? null,
-      isCustom: Boolean(body.isCustom),
-      dimensions: body.dimensions ?? null,
-      finish: body.finish ?? null,
-      quantity: toNumber(body.quantity, 1),
-      startDate: body.startDate ?? null,
-      promisedDate: body.promisedDate ?? null,
-      agreedPrice: toNumber(body.agreedPrice, 0),
-      productId: toNumber(body.productId, 0) || null,
-      notes: body.notes ?? null,
-    });
-
-    await writeAudit({
-      user,
-      action: 'create',
-      entity: 'furniture_order',
-      entityId: order.id,
-      details: {
-        orderNumber: order.orderNumber,
-        purpose: order.purpose,
-        customer: order.customerName,
-        model: order.modelName,
-        quantity: order.quantity,
-        total: order.total,
-      },
-    });
-
-    return ok(order, 201);
+    const user = await requireAction('brick.view');
+    await assertAtelierAccess(user);
+    throw new ConflictError(
+      'L’atelier de meubles est désormais la filiale « Meuble » : créez vos modèles, productions et commandes depuis son espace (menu de gauche).',
+    );
   } catch (error) {
     return fail(error);
   }

@@ -30,7 +30,11 @@ import {
   createBrickProduction,
   createBrickType,
 } from '@/lib/brick';
-import { createBranch, getDefaultBrickBranch, type ProductionBranch } from '@/lib/branches';
+import { createBranch, getDefaultBrickBranch, getFurnitureBranch, type ProductionBranch } from '@/lib/branches';
+import { BRANCH_EXPENSE_REFERENCE } from '@/lib/branches-shared';
+import { createExpense } from '@/lib/expenses';
+import { importFurnitureModels, addProductionMaterial, consumePlannedMaterials as consumePlannedProductionMaterials } from '@/lib/production-materials';
+import { openInventory, recordCounts, validateInventory, getInventory } from '@/lib/inventories';
 import type { SessionUser } from '@/lib/api';
 import {
   cancelBrickOrder,
@@ -72,6 +76,8 @@ export type WorkshopSeedReport = {
   brickOrders: number;
   furnitureModels: number;
   furnitureOrders: number;
+  /** Productions de la filiale Meuble (README §31.9). */
+  meubleProductions?: number;
 };
 
 /* ------------------------------------------------------------------ *
@@ -193,6 +199,23 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
     actor,
   );
   report.branches += 1;
+  // Filiale « Meuble » : créée par la migration 0016 ; recréée après une réinitialisation.
+  const meubleBranch: ProductionBranch =
+    (await getFurnitureBranch()) ??
+    (await createBranch(
+      {
+        name: 'Meuble',
+        activity: 'furniture',
+        description: 'Fabrication et vente de meubles (reprise de l’atelier de meubles).',
+        stages: ['Découpe', 'Assemblage', 'Ponçage', 'Peinture / vernis', 'Finition'],
+        lossLabel: 'Rebuts',
+        batchPrefix: 'MBL',
+        orderPrefix: 'MCM',
+        color: 'secondary',
+        icon: 'furniture',
+      },
+      actor,
+    ));
   const glassCategory = await createCategory({ name: 'Vitrerie', kind: 'finished', description: 'Vitres et miroirs de la vitrerie' });
   const glassProducts = new Map<string, number>();
   for (const glass of GLASSES) {
@@ -694,6 +717,90 @@ export async function seedWorkshops(ctx: WorkshopSeedContext): Promise<WorkshopS
           userId: seller.id,
         });
       }
+    }
+
+    /*
+     * Filiale Meuble (README §31.9) : les modèles de l'atelier sont repris
+     * (produit lié + nomenclature), puis fabriqués en productions — une mise en
+     * stock, une en cours avec ses matières sorties.
+     */
+    await importFurnitureModels(meubleBranch, store.id, manager.id);
+    const meubleModels = await rawGet<{ ids: string | null }>(
+      `SELECT group_concat(id) AS ids FROM brick_types WHERE branch_id = ? AND store_id = ? AND is_active = 1`,
+      [meubleBranch.id, store.id],
+    );
+    const meubleModelIds = String(meubleModels?.ids ?? '').split(',').map(Number).filter(Boolean);
+    for (const [index, modelId] of meubleModelIds.slice(0, 2).entries()) {
+      const age = (index === 0 ? 40 : 6) + offset;
+      const production = await createBrickProduction({
+        storeId: store.id,
+        branch: meubleBranch,
+        brickTypeId: modelId,
+        plannedQuantity: 2,
+        producedQuantity: index === 0 ? 2 : 0,
+        startDate: d(-age),
+        team: 'Équipe atelier',
+        userId: manager.id,
+      });
+      report.meubleProductions = (report.meubleProductions ?? 0) + 1;
+      try {
+        await consumePlannedProductionMaterials(production.id, store.id, meubleBranch, manager.id);
+        await addProductionMaterial(
+          production.id,
+          { productId: product('Planche bois rouge 2,5 m'), quantity: 1, wastageQuantity: 1, userId: manager.id },
+          store.id,
+          meubleBranch,
+        );
+      } catch {
+        /* rupture de matière : la production attend son réassort */
+      }
+      await addProductionWorker(production.id, { workerId: menuisier.id, days: between(3, 6) }, store.id, meubleBranch.id);
+      if (index === 0) {
+        for (const stage of meubleBranch.flow.slice(1)) {
+          await advanceStage(production.id, stage.key, store.id, manager.id, meubleBranch);
+        }
+      }
+    }
+
+    /* Dépenses globales des filiales : loyer de l'atelier, entretien du four… */
+    for (const [branch, category, amount, label] of [
+      [meubleBranch, 'Loyer et charges', 1_500_000, 'Loyer mensuel de l’atelier'],
+      [brickBranch, 'Entretien des machines', 650_000, 'Entretien du four'],
+      [glassBranch, 'Outillage', 400_000, 'Coupe-verre et ventouses'],
+    ] as const) {
+      await createExpense({
+        storeId: store.id,
+        category,
+        amount: Math.round(amount * scale),
+        description: label,
+        paymentMethod: 'Espèces',
+        referenceType: BRANCH_EXPENSE_REFERENCE,
+        productionBranchId: branch.id,
+        date: d(-(12 + offset)),
+        userId: manager.id,
+        canSkipApproval: true,
+      });
+    }
+
+    /* Un inventaire validé de la briqueterie, avec un écart justifié (README §31.6). */
+    try {
+      const inventoryUser = { id: manager.id, name: manager.name, storeId: store.id };
+      const inventoryId = await openInventory({ branchId: brickBranch.id, notes: 'Inventaire mensuel de la briqueterie' }, inventoryUser);
+      const detail = await getInventory(inventoryId);
+      if (detail) {
+        await recordCounts(
+          inventoryId,
+          detail.items.map((item, i) => ({
+            itemId: item.id,
+            countedQuantity: i === 0 && item.expectedQuantity >= 10 ? item.expectedQuantity - 10 : item.expectedQuantity,
+            justification: i === 0 && item.expectedQuantity >= 10 ? 'Casse au déchargement' : null,
+          })),
+          inventoryUser,
+        );
+        await validateInventory(inventoryId, inventoryUser);
+      }
+    } catch {
+      /* inventaire déjà ouvert dans le magasin : la démonstration continue */
     }
   }
 

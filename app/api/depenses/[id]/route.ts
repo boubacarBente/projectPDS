@@ -13,6 +13,7 @@ import {
 } from '@/lib/api';
 import { cancelExpense, getExpense, updateExpense } from '@/lib/expenses';
 import { writeAudit } from '@/lib/audit';
+import { hiddenBranchIds } from '@/lib/branches';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -25,6 +26,9 @@ export async function GET(_request: NextRequest, { params }: Params) {
     const expense = await getExpense(parseId(id));
     if (!expense) throw new NotFoundError('Dépense introuvable');
     assertStoreVisible(user, expense.storeId);
+    if (expense.productionBranchId && (await hiddenBranchIds(user)).includes(expense.productionBranchId)) {
+      throw new NotFoundError('Dépense introuvable');
+    }
 
     return ok(expense);
   } catch (error) {

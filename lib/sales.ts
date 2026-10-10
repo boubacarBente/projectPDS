@@ -397,12 +397,13 @@ type InvoiceRecord = {
   taxRate: number;
   paymentMethod: string;
   date: string;
+  productionBranchId: number | null;
 };
 
 async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
   const row = await rawGet<any>(
     `SELECT id, store_id, sync_id, invoice_number, status, customer_id, customer_name,
-            amount_paid, tax_rate, payment_method, date
+            amount_paid, tax_rate, payment_method, date, production_branch_id
      FROM sales_invoices WHERE id = ?`,
     [id],
   );
@@ -420,6 +421,7 @@ async function getInvoiceRecord(id: number): Promise<InvoiceRecord | null> {
     taxRate: Number(row.tax_rate ?? 0),
     paymentMethod: row.payment_method,
     date: row.date,
+    productionBranchId: row.production_branch_id == null ? null : Number(row.production_branch_id),
   };
 }
 
@@ -1435,6 +1437,7 @@ export async function cancelSalesInvoice(
       motif: `Contre-passation annulation vente ${existing.invoiceNumber}`,
       referenceType: 'sale',
       referenceId: id,
+      productionBranchId: existing.productionBranchId,
       userId: user?.id ?? null,
     });
   }

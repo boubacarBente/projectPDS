@@ -174,6 +174,15 @@ export const SYNCED_TABLES: SyncedTable[] = [
     name: 'brick_order_items',
     scope: { kind: 'child', parentTable: 'brick_orders', parentColumn: 'order_id' },
   },
+  // Nomenclature des modèles et matières sorties pour une production (README §31.3, §31.4).
+  {
+    name: 'production_model_materials',
+    scope: { kind: 'child', parentTable: 'brick_types', parentColumn: 'model_id' },
+  },
+  {
+    name: 'production_materials',
+    scope: { kind: 'child', parentTable: 'brick_productions', parentColumn: 'production_id' },
+  },
   { name: 'stock_transfers', scope: { kind: 'transfer' } },
   {
     name: 'stock_transfer_items',
@@ -238,6 +247,9 @@ export const SYNCED_TABLES: SyncedTable[] = [
           service_job: 'service_jobs',
           inventory: 'inventories',
           transfer: 'stock_transfers',
+          brick_production: 'brick_productions',
+          production_material: 'brick_productions',
+          furniture_order: 'furniture_orders',
         },
       },
     ],
@@ -249,7 +261,11 @@ export const SYNCED_TABLES: SyncedTable[] = [
       {
         typeColumn: 'reference_type',
         idColumn: 'reference_id',
-        targets: { service_job: 'service_jobs', job_subcontract: 'job_subcontracts' },
+        targets: {
+          service_job: 'service_jobs',
+          job_subcontract: 'job_subcontracts',
+          brick_production: 'brick_productions',
+        },
       },
     ],
   },

@@ -13,9 +13,9 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 > La briqueterie et l'atelier de meubles ont été **retirés** en v2 (§20 et §21
 > décrivent l'ancienne version, conservée sur la branche `main`).
 >
-> **📝 À valider, non codé :** la briqueterie doit devenir un module générique de
-> **filiales de production** (Briqueterie, Vitrerie, Meubles… nommées par
-> l'administrateur) — cahier des charges dans
+> **✅ Filiales de production (v2.3) :** briqueterie, meubles, vitrerie… sont des
+> **filiales** nommées par l'administrateur, chacune avec son espace complet ; le
+> module `/atelier` est supprimé au profit de la filiale **Meuble** — §31 et
 > **[`docs/CAHIER-DES-CHARGES-FILIALES.md`](docs/CAHIER-DES-CHARGES-FILIALES.md)**.
 
 > **Statut (v1, branche `main`) : ✅ LOT 0 À 4 CONSTRUITS — v1.3.0**
@@ -103,6 +103,9 @@ Application de gestion complète pour **Planète Déco Sarlu (filiale Meubles)**
 26. [Conventions de code](#26-conventions-de-code)
 27. [Annexes : pages, API REST, scripts](#27-annexes--pages-api-rest-scripts)
 28. [Multi-magasins (v2)](#28-multi-magasins-v2)
+29. [Atelier de meubles par magasin (v2)](#29-atelier-de-meubles-par-magasin-v2)
+30. [Briqueterie par magasin (v2)](#30-briqueterie-par-magasin-v2)
+31. [Filiales de production (v2.3)](#31-filiales-de-production-v23)
 
 ---
 
@@ -2572,8 +2575,9 @@ Tests : `cd server && npm test`.
 | **Changer de magasin actif** : permission `stores.switch` (administrateur d'office, sinon accordée par compte), magasin principal imposé sans elle, case « Peut changer de magasin » à la création et dans « Magasins » | ✅ | §28.6 |
 | **Refonte des comptes** : rôles par domaine (Aucun accès / Consulter / Saisir / Gérer), rôle Comptable, administrateur jamais désactivable, `/utilisateurs` refait (assistant de création en 4 étapes, page `/utilisateurs/[id]` à onglets), période d'affectation repliée (« Remplacement temporaire »). Catégories : seulement celles du magasin, création par un magasin. Essais API : 19 contrôles ; écrans vérifiés à 1366 et 400 px | ✅ | §17.2, §28.5 |
 | **Super administrateur et correctifs de sécurité** (revue du 4 octobre 2026) : un seul super administrateur (compte de l'installation, migration `0010`) qui commande les administrateurs ; gérant borné à ses magasins et à ses propres droits (§17.2) ; portée des lignes d'un poste de magasin recalculée par le serveur de synchronisation (§28.1). `npm run verify:comptes` (36 contrôles), `cd server && npm test` (8 tests) | ✅ | `lib/user-scope.ts`, `lib/users.ts`, `server/index.mjs`, `server/sync-scopes.mjs` |
-| **Atelier de meubles par magasin** (demande du 7 octobre 2026) : module v1 rétabli aux règles v2 — modèles et commandes par magasin, commande client encaissée (reçus, caisse) ou fabrication pour le stock, matières sorties réellement (nomenclature tout ou rien), chutes coûtées, annulation avec motif, bénéfice intégré. Migration `0012`. `npm run verify:atelier` : 52 contrôles | ✅ (écrans à vérifier à 1366 / 400 px avec `verify:ui`) | §29 |
+| **Atelier de meubles par magasin** (demande du 7 octobre 2026) : module v1 rétabli aux règles v2 — modèles et commandes par magasin, commande client encaissée (reçus, caisse) ou fabrication pour le stock, matières sorties réellement (nomenclature tout ou rien), chutes coûtées, annulation avec motif, bénéfice intégré. Migration `0012`. *(Remplacé par §31.9 : `/atelier` est devenu la filiale Meuble ; `verify:atelier` retiré au profit de `verify:filiales`.)* | ✅ | §29 |
 | **Briqueterie par magasin** (demande du 7 octobre 2026) : module v1.4 rétabli aux règles v2 — types, lots et commandes par magasin, coût du lot calculé (équipe + dépenses validées), dépenses de production dans le circuit des dépenses, mise en stock unique, commandes facturées sur le canal briqueterie avec transfert des acomptes, ventes de briques à part. Migrations `0013` et `0014` (archives v1). `npm run verify:briqueterie` : 53 contrôles | ✅ (écrans à vérifier à 1366 / 400 px avec `verify:ui`) | §30 |
+| **Filiales de production complètes** (cahier `docs/CAHIER-DES-CHARGES-FILIALES.md`, 10 octobre 2026) : `/atelier` supprimé → filiale **Meuble** (historique et reprise des modèles), icône et ordre dans le menu, nomenclatures, matières et chutes des productions, inventaire, dépenses globales, caisse (option B) et paramètres par filiale, vue consolidée (dépenses, bénéfice, solde de caisse). Migration `0016`. `npm run verify:filiales` : 48 contrôles ; `next build` ✓ ; `verify:routes` 201/201 | ✅ (écrans à vérifier à 400 px avec `verify:ui`) | §31 |
 | Recette complète (§24 du cahier des charges), `next build`, test de synchro réel | ⏳ | guide §9 |
 
 ### 28.4 Outils de recette
@@ -2742,8 +2746,9 @@ Encaisser demande en plus `payments.create`.
 
 ### 29.5 Recette
 
-`APP_URL=http://127.0.0.1:3100 npm run verify:atelier` (base de recette après
-`demo:seed`) : **52 contrôles** — cloisonnement des modèles et commandes entre Kaloum
+*(Historique — script retiré avec le module `/atelier`, voir §31.11 et
+`npm run verify:filiales`.)* `verify:atelier` (base de recette après
+`demo:seed`) comptait **52 contrôles** — cloisonnement des modèles et commandes entre Kaloum
 et Matoto (lecture, modification, `?store=` forgé, client d'un autre magasin),
 création sans sortie de stock, besoins calculés, sortie des matières prévues une seule
 fois, chutes sorties et coûtées, stock insuffisant sans écriture partielle,
@@ -2832,6 +2837,200 @@ stock unique nette des cassées, quantités figées, pertes, catégories de prod
 (brouillon non encaissable, transitions, acompte, facturation, stock sorti, acompte
 transféré, double facturation refusée), canal des ventes (absent de `/ventes`, produit
 étranger refusé), annulation d'un lot (stock repris), tableau de bord, rapport.
+
+---
+
+## 31. Filiales de production (v2.3)
+
+Demande client (9 et 10 octobre 2026), cahier des charges
+[`docs/CAHIER-DES-CHARGES-FILIALES.md`](docs/CAHIER-DES-CHARGES-FILIALES.md) : la
+briqueterie, la vitrerie, les meubles et toute autre activité deviennent des
+**filiales** créées et nommées par l'administrateur. Le module séparé `/atelier`
+est **supprimé** : l'atelier de meubles est la filiale **Meuble**. Code :
+`lib/branches.ts` (filiales, accès, clients partagés), `lib/branches-shared.ts`
+(constantes importables par l'interface), `lib/brick.ts` (modèles, productions,
+coûts), `lib/production-materials.ts` (nomenclatures, matières, reprise de
+l'atelier), `lib/brick-orders.ts` (commandes), `lib/brick-analytics.ts` (tableau
+de bord, rapports, vue consolidée) ; écrans `app/filiales/*`.
+
+> Les tables `brick_*` gardent leur nom (les renommer obligerait chaque poste à
+> migrer ses identifiants de synchronisation) : leur sens est générique —
+> `brick_types` = modèles, `brick_productions` = productions, `brick_orders` =
+> commandes, chacune avec `branch_id`.
+
+### 31.1 Décisions prises (cahier §19 lot A et §20)
+
+| Question | Décision | Pourquoi |
+|---|---|---|
+| Nom de la filiale de l'atelier | **Meuble** (renommable dans Paramètres de la filiale) | nom court pour le menu |
+| Ventes de filiale dans `/ventes` ? | **Non** : uniquement dans l'espace de la filiale (`channel = 'brick'`), vue consolidée sur `/filiales` | évite les doublons (cahier §11) |
+| Caisse | **Option B** : caisse générale du magasin, chaque mouvement porte `production_branch_id` ; onglet Caisse = entrées, sorties, solde de la filiale | une seule session et une seule clôture par magasin, argent tenu au même tiroir ; l'option A pourra s'ajouter sans migration de données (les mouvements sont déjà marqués) |
+| Approbation des dépenses globales | **Circuit des dépenses** : seuil `expenseApprovalThreshold`, jamais sa propre dépense, décaissement par la caisse | même règle partout (§12) |
+| Clients partagés | Par filiale : **tous les clients du magasin** ou **seulement ceux partagés** (`customerMode`) | les deux cas du cahier §5 |
+| Filiale et magasins | Une filiale couvre **tous les magasins** ou **un seul** (`store_id`) ; ses documents appartiennent toujours à un magasin | multi-magasins (§28) |
+| Matières premières | **Facultatives** : nomenclature et matières sorties pour les filiales qui en ont besoin (Meuble, Vitrerie) ; la briqueterie garde ses intrants en dépenses de lot | cahier §20 question 7 |
+| Transferts entre filiales | **Plus tard** (cahier §8) | non prioritaire |
+| Unités | Unité de production (modèle) + unité de vente (produit lié) | cahier §20 question 9 |
+| Coûts et bénéfices | Seulement avec `balances.view` (masqués **par le serveur**, invariant 13) | cahier §15 |
+| Ouverture / clôture quotidienne | Celle de la caisse du magasin (`/caisse`) | conséquence de l'option B |
+
+### 31.2 Menu et espace d'une filiale
+
+- **Administration** (`/filiales`, siège, `brick.branches`) : créer une filiale au
+  nom libre, choisir activité, magasin, **couleur**, **icône** (brique, meuble,
+  vitrerie, usine, stock, outils, porte), **ordre dans le menu**, étapes de
+  fabrication, préfixes de numéros, comptes autorisés, mode clients ; suspendre ou
+  archiver (jamais supprimer).
+- **Menu** : chaque filiale **active et autorisée** a son lien direct dans le groupe
+  « Fabrication », avec son nom, son icône et dans l'ordre choisi
+  (`/api/filiales/navigation`, `components/app-shell.tsx`). Une filiale suspendue ou
+  archivée quitte le menu et n'accepte plus d'écriture (`assertBranchWritable`).
+- **Onglets** (`components/briqueterie/brick-tabs.tsx`), chacun avec la permission de
+  sa page : Tableau de bord · Modèles · Productions · Stock · **Inventaire** ·
+  Commandes · Ventes (+ bouton **Nouvelle vente**) · **Dépenses** · **Caisse** ·
+  Clients · Rapports · **Paramètres** · *Atelier (historique)* (filiale Meubles).
+
+### 31.3 Modèles et nomenclature
+
+Un modèle (`brick_types`) : nom, catégorie, unité de production, dimensions
+(longueur, largeur, hauteur, épaisseur), description, seuil d'alerte, statut ; son
+**produit lié** porte le prix de vente conseillé et le stock. La **nomenclature**
+(`production_model_materials`) liste les matières pour **une** unité ; elle donne
+des **besoins**, jamais des sorties de stock. Bouton « liste » sur chaque modèle :
+consultation pour tous, modification par le gestionnaire (`brick.types`, magasin du
+modèle). Prix d'achat masqués sans `balances.view`.
+
+### 31.4 Productions et matières
+
+| Règle | Détail | Où |
+|---|---|---|
+| **Besoins** | nomenclature × quantité prévue (sinon produite), sur le stock du magasin, déjà sorti déduit | `computeProductionRequirements` |
+| **Sortir les matières prévues** | consomme tout le reste prévu, **tout ou rien** (stock insuffisant → rien n'est sorti) | `consumePlannedMaterials` |
+| **Une ligne = une sortie réelle** | `stock_movements.reference_type = 'production_material'`, jamais de stock négatif | `addProductionMaterial` |
+| **Chutes / casse** | sortie distincte **et** comptée : `montant = (quantité + chutes) × coût unitaire` (prix d'achat ou coût saisi) | idem |
+| **Retrait** | rend la matière au stock **avec ses chutes**, ligne marquée retirée (`deleted_at`) | `removeProductionMaterial` |
+| **Figé** | plus de matière une fois la production en stock | `editableForMaterials` |
+| **Coût jamais stocké** | coût = matières + équipe + dépenses de lot validées (`TOTAL_COST_SQL`) ; coût unitaire = coût ÷ (produites − pertes) | `lib/brick.ts` |
+| **Annulation** | le net mis en stock ressort, les matières reviennent au stock | `cancelBrickProduction` |
+
+Le produit fini n'entre en stock qu'à l'étape « En stock », une seule fois.
+
+### 31.5 Vue consolidée de la direction (`/filiales`)
+
+Une ligne par filiale autorisée sur la période (et la portée de magasins) : ventes,
+encaissé, reste à encaisser, coût de production, marge, **dépenses globales**,
+**bénéfice** (marge − dépenses globales), **solde de caisse**, production, commandes
+en cours, stock valorisé (vente ; achat avec `balances.view`). Chaque colonne
+sensible suit son droit : coûts/bénéfice `balances.view`, caisse `cash.view`,
+dépenses `expenses.view` (`/api/filiales/synthese`).
+
+### 31.6 Inventaire par filiale
+
+Onglet Inventaire : `POST /api/filiales/[id]/inventaires` ouvre, dans le magasin
+actif, un inventaire (`inventories.production_branch_id`) des **produits des modèles
+actifs de la filiale et des matières de leurs nomenclatures**. Le comptage, la
+justification obligatoire de chaque écart, la validation (`inventory.validate`, qui
+crée les ajustements de stock signés) et l'annulation motivée sont ceux de tout
+inventaire (`/inventaires/[id]`). Un inventaire validé ne se modifie plus ; l'écart
+reste dans le journal de stock. **Un seul inventaire ouvert par magasin**, filiales
+comprises : deux comptages ouverts sur le même produit appliqueraient deux fois le
+même écart. Rapport d'inventaire exportable en PDF / image (document autonome).
+
+### 31.7 Dépenses par filiale
+
+`expenses.production_branch_id` (clé déclarée, invariant 20) :
+
+- **de production** : `reference_type = 'brick_production'`, saisies sur la fiche de
+  la production, catégories fermées `PRODUCTION_EXPENSE_CATEGORIES` ; dans le coût
+  de revient du lot ;
+- **globales** : `reference_type = 'production_branch'`, saisies dans l'onglet
+  Dépenses, catégories fermées `BRANCH_EXPENSE_CATEGORIES` (matières premières,
+  main-d'œuvre, salaires, transport, entretien des machines, loyer et charges,
+  électricité, eau, outillage, pertes exceptionnelles, autre) ; elles diminuent le
+  bénéfice de la filiale sur la période (tableau de bord, rapports, vue consolidée).
+
+Les deux suivent le circuit des dépenses (§12) : approbation au-delà du seuil,
+décaissement = mouvement de caisse portant la filiale, annulation motivée.
+⚠️ Avant la v2.3, le tableau de bord et le rapport d'une filiale comptaient comme
+« dépenses générales » **toutes** les dépenses du magasin non rattachées à un lot.
+`/depenses` n'affiche plus les dépenses d'une filiale non autorisée.
+
+### 31.8 Caisse par filiale (option B)
+
+`cash_movements.production_branch_id` est posé par `addCashMovement` : encaissement
+d'une vente de filiale ou d'un acompte de commande (`createPayment`), contre-passation
+d'une vente annulée, décaissement / modification / annulation d'une dépense de
+filiale. L'onglet Caisse (`GET /api/filiales/[id]/caisse`, `cash.view`) montre
+entrées, sorties, net de la période, **solde cumulé**, détail par moyen et par
+origine, et les mouvements (motif = document source, reçu). La caisse **physique**
+reste celle du magasin : `/caisse` montre tous les mouvements (le tiroir doit
+tomber juste). Migration 0016 : les mouvements existants sont rattachés à leur
+filiale (dépense → sa filiale, vente → sa filiale, encaissement → le document de
+son reçu).
+
+### 31.9 Suppression de `/atelier` — reprise par la filiale Meuble
+
+- Migration **0016** : crée la filiale **Meuble** (activité Meubles, icône meuble,
+  étapes Découpe → Assemblage → Ponçage → Peinture / vernis → Finition, préfixes
+  `MBL` / `MCM`) et rattache les modèles et commandes de l'atelier
+  (`furniture_models.branch_id`, `furniture_orders.branch_id`). **Aucune donnée
+  supprimée** (invariant 1).
+- Menu : « Commandes d'atelier » et « Modèles de meubles » retirés. `/atelier/*`
+  redirige vers la filiale (`/atelier/12` → `/filiales/<id>/atelier/12`,
+  `/atelier/modeles` → ses Modèles).
+- **Atelier (historique)** : liste et fiches des anciennes commandes dans la filiale ;
+  celles en cours **s'achèvent** (étapes, matières, équipe, encaissements
+  `furniture_order`, mise en stock d'une fabrication pour le stock). Plus de
+  nouvelle commande ni de nouveau modèle d'atelier (`POST /api/atelier/*` → 409).
+  Droits : ceux de la filiale (`brick.*` + accès à la filiale Meuble).
+- **Reprise des modèles** (onglet Modèles, bandeau « Reprendre les modèles ») : pour
+  le magasin actif, chaque modèle d'atelier non repris devient un modèle de la
+  filiale avec son produit (repris par nom s'il existe et n'est lié à aucun modèle,
+  sinon créé au prix indicatif) et sa nomenclature (`brick_types.furniture_model_id`,
+  import unique). Fait par une personne, sur un poste, puis synchronisé : une
+  reprise automatique en migration aurait créé un doublon par poste.
+- Le chiffre d'affaires des commandes d'atelier reste compté dans `lib/profit.ts` (§29.2).
+
+### 31.10 Droits et cloisonnement
+
+Domaine « Filiales de production » (`brick.*`) : Consulter `brick.view` · Saisir
+`brick.create`, `brick.update` · Gérer `brick.types`, `brick.delete` ; administration
+`brick.branches` (siège). Chaque filiale peut être **restreinte** à des comptes
+(niveau consulter / saisir / gérer, plafond des droits du rôle). Chaque route
+`/api/filiales/[branchId]/*` passe par `requireBranch` (accès à **cette** filiale,
+niveau requis, filiale active et magasin actif pour écrire) ; les onglets combinent
+avec les droits de leur domaine (`inventory.*`, `expenses.*`, `cash.view`,
+`sales.*`, `customers.view`, `reports.viewAll` + `balances.view`). Une vente,
+dépense ou commande d'une filiale non autorisée n'est accessible ni par l'interface
+ni par l'API (`assertSaleBranchVisible`, `hiddenBranchIds`). Renommer les droits
+`brick.*` en `branches.*` (cahier §15) est reporté : il faudrait migrer les droits
+individuels déjà enregistrés sur chaque poste.
+
+### 31.11 Données, API, recette
+
+- Migration **`0016_filiales_completes`** (additive) : `production_model_materials`,
+  `production_materials` (synchronisées, enfants de `brick_types` /
+  `brick_productions`), colonnes `production_branches.icon`,
+  `brick_types.furniture_model_id`, `expenses.production_branch_id`,
+  `cash_movements.production_branch_id`, `inventories.production_branch_id`,
+  `furniture_models.branch_id`, `furniture_orders.branch_id` ; registre de
+  synchronisation et `server/sync-scopes.mjs` régénérés (références polymorphes
+  `brick_production`, `production_material` ajoutées).
+- API ajoutées : `GET|PUT /api/filiales/[id]/modeles/[modelId]/nomenclature` ·
+  `GET|POST /api/filiales/[id]/modeles/import-atelier` · `PUT
+  /api/filiales/[id]/productions/[pid]` actions `add_material` | `consume_planned` |
+  `remove_material` (le `GET` renvoie aussi `requirements`) · `GET|POST
+  /api/filiales/[id]/depenses` (`kind=production|global`) · `PUT|DELETE
+  /api/filiales/[id]/depenses/[eid]` (`approve` | `reject` | `pay`, annulation) ·
+  `GET /api/filiales/[id]/caisse` · `GET|POST /api/filiales/[id]/inventaires` ·
+  `GET /api/filiales/[id]/inventaires/[iid]`. Le rapport de filiale inclut `cash` et
+  `inventories` ; la synthèse, `globalExpenses`, `profit`, `cashBalance`,
+  `stockPurchaseValue`.
+- Écrans ajoutés : `/filiales/[id]/inventaire`, `/depenses`, `/caisse`,
+  `/parametres`, `/atelier`, `/atelier/[id]`.
+- Démonstration (`npm run demo:seed`) : filiales Briqueterie, **Meuble** (modèles
+  repris de l'atelier, productions avec matières et chutes) et Vitrerie, dépenses
+  globales de chaque filiale, un inventaire de briqueterie validé avec écart justifié.
 
 ---
 

@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Fiche d'une commande d'atelier (README §29, page `/atelier/[id]`).
+ * Fiche d'une commande de l'ancien atelier (README §29), dans la filiale Meuble
+ * (README §31.9, ancienne page `/atelier/[id]`).
  *
  * La page répond, dans cet ordre, à :
  *  1. **Où en est le travail ?** — `StageTracker` + « Étape suivante » (la
@@ -38,6 +39,7 @@ import {
   StageTracker,
 } from '@/components/design-system';
 import { usePermission } from '@/components/role-gate';
+import { useBranch } from '@/components/filiales/branch-context';
 import { useAuth } from '@/components/auth-provider';
 import { jobPaymentColumns } from '@/components/chantiers/chantiers-modals';
 import type { FurnitureOrderDetail, FurnitureOrderMaterialRow, FurnitureOrderWorkerRow, FurnitureModelRow } from '@/lib/furniture';
@@ -68,8 +70,10 @@ export default function AtelierOrderPage() {
   const orderId = Number(params?.id);
   const { activeStoreId } = useAuth();
 
-  const canUpdate = usePermission('furniture.update');
-  const canDelete = usePermission('furniture.delete');
+  const { href, canLevel, writable } = useBranch();
+  // Historique de l'atelier repris par la filiale Meuble (README §31.9) : droits de la filiale.
+  const canUpdate = usePermission('brick.update') && canLevel('edit') && writable;
+  const canDelete = usePermission('brick.delete') && canLevel('manage') && writable;
   const canPay = usePermission('payments.create');
   const canViewPayments = usePermission('payments.view');
 
@@ -209,7 +213,7 @@ export default function AtelierOrderPage() {
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6">
       <PageHeader
-        eyebrow="Atelier de meubles"
+        eyebrow="Atelier — historique"
         title={order ? `Commande ${order.orderNumber}` : isLoading ? 'Chargement…' : 'Commande d’atelier'}
         description={
           order
@@ -218,7 +222,7 @@ export default function AtelierOrderPage() {
         }
         actions={
           <>
-            <Link href="/atelier" className="btn btn-ghost min-h-11">
+            <Link href={href('/atelier')} className="btn btn-ghost min-h-11">
               Retour à la liste
             </Link>
             {canUpdate && editable && (
@@ -257,7 +261,7 @@ export default function AtelierOrderPage() {
               title="Commande introuvable"
               description="Cette commande n’existe pas. Revenez à la liste pour en choisir une autre."
               action={
-                <Link href="/atelier" className="btn btn-primary min-h-11">
+                <Link href={href('/atelier')} className="btn btn-primary min-h-11">
                   Retour à l’atelier
                 </Link>
               }

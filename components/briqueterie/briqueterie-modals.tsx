@@ -27,6 +27,9 @@ import {
   type WorkerRow,
 } from '@/components/workers/workers-modals';
 import { usePermission } from '@/components/role-gate';
+import { useAuth } from '@/components/auth-provider';
+import { PRODUCTION_EXPENSE_CATEGORIES } from '@/lib/branches-shared';
+import { ModelMaterialsModal } from '@/components/filiales/model-materials';
 import { formatDateShort } from '@/lib/date-format';
 import { formatNumber, formatPercent, formatQuantity, today } from '@/lib/format';
 
@@ -134,6 +137,7 @@ export type BrickProductionRow = {
   createdAt: string | null;
 };
 
+/** Matière sortie du stock pour une production (README §31.4). Coûts `null` sans `balances.view`. */
 export type BrickProductionMaterialRow = {
   id: number;
   productionId: number;
@@ -141,9 +145,34 @@ export type BrickProductionMaterialRow = {
   productName: string;
   unit: string;
   quantity: number;
-  unitCost: number;
-  amount: number;
+  wastageQuantity: number;
+  unitCost: number | null;
+  amount: number | null;
+  userName?: string | null;
   createdAt: string | null;
+};
+
+/** Besoins en matières d'une production : nomenclature × quantité prévue (README §31.3). */
+export type MaterialRequirementLine = {
+  productId: number;
+  productName: string;
+  unit: string;
+  quantityPerUnit: number;
+  requiredQuantity: number;
+  consumedQuantity: number;
+  toConsumeQuantity: number;
+  availableStock: number;
+  missingQuantity: number;
+  purchasePrice: number | null;
+  estimatedCost: number | null;
+  isCovered: boolean;
+};
+
+export type MaterialRequirements = {
+  quantity: number;
+  lines: MaterialRequirementLine[];
+  estimatedCost: number | null;
+  isCovered: boolean;
 };
 
 /**
@@ -171,20 +200,8 @@ export type BrickProductionExpenseRow = {
   createdAt: string | null;
 };
 
-/** Catégories fermées des dépenses de production (miroir de `lib/expenses.ts`). */
-export const PRODUCTION_EXPENSE_CATEGORIES = [
-  'Ciment',
-  'Sable',
-  'Argile / terre',
-  'Bois de chauffe',
-  'Carburant',
-  "Main-d'œuvre",
-  'Électricité',
-  'Eau',
-  'Transport',
-  'Entretien',
-  'Autre',
-] as const;
+/** Catégories fermées des dépenses de production : source unique dans `lib/branches-shared.ts`. */
+export { PRODUCTION_EXPENSE_CATEGORIES };
 
 export type BrickProductionWorkerRow = {
   id: number;
@@ -225,6 +242,7 @@ export type BrickProductionDetail = {
   workers: BrickProductionWorkerRow[];
   expenses: BrickProductionExpenseRow[];
   costs: ProductionCosts;
+  requirements?: MaterialRequirements;
 };
 
 export type BrickSummary = {
@@ -631,6 +649,12 @@ export const productionMaterialColumns: Column<BrickProductionMaterialRow>[] = [
     render: (material) => <QuantityText value={material.quantity} unit={material.unit} />,
   },
   {
+    key: 'wastage',
+    label: 'Chutes',
+    hideOnMobile: true,
+    render: (material) => (material.wastageQuantity > 0 ? <QuantityText value={material.wastageQuantity} unit={material.unit} /> : '—'),
+  },
+  {
     key: 'unitCost',
     label: 'Coût unitaire',
     hideOnMobile: true,
@@ -1005,6 +1029,7 @@ export function ProductionMaterialModal({
 }) {
   const [productId, setProductId] = useState('');
   const [quantity, setQuantity] = useState('');
+  const [wastage, setWastage] = useState('');
   const [unitCost, setUnitCost] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -1013,6 +1038,7 @@ export function ProductionMaterialModal({
     if (!isOpen) return;
     setProductId('');
     setQuantity('');
+    setWastage('');
     setUnitCost('');
     setFormError(null);
     setIsSubmitting(false);
@@ -1028,8 +1054,11 @@ export function ProductionMaterialModal({
   const parsedCost =
     unitCost === '' ? (selected?.purchasePrice ?? 0) : Number(String(unitCost).replace(',', '.'));
   const costValid = Number.isFinite(parsedCost) && parsedCost >= 0;
-  const amount = quantityValid && costValid ? parsedQuantity * parsedCost : 0;
-  const insufficient = Boolean(selected) && quantityValid && parsedQuantity > selected!.stock;
+  const parsedWastage = wastage === '' ? 0 : Number(String(wastage).replace(',', '.'));
+  const wastageValid = Number.isFinite(parsedWastage) && parsedWastage >= 0;
+  // Les chutes ont été achetées comme le reste : elles entrent dans le coût.
+  const amount = quantityValid && costValid && wastageValid ? (parsedQuantity + parsedWastage) * parsedCost : 0;
+  const insufficient = Boolean(selected) && quantityValid && wastageValid && parsedQuantity + parsedWastage > selected!.stock;
 
   async function submit() {
     if (isSubmitting) return;
@@ -1061,6 +1090,7 @@ export function ProductionMaterialModal({
           action: 'add_material',
           productId: selected.id,
           quantity: parsedQuantity,
+          wastageQuantity: wastageValid ? parsedWastage : 0,
           unitCost: parsedCost,
         }),
       });
@@ -1160,6 +1190,28 @@ export function ProductionMaterialModal({
               value={quantity}
               onChange={(event) => {
                 setQuantity(event.target.value);
+                setFormError(null);
+              }}
+              disabled={isSubmitting}
+              placeholder="0"
+            />
+          </FormField>
+
+          <FormField
+            label="Chutes / casse"
+            htmlFor="production-material-wastage"
+            hint="Sortie distincte du stock, comptée dans le coût."
+          >
+            <input
+              id="production-material-wastage"
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="any"
+              className="input input-bordered min-h-11 w-full tabular"
+              value={wastage}
+              onChange={(event) => {
+                setWastage(event.target.value);
                 setFormError(null);
               }}
               disabled={isSubmitting}
@@ -1763,7 +1815,7 @@ export function RemoveMaterialDialog({
       message={
         <>
           <strong>{material?.productName}</strong> —{' '}
-          {formatQuantity(material?.quantity ?? 0, material?.unit)} seront{' '}
+          {formatQuantity((material?.quantity ?? 0) + (material?.wastageQuantity ?? 0), material?.unit)} (chutes comprises) seront{' '}
           <strong>rendus au stock</strong> par un mouvement « entrée » motivé. Le coût de revient du
           lot est recalculé aussitôt.
         </>
@@ -2588,6 +2640,7 @@ export function BrickTypesPanel({
   onTypesLoaded?: (types: BrickTypeRow[]) => void;
 }) {
   const B = useBranch();
+  const { activeStoreId } = useAuth();
   const { products, isLoading: isOptionsLoading } = useBrickSelectOptions(isOpen);
   const canManage = usePermission('brick.types') && B.writable && B.canLevel('manage');
 
@@ -2603,6 +2656,8 @@ export function BrickTypesPanel({
   const [isDeactivateOpen, setIsDeactivateOpen] = useState(false);
   const [targetType, setTargetType] = useState<BrickTypeRow | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /* Nomenclature (README §31.3) : consultable par tous, modifiable par le gestionnaire. */
+  const [bomType, setBomType] = useState<BrickTypeRow | null>(null);
 
   const load = useCallback(
     async (signal: AbortSignal) => {
@@ -2744,10 +2799,11 @@ export function BrickTypesPanel({
               data={types}
               getRowKey={(type) => type.id}
               emptyMessage="Aucun modèle."
-              actions={
-                canManage
-                  ? (type) => (
+              actions={(type) => (
                       <RowActions>
+                        <IconAction icon="list" label={`Nomenclature de ${type.name}`} onClick={() => setBomType(type)} />
+                        {canManage && (
+                        <>
                         <IconAction
                           icon="edit"
                           label="Modifier le modèle"
@@ -2767,13 +2823,21 @@ export function BrickTypesPanel({
                             setIsDeactivateOpen(true);
                           }}
                         />
+                        </>
+                        )}
                       </RowActions>
-                    )
-                  : undefined
-              }
+                    )}
             />
           )}
         </div>
+
+      <ModelMaterialsModal
+        isOpen={Boolean(bomType)}
+        onClose={() => setBomType(null)}
+        model={bomType}
+        products={products.filter((product) => product.id !== bomType?.productId)}
+        canEdit={canManage && bomType?.storeId === activeStoreId}
+      />
 
       <BrickTypeFormModal
         isOpen={isFormOpen}

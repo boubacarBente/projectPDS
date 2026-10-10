@@ -40,6 +40,9 @@ export type InventoryRow = {
   status: InventoryStatus;
   categoryId: number | null;
   categoryName: string | null;
+  /** Inventaire d'une filiale de production (README §31.6), sinon `null`. */
+  productionBranchId: number | null;
+  productionBranchName: string | null;
   openedByName: string | null;
   validatedByName: string | null;
   validatedAt: Date | null;
@@ -68,7 +71,7 @@ const round3 = (value: number) => Math.round(value * 1000) / 1000;
 const ts = (value: unknown) => (value ? new Date(Number(value) * 1000) : null);
 
 const INVENTORY_SELECT = `
-  SELECT i.*, s.name AS store_name, c.name AS category_name,
+  SELECT i.*, s.name AS store_name, c.name AS category_name, pb.name AS production_branch_name,
          uo.name AS opened_by_name, uv.name AS validated_by_name,
          (SELECT COUNT(*) FROM inventory_items ii WHERE ii.inventory_id = i.id) AS item_count,
          (SELECT COUNT(*) FROM inventory_items ii WHERE ii.inventory_id = i.id AND ii.counted_quantity IS NOT NULL) AS counted_count,
@@ -80,6 +83,7 @@ const INVENTORY_SELECT = `
     FROM inventories i
     JOIN stores s ON s.id = i.store_id
     LEFT JOIN categories c ON c.id = i.category_id
+    LEFT JOIN production_branches pb ON pb.id = i.production_branch_id
     LEFT JOIN users uo ON uo.id = i.opened_by
     LEFT JOIN users uv ON uv.id = i.validated_by`;
 
@@ -92,6 +96,8 @@ function mapInventory(row: any): InventoryRow {
     status: row.status as InventoryStatus,
     categoryId: row.category_id == null ? null : Number(row.category_id),
     categoryName: row.category_name ?? null,
+    productionBranchId: row.production_branch_id == null ? null : Number(row.production_branch_id),
+    productionBranchName: row.production_branch_name ?? null,
     openedByName: row.opened_by_name ?? null,
     validatedByName: row.validated_by_name ?? null,
     validatedAt: ts(row.validated_at),
@@ -107,6 +113,8 @@ function mapInventory(row: any): InventoryRow {
 export async function listInventories(options: {
   scope: StoreScope;
   status?: string;
+  /** Inventaires d'une filiale seulement. */
+  branchId?: number;
   page?: number;
   limit?: number;
 }): Promise<{ data: InventoryRow[]; total: number; page: number; limit: number; totalPages: number }> {
@@ -117,6 +125,10 @@ export async function listInventories(options: {
   if (options.status && options.status !== 'all') {
     where.push('i.status = ?');
     args.push(options.status);
+  }
+  if (options.branchId) {
+    where.push('i.production_branch_id = ?');
+    args.push(Number(options.branchId));
   }
   const whereSql = `WHERE ${where.join(' AND ')}`;
   const [rows, count] = await Promise.all([
@@ -183,7 +195,7 @@ function assertStore(inventory: InventoryRow, user: InventoryUser) {
 }
 
 export async function openInventory(
-  input: { categoryId?: number | null; notes?: string | null },
+  input: { categoryId?: number | null; notes?: string | null; branchId?: number | null },
   user: InventoryUser,
 ): Promise<number> {
   if (!user.storeId) throw new ValidationError('Aucun magasin actif : choisissez un magasin.');
@@ -195,12 +207,32 @@ export async function openInventory(
       `SELECT reference FROM inventories WHERE store_id = ? AND status = 'open' LIMIT 1`,
       [storeId],
     );
+    // Une seule session par magasin, filiales comprises : deux comptages ouverts
+    // sur le même produit appliqueraient deux fois le même écart.
     if (open) {
-      throw new ValidationError(`Un inventaire est déjà en cours dans ce magasin (${open.reference}).`);
+      throw new ValidationError(`Un inventaire est déjà en cours dans ce magasin (${open.reference}) : validez-le ou annulez-le d’abord.`);
     }
 
-    const categoryId = input.categoryId ? Number(input.categoryId) : null;
-    const products = await rawAll<any>(
+    const branchId = input.branchId ? Number(input.branchId) : null;
+    const categoryId = branchId ? null : input.categoryId ? Number(input.categoryId) : null;
+    /*
+     * Inventaire de filiale (README §31.6) : les produits portés par ses modèles
+     * actifs du magasin **et** les matières de leur nomenclature.
+     */
+    const products = branchId
+      ? await rawAll<any>(
+          `SELECT p.id, p.name, p.unit,
+                  COALESCE((SELECT ps.quantity FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ?), 0) AS stock
+             FROM products p
+            WHERE p.deleted_at IS NULL AND p.id IN (
+                    SELECT bt.product_id FROM brick_types bt WHERE bt.branch_id = ? AND bt.store_id = ? AND bt.is_active = 1
+                    UNION
+                    SELECT b.product_id FROM production_model_materials b INNER JOIN brick_types bt ON bt.id = b.model_id
+                     WHERE bt.branch_id = ? AND bt.store_id = ? AND bt.is_active = 1 AND b.deleted_at IS NULL)
+            ORDER BY p.name COLLATE NOCASE`,
+          [storeId, branchId, storeId, branchId, storeId],
+        )
+      : await rawAll<any>(
       `SELECT p.id, p.name, p.unit,
               COALESCE((SELECT ps.quantity FROM product_stocks ps WHERE ps.product_id = p.id AND ps.store_id = ?), 0) AS stock
          FROM products p
@@ -212,7 +244,9 @@ export async function openInventory(
         ORDER BY p.name COLLATE NOCASE`,
       (categoryId ? [storeId, categoryId] : [storeId]) as any,
     );
-    if (products.length === 0) throw new ValidationError('Aucun produit à inventorier');
+    if (products.length === 0) {
+      throw new ValidationError(branchId ? 'Cette filiale n’a aucun modèle actif dans ce magasin : rien à inventorier.' : 'Aucun produit à inventorier');
+    }
 
     const reference = await nextDocumentNumber('inventory', storeId);
     const [created] = await db
@@ -222,6 +256,7 @@ export async function openInventory(
         storeId,
         status: 'open',
         categoryId,
+        productionBranchId: branchId,
         openedBy: user.id,
         notes: input.notes?.trim() || null,
       })
@@ -243,7 +278,7 @@ export async function openInventory(
       action: 'create',
       entity: 'inventory',
       entityId: created.id,
-      details: { reference, produits: products.length, categoryId },
+      details: { reference, produits: products.length, categoryId, branchId },
     });
 
     return Number(created.id);

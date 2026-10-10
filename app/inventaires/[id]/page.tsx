@@ -33,7 +33,16 @@ import {
   type InventoryDetailRecord,
   type InventoryItemRow,
 } from '@/components/inventaires/inventory-ui';
-import { formatNumber, formatQuantity } from '@/lib/format';
+import { ExportDropdown } from '@/components/export-dropdown';
+import { useSettings } from '@/app/parametres/page';
+import {
+  exportCompanyFromSettings,
+  exportDocumentAsImage,
+  exportDocumentAsPDF,
+  exportFileName,
+  renderExportDocument,
+} from '@/lib/export-document';
+import { formatCurrency, formatNumber, formatQuantity, today } from '@/lib/format';
 import { formatDateShort, formatDateWithTime } from '@/lib/date-format';
 
 type Draft = { counted: string; justification: string };
@@ -48,6 +57,7 @@ const parse = (value: string) => (value.trim() === '' ? null : Number(value.repl
 export default function InventaireFichePage() {
   const params = useParams<{ id: string }>();
   const inventoryId = Number(params.id);
+  const { settings } = useSettings();
 
   const [detail, setDetail] = useState<InventoryDetailRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -210,20 +220,96 @@ export default function InventaireFichePage() {
         ? `Cet inventaire appartient au magasin « ${inventory.storeName} » : il se compte et se valide depuis ce magasin (choisissez-le comme magasin actif dans la barre latérale).`
         : null;
 
+  /**
+   * Rapport d'inventaire (README §12, §31.6) : document autonome (invariant 5),
+   * écarts et justifications — jamais de marge.
+   */
+  async function exportReport(kind: 'pdf' | 'image') {
+    if (!detail) return;
+    const inv = detail.inventory;
+    const counted = detail.items.filter((item) => item.countedQuantity !== null);
+    const gaps = counted.filter((item) => item.difference !== null && Math.abs(item.difference) > 0.0001);
+    const html = renderExportDocument({
+      documentTitle: 'Rapport d’inventaire',
+      documentNumber: inv.reference,
+      documentDate: `Édité le ${formatDateShort(today())}`,
+      badge: { label: inv.status === 'validated' ? 'Validé' : inv.status === 'cancelled' ? 'Annulé' : 'Comptage en cours', tone: inv.status === 'validated' ? 'success' : inv.status === 'cancelled' ? 'danger' : 'warning' },
+      company: exportCompanyFromSettings(settings),
+      meta: [
+        ['Magasin', inv.storeName],
+        ['Périmètre', inv.productionBranchName ? `Filiale ${inv.productionBranchName}` : inv.categoryName ?? 'Tous les produits'],
+        ['Ouvert le', `${formatDateShort(inv.createdAt)}${inv.openedByName ? ` par ${inv.openedByName}` : ''}`],
+        ['Validé le', inv.validatedAt ? `${formatDateShort(inv.validatedAt)}${inv.validatedByName ? ` par ${inv.validatedByName}` : ''}` : '—'],
+      ],
+      blocks: [
+        {
+          kind: 'table',
+          title: 'Comptage',
+          columns: [
+            { label: 'Produit' },
+            { label: 'Théorique', align: 'right' },
+            { label: 'Compté', align: 'right' },
+            { label: 'Écart', align: 'right' },
+            { label: 'Justification' },
+          ],
+          numeric: [1, 2, 3],
+          rows: detail.items.map((item) => [
+            item.productName,
+            `${formatQuantity(item.expectedQuantity)} ${item.unit}`,
+            item.countedQuantity === null ? '—' : `${formatQuantity(item.countedQuantity)} ${item.unit}`,
+            item.difference === null ? '—' : `${item.difference > 0 ? '+' : ''}${formatQuantity(item.difference)}`,
+            item.justification ?? '',
+          ]),
+        },
+        {
+          kind: 'totals',
+          rows: [
+            { label: 'Produits comptés', value: `${formatNumber(counted.length)} / ${formatNumber(detail.items.length)}` },
+            { label: 'Lignes en écart', value: formatNumber(gaps.length), tone: gaps.length ? 'warning' : 'success' },
+            { label: 'Valeur des écarts (prix d’achat)', value: formatCurrency(inv.discrepancyValue), tone: inv.discrepancyValue < 0 ? 'danger' : 'strong' },
+          ],
+        },
+      ],
+      notes: inv.notes,
+    });
+    const file = exportFileName('inventaire', inv.reference);
+    try {
+      if (kind === 'pdf') await exportDocumentAsPDF(html, file);
+      else await exportDocumentAsImage(html, file);
+      toast.success(kind === 'pdf' ? 'Rapport d’inventaire exporté en PDF.' : 'Rapport d’inventaire exporté en image.');
+    } catch (caught: any) {
+      toast.error(caught?.message ?? 'Le rapport n’a pas pu être exporté.', { autoClose: 10000 });
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
         eyebrow={
-          <Link href="/inventaires" className="hover:underline">
-            Inventaires
-          </Link>
+          inventory.productionBranchId ? (
+            <Link href={`/filiales/${inventory.productionBranchId}/inventaire`} className="hover:underline">
+              Inventaires · {inventory.productionBranchName}
+            </Link>
+          ) : (
+            <Link href="/inventaires" className="hover:underline">
+              Inventaires
+            </Link>
+          )
         }
         title={inventory.reference}
-        description={`${inventory.storeName} · ${inventory.categoryName ?? 'Tous les produits'} · ouvert le ${formatDateShort(inventory.createdAt)}${
+        description={`${inventory.storeName} · ${
+          inventory.productionBranchName ? `Filiale ${inventory.productionBranchName}` : inventory.categoryName ?? 'Tous les produits'
+        } · ouvert le ${formatDateShort(inventory.createdAt)}${
           inventory.openedByName ? ` par ${inventory.openedByName}` : ''
         }`}
         actions={
           <>
+            <ExportDropdown
+              compact
+              label="Rapport"
+              onExportPDF={() => void exportReport('pdf')}
+              onExportImage={() => void exportReport('image')}
+            />
             {actions.includes('cancel') && (
               <button
                 type="button"

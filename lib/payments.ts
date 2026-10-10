@@ -282,6 +282,13 @@ async function createPaymentInTx(input: Parameters<typeof createPayment>[0]): Pr
       motif: `${config.cashType === 'income' ? 'Encaissement' : 'Règlement'} ${referenceNumber ?? ''} — reçu ${receiptNumber}`.trim(),
       referenceType: input.type === 'sale' ? 'payment' : input.type === 'purchase' ? 'purchase' : 'payment',
       referenceId: input.referenceId,
+      // Filiale du document encaissé (README §31.8) : la caisse générale se filtre par filiale.
+      productionBranchId:
+        input.type === 'sale'
+          ? document.productionBranchId ?? null
+          : input.type === 'brick_order' || input.type === 'furniture_order'
+            ? document.branchId ?? null
+            : null,
       date,
       userId: input.userId ?? null,
     });

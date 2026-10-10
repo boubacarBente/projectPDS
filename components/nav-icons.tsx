@@ -25,6 +25,12 @@ const PATHS: Record<IconKey, ReactNode> = {
   bricks: <path strokeLinecap="round" strokeLinejoin="round" d="M3 6h18v4H3zM3 14h18v4H3zM9 6v4M15 10v4M7 14v4M17 14v4" />,
   /* Modèle de meuble : fiche avec gabarit. */
   furnitureModels: <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm4 4h8M8 14h5M8 4v4m8-4v4" />,
+  /* Filiales (README §31.2) — meuble : fauteuil ; vitrerie : vitre avec reflet ; usine ; outils ; porte. */
+  furniture: <path strokeLinecap="round" strokeLinejoin="round" d="M5 11V7a3 3 0 013-3h8a3 3 0 013 3v4M3 13a2 2 0 014 0v2h10v-2a2 2 0 014 0v4H3v-4zM6 17v3m12-3v3" />,
+  glass: <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4zM8 14l6-6M11 16l5-5" />,
+  factory: <path strokeLinecap="round" strokeLinejoin="round" d="M3 21V10l5 3V10l5 3V10l5 3V4h3v17H3zM7 17h2m3 0h2m3 0h2" />,
+  tools: <path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a4 4 0 00-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 005.2-5.4l-2.5 2.5-2.4-.6-.6-2.4 2.5-2.5z" />,
+  door: <path strokeLinecap="round" strokeLinejoin="round" d="M6 21V4a1 1 0 011-1h10a1 1 0 011 1v17M4 21h16M14 12h.01" />,
   /* Pilotage des chantiers : jauge. */
   jobsDashboard: <path strokeLinecap="round" strokeLinejoin="round" d="M4 19a8 8 0 1116 0M12 19l3.5-5.5M5 19h14" />,
   /* Demande : bulle de message. */

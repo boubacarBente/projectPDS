@@ -34,6 +34,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       'activity',
       'description',
       'color',
+      'icon',
       'sortOrder',
       'unit',
       'stages',
